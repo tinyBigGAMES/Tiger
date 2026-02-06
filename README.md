@@ -1048,7 +1048,7 @@ Query type metadata at build time. These methods are useful when generating code
 
 ## 📊 Status
 
-**v0.1.0 — Under active development.**
+**Under active development.**
 
 Tiger is functional and produces working executables, DLLs, static libraries, and object files. The following features are implemented and tested:
 
