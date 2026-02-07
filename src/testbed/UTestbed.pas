@@ -21,7 +21,8 @@ uses
   System.SysUtils,
   System.IOUtils,
   Tiger,
-  Tiger.Utils;
+  Tiger.Utils,
+  Tiger.Utils.Win64;
 
 const
   COutputPath = 'output';
@@ -33,7 +34,7 @@ const
 ==============================================================================*)
 procedure StatusCallback(const AText: string; const AUserData: Pointer);
 begin
-  TUtils.PrintLn(AText);
+  TWin64Utils.PrintLn(AText);
 end;
 
 (*==============================================================================
@@ -45,9 +46,9 @@ end;
 procedure ShowErrors(const ATiger: TTiger);
 begin
   if not ATiger.HasErrors() then Exit;
-  TUtils.PrintLn('');
-  TUtils.PrintLn('--- Errors ---');
-  TUtils.PrintLn(ATiger.GetErrorText());
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('--- Errors ---');
+  TWin64Utils.PrintLn(ATiger.GetErrorText());
 end;
 
 (*==============================================================================
@@ -62,19 +63,19 @@ var
   LExitCode: Cardinal;
 begin
   LExitCode := 0;
-  //TUtils.PrintLn(COLOR_CYAN + 'Running...' + COLOR_RESET);
+  //TWin64Utils.PrintLn(COLOR_CYAN + 'Running...' + COLOR_RESET);
   if ATiger.Build(True, @LExitCode) then
   begin
-    //TUtils.PrintLn(COLOR_GREEN + 'Exit code: ' + LExitCode.ToString() + COLOR_RESET);
-    TUtils.PrintLn(COLOR_CYAN + 'Build: Success!' + COLOR_RESET);
+    //TWin64Utils.PrintLn(COLOR_GREEN + 'Exit code: ' + LExitCode.ToString() + COLOR_RESET);
+    TWin64Utils.PrintLn(COLOR_CYAN + 'Build: Success!' + COLOR_RESET);
     if ADumpSSA then
-      TUtils.PrintLn(ATiger.GetSSADump());
+      TWin64Utils.PrintLn(ATiger.GetSSADump());
   end
   else
   begin
-    TUtils.PrintLn(COLOR_CYAN + 'Build: Failed!' + COLOR_RESET);
+    TWin64Utils.PrintLn(COLOR_CYAN + 'Build: Failed!' + COLOR_RESET);
     if ADumpSSA then
-      TUtils.PrintLn(ATiger.GetSSADump());
+      TWin64Utils.PrintLn(ATiger.GetSSADump());
   end;
 end;
 
@@ -93,7 +94,7 @@ end;
 
 (*==============================================================================
   Test01: Hello World (minimal console executable)
-  Uses the high-level TTiger API to import printf and ExitProcess, emit a
+  Uses the high-level TTiger API to import printf, emit a
   single main function that prints "Hello, World!", and builds a console
   executable. Validates the basic end-to-end pipeline.
 ==============================================================================*)
@@ -106,11 +107,10 @@ begin
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test01.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     LTiger.BeginFunc('main', vtVoid, True)
       .Call('printf', [LTiger.Str('Hello, World!'#10)])
-      .Call('ExitProcess', [LTiger.Int(0)])
+      .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test01.exe'), ssConsole);
@@ -137,7 +137,6 @@ begin
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test02.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     LTiger.BeginFunc('main', vtVoid, True)
        .Local('n', vtInt64)
@@ -152,7 +151,7 @@ begin
        .WhileEnd()
 
        .Call('printf', [LTiger.Str('5! = %d'#10), LTiger.Var_('result')])
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test02.exe'), ssConsole);
@@ -179,7 +178,6 @@ begin
   try
     LTiger.SetStatusCallback(StatusCallback);
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     LTiger.BeginFunc('main', vtVoid, True)
        .Local('a', vtInt64)
@@ -199,10 +197,10 @@ begin
              LTiger.Var_('b'),   // Copy prop: should become 'a'
              LTiger.Var_('c'),
              LTiger.Var_('d')])  // CSE: should use same value as c
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
-    TUtils.PrintLn('--- Optimization Level 0 ---');
+    TWin64Utils.PrintLn('--- Optimization Level 0 ---');
     SetExeResources(LTiger, 'Test03_O0.exe');
     LTiger.SetOptimizationLevel(0);
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O0.exe'), ssConsole);
@@ -210,8 +208,8 @@ begin
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
 
-    TUtils.PrintLn('');
-    TUtils.PrintLn('--- Optimization Level 1 ---');
+    TWin64Utils.PrintLn('');
+    TWin64Utils.PrintLn('--- Optimization Level 1 ---');
     LTiger.ResetBuild();
     LTiger.SetOptimizationLevel(1);
     SetExeResources(LTiger, 'Test03_O1.exe');
@@ -220,8 +218,8 @@ begin
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
 
-    TUtils.PrintLn('');
-    TUtils.PrintLn('--- Optimization Level 2 ---');
+    TWin64Utils.PrintLn('');
+    TWin64Utils.PrintLn('--- Optimization Level 2 ---');
     LTiger.ResetBuild();
     SetExeResources(LTiger, 'Test03_O2.exe');
     LTiger.SetOptimizationLevel(2);
@@ -232,6 +230,70 @@ begin
   finally
     LTiger.Free();
   end;
+end;
+
+(*==============================================================================
+  Test03_2: Same as Test03 but creates a fresh TTiger instance per optimization
+  level instead of using ResetBuild. This isolates whether crashes are caused
+  by stale state in ResetBuild vs the optimizer itself.
+==============================================================================*)
+procedure Test03_2(const ADumpSSA: Boolean=False);
+
+  procedure BuildAndRun(const AOptLevel: Integer; const AOutputName: string);
+  var
+    LTiger: TTiger;
+  begin
+    LTiger := TTiger.Create();
+    try
+      LTiger.SetStatusCallback(StatusCallback);
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+
+      LTiger.BeginFunc('main', vtVoid, True)
+         .Local('a', vtInt64)
+         .Local('b', vtInt64)
+         .Local('c', vtInt64)
+         .Local('d', vtInt64)
+         .Local('e', vtInt64)
+
+         .Assign('a', LTiger.Add(LTiger.Int(5), LTiger.Int(3)))
+         .Assign('b', LTiger.Var_('a'))
+         .Assign('c', LTiger.Add(LTiger.Var_('a'), LTiger.Int(2)))
+         .Assign('d', LTiger.Add(LTiger.Var_('a'), LTiger.Int(2)))
+         .Assign('e', LTiger.Int(99))
+
+         .Call('printf', [LTiger.Str('a=%d, b=%d, c=%d, d=%d'#10),
+               LTiger.Var_('a'),
+               LTiger.Var_('b'),
+               LTiger.Var_('c'),
+               LTiger.Var_('d')])
+         .Call('Tiger_Halt', [LTiger.Int(0)])
+      .EndFunc();
+
+      SetExeResources(LTiger, AOutputName);
+      LTiger.SetOptimizationLevel(AOptLevel);
+      LTiger.TargetExe(TPath.Combine(COutputPath, AOutputName), ssConsole);
+
+      ProcessBuild(LTiger, ADumpSSA);
+      ShowErrors(LTiger);
+    finally
+      LTiger.Free();
+    end;
+  end;
+
+begin
+  TWin64Utils.PrintLn('--- Test03_2: Fresh instance per opt level ---');
+  TWin64Utils.PrintLn('');
+
+  TWin64Utils.PrintLn('--- Optimization Level 0 ---');
+  BuildAndRun(0, 'Test03_2_O0.exe');
+
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('--- Optimization Level 1 ---');
+  BuildAndRun(1, 'Test03_2_O1.exe');
+
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('--- Optimization Level 2 ---');
+  BuildAndRun(2, 'Test03_2_O2.exe');
 end;
 
 (*==============================================================================
@@ -249,7 +311,6 @@ begin
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test04.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     LTiger.BeginFunc('main', vtVoid, True)
        .Local('n', vtInt64)
@@ -264,10 +325,10 @@ begin
        .WhileEnd()
 
        .Call('printf', [LTiger.Str('5! = %d'#10), LTiger.Var_('result')])
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
-    TUtils.PrintLn('--- Loop Test: Optimization Level 2 ---');
+    TWin64Utils.PrintLn('--- Loop Test: Optimization Level 2 ---');
     LTiger.SetOptimizationLevel(2);
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test04.exe'), ssConsole);
 
@@ -289,14 +350,13 @@ procedure Test05(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('=== Test05: Case Statement ===');
+  TWin64Utils.PrintLn('=== Test05: Case Statement ===');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test05.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     // Test case statement with day of week
     // Expected output:
@@ -342,7 +402,7 @@ begin
            .Call('printf', [LTiger.Str('Unknown'#10)])
        .CaseEnd()
 
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test05.exe'), ssConsole);
@@ -365,14 +425,13 @@ procedure Test06(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('=== Test06: Global Variables ===');
+  TWin64Utils.PrintLn('=== Test06: Global Variables ===');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test06.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     // Declare global variables
     LTiger.Global('gCounter', vtInt64);
@@ -406,7 +465,7 @@ begin
        .Call('printf', [LTiger.Str('Final: counter=%d'#10),
              LTiger.Var_('gCounter')])
 
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test06.exe'), ssConsole);
@@ -434,14 +493,13 @@ var
   LTypeIndex: Integer;
   LTypeRef: TTigerTypeRef;
 begin
-  TUtils.PrintLn('=== Test07: Type System ===');
+  TWin64Utils.PrintLn('=== Test07: Type System ===');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test07.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     //------------------------------------------------------------------------
     // Define types
@@ -506,90 +564,90 @@ begin
     //------------------------------------------------------------------------
     // Query and print type information
     //------------------------------------------------------------------------
-    TUtils.PrintLn('');
-    TUtils.PrintLn('--- Type Information ---');
-    TUtils.PrintLn(Format('Total types defined: %d', [LTiger.GetTypeCount()]));
-    TUtils.PrintLn('');
+    TWin64Utils.PrintLn('');
+    TWin64Utils.PrintLn('--- Type Information ---');
+    TWin64Utils.PrintLn(Format('Total types defined: %d', [LTiger.GetTypeCount()]));
+    TWin64Utils.PrintLn('');
 
     // TPoint
     LTypeIndex := LTiger.FindType('TPoint');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TPoint: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TPoint: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // TRect
     LTypeIndex := LTiger.FindType('TRect');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TRect: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TRect: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // TPackedPoint
     LTypeIndex := LTiger.FindType('TPackedPoint');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TPackedPoint: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TPackedPoint: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // TStudent
     LTypeIndex := LTiger.FindType('TStudent');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TStudent: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TStudent: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // TIntArray
     LTypeIndex := LTiger.FindType('TIntArray');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TIntArray: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TIntArray: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // TPointArray
     LTypeIndex := LTiger.FindType('TPointArray');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TPointArray: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TPointArray: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // TDynInts (dynamic array = pointer size)
     LTypeIndex := LTiger.FindType('TDynInts');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TDynInts: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TDynInts: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // TColor (enum = int32)
     LTypeIndex := LTiger.FindType('TColor');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TColor: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TColor: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // TMyInt (alias to int32)
     LTypeIndex := LTiger.FindType('TMyInt');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TMyInt: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TMyInt: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // TCoord (alias to TPoint)
     LTypeIndex := LTiger.FindType('TCoord');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn(Format('TCoord: index=%d, size=%d, align=%d',
+    TWin64Utils.PrintLn(Format('TCoord: index=%d, size=%d, align=%d',
       [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
 
     // Test TypeRef helper
     LTypeRef := LTiger.TypeRef('TPoint');
-    TUtils.PrintLn(Format('TypeRef(TPoint): IsPrimitive=%s, TypeIndex=%d',
+    TWin64Utils.PrintLn(Format('TypeRef(TPoint): IsPrimitive=%s, TypeIndex=%d',
       [BoolToStr(LTypeRef.IsPrimitive, True), LTypeRef.TypeIndex]));
 
     // Test primitive TypeRef
     LTypeRef := TTigerTypeRef.FromPrimitive(vtInt64);
-    TUtils.PrintLn(Format('TypeRef(vtInt64): IsPrimitive=%s, size=%d',
+    TWin64Utils.PrintLn(Format('TypeRef(vtInt64): IsPrimitive=%s, size=%d',
       [BoolToStr(LTypeRef.IsPrimitive, True), LTiger.GetTypeSize(LTypeRef)]));
 
-    TUtils.PrintLn('');
-    TUtils.PrintLn('--- Type System Test Complete ---');
+    TWin64Utils.PrintLn('');
+    TWin64Utils.PrintLn('--- Type System Test Complete ---');
 
     //------------------------------------------------------------------------
     // Build a simple executable to verify no errors
     //------------------------------------------------------------------------
     LTiger.BeginFunc('main', vtVoid, True)
        .Call('printf', [LTiger.Str('Type system test passed!'#10)])
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test07.exe'), ssConsole);
@@ -621,20 +679,19 @@ var
   LTypeRef: TTigerTypeRef;
 
 begin
-  TUtils.PrintLn('=== Test08: Phase 4 - Full C Struct ABI ===');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('=== Test08: Phase 4 - Full C Struct ABI ===');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test08.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     //------------------------------------------------------------------------
     // Phase 4a: Explicit Alignment
     //------------------------------------------------------------------------
-    TUtils.PrintLn('--- 4a: Explicit Alignment ---');
+    TWin64Utils.PrintLn('--- 4a: Explicit Alignment ---');
 
     // Normal record (natural alignment = 4)
     LTiger.DefineRecord('TNaturalAlign')
@@ -655,25 +712,25 @@ begin
 
     LTypeIndex := LTiger.FindType('TNaturalAlign');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TNaturalAlign: size=%d, align=%d (expected: 8, 4)',
+    TWin64Utils.PrintLn('TNaturalAlign: size=%d, align=%d (expected: 8, 4)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('TAlign16');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TAlign16: size=%d, align=%d (expected: 16, 16)',
+    TWin64Utils.PrintLn('TAlign16: size=%d, align=%d (expected: 16, 16)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('TAlign8');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TAlign8: size=%d, align=%d (expected: 8, 8)',
+    TWin64Utils.PrintLn('TAlign8: size=%d, align=%d (expected: 8, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
-    TUtils.PrintLn('');
+    TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
     // Phase 4b: Union Types
     //------------------------------------------------------------------------
-    TUtils.PrintLn('--- 4b: Union Types ---');
+    TWin64Utils.PrintLn('--- 4b: Union Types ---');
 
     LTiger.DefineUnion('TVariant')
          .Field('AsInt', vtInt64)
@@ -689,20 +746,20 @@ begin
 
     LTypeIndex := LTiger.FindType('TVariant');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TVariant: size=%d, align=%d (expected: 8, 8)',
+    TWin64Utils.PrintLn('TVariant: size=%d, align=%d (expected: 8, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('TMixedUnion');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TMixedUnion: size=%d, align=%d (expected: 8, 8)',
+    TWin64Utils.PrintLn('TMixedUnion: size=%d, align=%d (expected: 8, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
-    TUtils.PrintLn('');
+    TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
     // Phase 4c: Anonymous Unions in Records
     //------------------------------------------------------------------------
-    TUtils.PrintLn('--- 4c: Anonymous Unions in Records ---');
+    TWin64Utils.PrintLn('--- 4c: Anonymous Unions in Records ---');
 
     LTiger.DefineRecord('TPacket')
          .Field('Header', vtUInt32)
@@ -728,20 +785,20 @@ begin
 
     LTypeIndex := LTiger.FindType('TPacket');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TPacket: size=%d, align=%d (expected: 24, 8)',
+    TWin64Utils.PrintLn('TPacket: size=%d, align=%d (expected: 24, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('TMultiUnion');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TMultiUnion: size=%d, align=%d (expected: 24, 8)',
+    TWin64Utils.PrintLn('TMultiUnion: size=%d, align=%d (expected: 24, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
-    TUtils.PrintLn('');
+    TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
     // Phase 4d: Anonymous Records in Unions
     //------------------------------------------------------------------------
-    TUtils.PrintLn('--- 4d: Anonymous Records in Unions ---');
+    TWin64Utils.PrintLn('--- 4d: Anonymous Records in Unions ---');
 
     LTiger.DefineUnion('TSplitValue')
          .Field('AsInt64', vtInt64)
@@ -754,15 +811,15 @@ begin
 
     LTypeIndex := LTiger.FindType('TSplitValue');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TSplitValue: size=%d, align=%d (expected: 8, 8)',
+    TWin64Utils.PrintLn('TSplitValue: size=%d, align=%d (expected: 8, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
-    TUtils.PrintLn('');
+    TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
     // Phase 4e: Bit Fields
     //------------------------------------------------------------------------
-    TUtils.PrintLn('--- 4e: Bit Fields ---');
+    TWin64Utils.PrintLn('--- 4e: Bit Fields ---');
 
     LTiger.DefineRecord('TFlags')
          .BitField('Enabled', vtUInt32, 1)
@@ -787,25 +844,25 @@ begin
 
     LTypeIndex := LTiger.FindType('TFlags');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TFlags: size=%d, align=%d (expected: 4, 4)',
+    TWin64Utils.PrintLn('TFlags: size=%d, align=%d (expected: 4, 4)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('TLargeFlags');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TLargeFlags: size=%d, align=%d (expected: 8, 4)',
+    TWin64Utils.PrintLn('TLargeFlags: size=%d, align=%d (expected: 8, 4)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('TMixedFields');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TMixedFields: size=%d, align=%d (expected: 16, 8)',
+    TWin64Utils.PrintLn('TMixedFields: size=%d, align=%d (expected: 16, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
-    TUtils.PrintLn('');
+    TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
     // Phase 4f: Record Inheritance
     //------------------------------------------------------------------------
-    TUtils.PrintLn('--- 4f: Record Inheritance ---');
+    TWin64Utils.PrintLn('--- 4f: Record Inheritance ---');
 
     LTiger.DefineRecord('TPoint2D')
          .Field('X', vtInt32)
@@ -822,36 +879,36 @@ begin
 
     LTypeIndex := LTiger.FindType('TPoint2D');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TPoint2D: size=%d, align=%d (expected: 8, 4)',
+    TWin64Utils.PrintLn('TPoint2D: size=%d, align=%d (expected: 8, 4)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('TPoint3D');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TPoint3D: size=%d, align=%d (expected: 12, 4)',
+    TWin64Utils.PrintLn('TPoint3D: size=%d, align=%d (expected: 12, 4)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('TPoint4D');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TPoint4D: size=%d, align=%d (expected: 16, 4)',
+    TWin64Utils.PrintLn('TPoint4D: size=%d, align=%d (expected: 16, 4)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // Test field offsets with inheritance
-    TUtils.PrintLn('');
-    TUtils.PrintLn('--- FindRecordField Tests (inheritance) ---');
+    TWin64Utils.PrintLn('');
+    TWin64Utils.PrintLn('--- FindRecordField Tests (inheritance) ---');
 
-    TUtils.PrintLn('TPoint3D.Z: offset=%d (expected: 8)', [LTiger.GetFieldOffset('TPoint3D', 'Z')]);
-    TUtils.PrintLn('TPoint3D.X (inherited): offset=%d (expected: 0)', [LTiger.GetFieldOffset('TPoint3D', 'X')]);
-    TUtils.PrintLn('TPoint3D.Y (inherited): offset=%d (expected: 4)', [LTiger.GetFieldOffset('TPoint3D', 'Y')]);
-    TUtils.PrintLn('TPoint4D.X (2-level inherit): offset=%d (expected: 0)', [LTiger.GetFieldOffset('TPoint4D', 'X')]);
+    TWin64Utils.PrintLn('TPoint3D.Z: offset=%d (expected: 8)', [LTiger.GetFieldOffset('TPoint3D', 'Z')]);
+    TWin64Utils.PrintLn('TPoint3D.X (inherited): offset=%d (expected: 0)', [LTiger.GetFieldOffset('TPoint3D', 'X')]);
+    TWin64Utils.PrintLn('TPoint3D.Y (inherited): offset=%d (expected: 4)', [LTiger.GetFieldOffset('TPoint3D', 'Y')]);
+    TWin64Utils.PrintLn('TPoint4D.X (2-level inherit): offset=%d (expected: 0)', [LTiger.GetFieldOffset('TPoint4D', 'X')]);
 
-    TUtils.PrintLn('');
-    TUtils.PrintLn('--- Phase 4 Test Complete ---');
+    TWin64Utils.PrintLn('');
+    TWin64Utils.PrintLn('--- Phase 4 Test Complete ---');
 
     //------------------------------------------------------------------------
     // Runtime tests: Comprehensive ABI validation
     //------------------------------------------------------------------------
-    TUtils.PrintLn('');
-    TUtils.PrintLn('--- Runtime ABI Tests ---');
+    TWin64Utils.PrintLn('');
+    TWin64Utils.PrintLn('--- Runtime ABI Tests ---');
 
     LTiger.DefineRecord('TTestPoint')
          .Field('X', vtInt64)
@@ -959,7 +1016,7 @@ begin
        .Call('printf', [LTiger.Str('al.B = 0x%llX (expected 0xDEADBEEFCAFE)' + #10), LTiger.FieldExpr(LTiger.Var_('al'), 'B')])
 
        .Call('printf', [LTiger.Str('=== All Runtime Tests Complete ===' + #10)])
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test08.exe'), ssConsole);
@@ -986,23 +1043,22 @@ var
   LTypeRef: TTigerTypeRef;
 begin
   // Test09: Phase 5a - Typed Pointers
-  TUtils.PrintLn('');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test09: Phase 5a - Typed Pointers');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test09: Phase 5a - Typed Pointers');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test09.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     //------------------------------------------------------------------------
     // Type System Tests
     //------------------------------------------------------------------------
-    TUtils.PrintLn('--- Pointer Type Definitions ---');
+    TWin64Utils.PrintLn('--- Pointer Type Definitions ---');
 
     LTiger.DefinePointer('PInt32', vtInt32);
     LTiger.DefinePointer('PInt64', vtInt64);
@@ -1018,25 +1074,25 @@ begin
 
     LTypeIndex := LTiger.FindType('PInt32');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('PInt32: size=%d, align=%d (expected: 8, 8)',
+    TWin64Utils.PrintLn('PInt32: size=%d, align=%d (expected: 8, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('TRawPointer');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('TRawPointer: size=%d, align=%d (expected: 8, 8)',
+    TWin64Utils.PrintLn('TRawPointer: size=%d, align=%d (expected: 8, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     LTypeIndex := LTiger.FindType('PPoint');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TUtils.PrintLn('PPoint: size=%d, align=%d (expected: 8, 8)',
+    TWin64Utils.PrintLn('PPoint: size=%d, align=%d (expected: 8, 8)',
       [LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
-    TUtils.PrintLn('');
+    TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
     // Runtime Tests
     //------------------------------------------------------------------------
-    TUtils.PrintLn('--- Runtime Pointer Tests ---');
+    TWin64Utils.PrintLn('--- Runtime Pointer Tests ---');
 
     LTiger.BeginFunc('main', vtVoid, True)
        .Local('x', vtInt32)
@@ -1098,7 +1154,7 @@ begin
          LTiger.IndexExpr(LTiger.Var_('arr'), LTiger.Int(1))])
 
        .Call('printf', [LTiger.Str('=== All Pointer Tests Complete ===' + #10)])
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test09.exe'), ssConsole);
@@ -1121,18 +1177,17 @@ procedure Test10(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test10: Function Pointers (Phase 5b)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test10: Function Pointers (Phase 5b)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test10.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtInt32], vtVoid);
 
     LTiger.BeginFunc('add_func', vtInt32, False)
        .Param('a', vtInt32)
@@ -1185,7 +1240,7 @@ begin
        .Call('printf', [LTiger.Str('mul_func(8, 4) = %d (expected 32)' + #10), LTiger.Var_('result')])
 
        .Call('printf', [LTiger.Str(#10 + '=== All Function Pointer Tests Complete ===' + #10)])
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test10.exe'), ssConsole);
@@ -1208,18 +1263,17 @@ procedure Test11(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test11: Public Exports (Phase 5c)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test11: Public Exports (Phase 5c)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test11.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtInt32], vtVoid);
 
     LTiger.BeginFunc('MyAdd', vtInt32, False, plC, True)
        .Param('a', vtInt32)
@@ -1260,7 +1314,7 @@ begin
        .Call('printf', [LTiger.Str('  Expected: MyAdd, MyMul, MySquare' + #10)])
        .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, main' + #10)])
 
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test11.exe'), ssConsole);
@@ -1283,18 +1337,17 @@ procedure Test12(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test12: Function Overloading (Phase 5d)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test12: Function Overloading (Phase 5d)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test12.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtInt32], vtVoid);
 
     LTiger.BeginOverloadFunc('Add', vtInt32, False, True)
        .Param('a', vtInt32)
@@ -1338,7 +1391,7 @@ begin
        .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test12.exe" to verify mangled exports:' + #10)])
        .Call('printf', [LTiger.Str('  Each overload should have a unique mangled name' + #10)])
 
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test12.exe'), ssConsole);
@@ -1365,17 +1418,17 @@ begin
   //============================================================================
   // Test13: DLL Generation (Phase 5e)
   //============================================================================
-  TUtils.PrintLn('');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test13: DLL Generation (Phase 5e)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test13: DLL Generation (Phase 5e)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   //----------------------------------------------------------------------------
   // Part 1: Build Test13.dll
   //----------------------------------------------------------------------------
-  TUtils.PrintLn('--- Building Test13.dll ---');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('--- Building Test13.dll ---');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -1418,16 +1471,15 @@ begin
   //----------------------------------------------------------------------------
   // Part 2: Build Test13.exe that imports from Test13.dll
   //----------------------------------------------------------------------------
-  TUtils.PrintLn('');
-  TUtils.PrintLn('--- Building Test13.exe ---');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('--- Building Test13.exe ---');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test13.exe');
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtInt32], vtVoid);
     LTiger.ImportDll('Test13.dll', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
     LTiger.ImportDll('Test13.dll', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
 
@@ -1451,7 +1503,7 @@ begin
        .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
        .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, DllMain' + #10)])
 
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test13.exe'), ssConsole);
@@ -1475,17 +1527,17 @@ procedure Test14(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test14: Runtime Memory (Phase 5f)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test14: Runtime Memory (Phase 5f)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test14.exe');
-    LTiger.SetOptimizationLevel(1);
+    //LTiger.SetOptimizationLevel(1);
 
     // Add an UNUSED function to test DCE removes it
     LTiger.BeginFunc('UnusedFunc', vtInt32, False, plC, False)
@@ -1561,11 +1613,11 @@ procedure Test15(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test15: Managed Strings (Phase 5g)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test15: Managed Strings (Phase 5g)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -1661,10 +1713,10 @@ procedure Test16(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test16: ucrtbase.dll (Universal CRT)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test16: ucrtbase.dll (Universal CRT)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -1707,10 +1759,10 @@ procedure Test17(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test17: Exception Handling (SEH)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test17: Exception Handling (SEH)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -1797,10 +1849,10 @@ procedure Test18(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test18: Sets');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test18: Sets');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -1934,10 +1986,10 @@ procedure Test19(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test19: Compile-Time Intrinsics');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test19: Compile-Time Intrinsics');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -2070,10 +2122,10 @@ procedure Test20(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test20: Variadic Functions');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test20: Variadic Functions');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -2176,10 +2228,10 @@ procedure Test21(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test21: MessageBoxA from user32.dll');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test21: MessageBoxA from user32.dll');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -2223,10 +2275,10 @@ procedure Test22(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test22: GetSystemMetrics from user32.dll');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test22: GetSystemMetrics from user32.dll');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -2271,10 +2323,10 @@ procedure Test23(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test23: Minimal user32.dll (no runtime)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test23: Minimal user32.dll (no runtime)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -2283,13 +2335,12 @@ begin
     LTiger.SetOptimizationLevel(1);
 
     // NO RUNTIME - just bare minimum imports
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
     LTiger.ImportDll('user32.dll', 'GetSystemMetrics', [vtInt32], vtInt32);
 
     LTiger.BeginFunc('main', vtVoid, True)
        .Local('result', vtInt32)
        .Assign('result', LTiger.CallExpr('GetSystemMetrics', [LTiger.Int(0)]))
-       .Call('ExitProcess', [LTiger.Var_('result')])
+       .Call('Tiger_Halt', [LTiger.Var_('result')])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test23.exe'), ssConsole);
@@ -2312,17 +2363,16 @@ procedure Test24(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test24: Dynamic user32.dll (LoadLibrary)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test24: Dynamic user32.dll (LoadLibrary)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
     LTiger.SetStatusCallback(StatusCallback);
     SetExeResources(LTiger, 'Test24.exe');
     LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
     LTiger.ImportDll('kernel32.dll', 'LoadLibraryA', [vtPointer], vtPointer);
     LTiger.ImportDll('kernel32.dll', 'GetProcAddress', [vtPointer, vtPointer], vtPointer);
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
@@ -2338,7 +2388,7 @@ begin
        .Assign('pFunc', LTiger.CallExpr('GetProcAddress', [LTiger.Var_('hUser32'), LTiger.Str('GetSystemMetrics')]))
        .Call('printf', [LTiger.Str('GetSystemMetrics = %p' + #10), LTiger.Var_('pFunc')])
        .Call('printf', [LTiger.Str('Success! Exiting with 42' + #10)])
-       .Call('ExitProcess', [LTiger.Int(42)])
+       .Call('Tiger_Halt', [LTiger.Int(42)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test24.exe'), ssConsole);
@@ -2360,10 +2410,10 @@ procedure Test25(const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test25: user32 with msvcrt first');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test25: user32 with msvcrt first');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -2371,7 +2421,6 @@ begin
     SetExeResources(LTiger, 'Test25.exe');
     LTiger.SetOptimizationLevel(1);
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
     LTiger.ImportDll('user32.dll', 'GetSystemMetrics', [vtInt32], vtInt32);
 
     LTiger.BeginFunc('main', vtVoid, True)
@@ -2381,7 +2430,7 @@ begin
        .Assign('width', LTiger.CallExpr('GetSystemMetrics', [LTiger.Int(0)]))
        .Call('printf', [LTiger.Str('Screen width = %d' + #10), LTiger.Var_('width')])
        .Call('printf', [LTiger.Str('Success!' + #10)])
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test25.exe'), ssConsole);
@@ -2408,17 +2457,17 @@ begin
   //============================================================================
   // Test26: Static Linking (.lib -> .exe)
   //============================================================================
-  TUtils.PrintLn('');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('Test26: Static Linking (.lib -> .exe)');
-  TUtils.PrintLn('========================================');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test26: Static Linking (.lib -> .exe)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
 
   //----------------------------------------------------------------------------
   // Part 1: Build Test26.lib with public functions
   //----------------------------------------------------------------------------
-  TUtils.PrintLn('--- Building Test26.lib ---');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('--- Building Test26.lib ---');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -2463,9 +2512,9 @@ begin
   //----------------------------------------------------------------------------
   // Part 2: Build Test26.exe that statically links Test26.lib
   //----------------------------------------------------------------------------
-  TUtils.PrintLn('');
-  TUtils.PrintLn('--- Building Test26.exe ---');
-  TUtils.PrintLn('');
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('--- Building Test26.exe ---');
+  TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create();
   try
@@ -2473,7 +2522,6 @@ begin
     SetExeResources(LTiger, 'Test26.exe');
     LTiger.SetOptimizationLevel(1);
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtInt32], vtVoid);
 
     LTiger.ImportLib('Test26', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
     LTiger.ImportLib('Test26', 'MulC', [vtInt32, vtInt32], vtInt32, False, plC);
@@ -2494,7 +2542,7 @@ begin
        .Call('printf', [LTiger.Str('AddCpp(10, 20) = %d (expect 130)' + #10), LTiger.Var_('r3')])
 
        .Call('printf', [LTiger.Str(#10 + 'Success!' + #10)])
-       .Call('ExitProcess', [LTiger.Int(0)])
+       .Call('Tiger_Halt', [LTiger.Int(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test26.exe'), ssConsole);
@@ -2507,6 +2555,11 @@ begin
   end;
 end;
 
+(*==============================================================================
+  RunTest: Executes a single test by number, dispatching to the corresponding
+  test procedure. If ADumpSSA is True, the SSA intermediate representation
+  is printed after the build completes.
+==============================================================================*)
 procedure RunTest(const ANum: Integer; const ADumpSSA: Boolean=False);
 begin
   case ANum of
@@ -2536,6 +2589,7 @@ begin
     24: Test24(ADumpSSA);
     25: Test25(ADumpSSA);
     26: Test26(ADumpSSA);
+    27: Test03_2(ADumpSSA);
   end;
 end;
 
@@ -2551,13 +2605,13 @@ begin
   except
     on E: Exception do
     begin
-      TUtils.PrintLn('');
-      TUtils.PrintLn(COLOR_RED + 'EXCEPTION: ' + E.Message + COLOR_RESET);
+      TWin64Utils.PrintLn('');
+      TWin64Utils.PrintLn(COLOR_RED + 'EXCEPTION: ' + E.Message + COLOR_RESET);
     end;
   end;
 
-  if TUtils.RunFromIDE() then
-    TUtils.Pause();
+  if TWin64Utils.RunFromIDE() then
+    TWin64Utils.Pause();
 end;
 
 end.

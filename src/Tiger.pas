@@ -20,11 +20,16 @@ uses
   System.Generics.Collections,
   System.IOUtils,
   Tiger.Utils,
+  Tiger.Utils.Win64,
   Tiger.Errors,
   Tiger.Common,
+  Tiger.Types,
+  Tiger.Builders,
   Tiger.Backend,
+  Tiger.Backend.Win64,
   Tiger.IR,
-  Tiger.Runtime;
+  Tiger.Runtime,
+  Tiger.Runtime.Win64;
 
 //==============================================================================
 // TYPE ALIASES
@@ -50,7 +55,7 @@ type
   ///   </para>
   /// </remarks>
   /// <seealso cref="TTigerTypeRef"/>
-  TTigerValueType = Tiger.Backend.TTigerValueType;
+  TTigerValueType = Tiger.Types.TTigerValueType;
 
   /// <summary>
   ///   Target subsystem for executable output (console or GUI).
@@ -66,7 +71,7 @@ type
   ///     executable (<see cref="TTiger.TargetExe"/>).
   ///   </para>
   /// </remarks>
-  TTigerSubsystem = Tiger.Backend.TTigerSubsystem;
+  TTigerSubsystem = Tiger.Types.TTigerSubsystem;
 
   /// <summary>
   ///   Output binary format (exe, dll, lib, obj).
@@ -79,7 +84,7 @@ type
   ///     external linkers.
   ///   </para>
   /// </remarks>
-  TTigerOutputType = Tiger.Backend.TTigerOutputType;
+  TTigerOutputType = Tiger.Types.TTigerOutputType;
 
   /// <summary>
   ///   Function linkage specification controlling name-mangling and calling
@@ -224,7 +229,7 @@ type
   ///     backend via <see cref="TTiger.GetBackend"/>.
   ///   </para>
   /// </remarks>
-  TTigerDataHandle = Tiger.Backend.TTigerDataHandle;
+  TTigerDataHandle = Tiger.Types.TTigerDataHandle;
 
   /// <summary>
   ///   Handle to an imported function registered in the backend import table.
@@ -237,7 +242,7 @@ type
   ///     the backend via <see cref="TTiger.GetBackend"/>.
   ///   </para>
   /// </remarks>
-  TTigerImportHandle = Tiger.Backend.TTigerImportHandle;
+  TTigerImportHandle = Tiger.Types.TTigerImportHandle;
 
   /// <summary>
   ///   Operand for low-level backend code builder instructions.
@@ -255,13 +260,13 @@ type
   ///     Most users should use the high-level TTiger API instead.
   ///   </para>
   /// </remarks>
-  TTigerOperand = Tiger.Backend.TTigerOperand;
+  TTigerOperand = Tiger.Types.TTigerOperand;
 
 //==============================================================================
 // ENUM VALUE CONSTANTS
 //==============================================================================
 // Re-export enum values so the user can write vtInt32 instead of
-// Tiger.Backend.TTigerValueType.vtInt32.
+// Tiger.Types.TTigerValueType.vtInt32.
 //==============================================================================
 
 const
@@ -269,36 +274,36 @@ const
   //--- Value Types ------------------------------------------------------------
 
   /// <summary>No return value (procedure). Invalid for variables or parameters.</summary>
-  vtVoid    = Tiger.Backend.TTigerValueType.vtVoid;
+  vtVoid    = Tiger.Types.TTigerValueType.vtVoid;
   /// <summary>Signed 8-bit integer (range -128..127). Maps to a single byte in the output.</summary>
-  vtInt8    = Tiger.Backend.TTigerValueType.vtInt8;
+  vtInt8    = Tiger.Types.TTigerValueType.vtInt8;
   /// <summary>Signed 16-bit integer (range -32768..32767).</summary>
-  vtInt16   = Tiger.Backend.TTigerValueType.vtInt16;
+  vtInt16   = Tiger.Types.TTigerValueType.vtInt16;
   /// <summary>Signed 32-bit integer. Compatible with the Windows <c>INT</c>/<c>LONG</c> types.</summary>
-  vtInt32   = Tiger.Backend.TTigerValueType.vtInt32;
+  vtInt32   = Tiger.Types.TTigerValueType.vtInt32;
   /// <summary>Signed 64-bit integer. Compatible with the Windows <c>LONGLONG</c> type and Delphi <c>Int64</c>.</summary>
-  vtInt64   = Tiger.Backend.TTigerValueType.vtInt64;
+  vtInt64   = Tiger.Types.TTigerValueType.vtInt64;
   /// <summary>Unsigned 8-bit integer (range 0..255). Commonly used for byte buffers and <c>BYTE</c> parameters.</summary>
-  vtUInt8   = Tiger.Backend.TTigerValueType.vtUInt8;
+  vtUInt8   = Tiger.Types.TTigerValueType.vtUInt8;
   /// <summary>Unsigned 16-bit integer (range 0..65535). Compatible with <c>WORD</c>.</summary>
-  vtUInt16  = Tiger.Backend.TTigerValueType.vtUInt16;
+  vtUInt16  = Tiger.Types.TTigerValueType.vtUInt16;
   /// <summary>Unsigned 32-bit integer (range 0..4294967295). Compatible with <c>DWORD</c> and Windows API exit codes.</summary>
-  vtUInt32  = Tiger.Backend.TTigerValueType.vtUInt32;
+  vtUInt32  = Tiger.Types.TTigerValueType.vtUInt32;
   /// <summary>Unsigned 64-bit integer. Compatible with <c>QWORD</c> and <c>UInt64</c>.</summary>
-  vtUInt64  = Tiger.Backend.TTigerValueType.vtUInt64;
+  vtUInt64  = Tiger.Types.TTigerValueType.vtUInt64;
   /// <summary>32-bit IEEE 754 single-precision floating point. Compatible with Delphi <c>Single</c> and C <c>float</c>.</summary>
-  vtFloat32 = Tiger.Backend.TTigerValueType.vtFloat32;
+  vtFloat32 = Tiger.Types.TTigerValueType.vtFloat32;
   /// <summary>64-bit IEEE 754 double-precision floating point. Compatible with Delphi <c>Double</c> and C <c>double</c>.</summary>
-  vtFloat64 = Tiger.Backend.TTigerValueType.vtFloat64;
+  vtFloat64 = Tiger.Types.TTigerValueType.vtFloat64;
   /// <summary>64-bit pointer. Used for string arguments, buffer addresses, function pointers, and opaque handles.</summary>
-  vtPointer = Tiger.Backend.TTigerValueType.vtPointer;
+  vtPointer = Tiger.Types.TTigerValueType.vtPointer;
 
   //--- Subsystem --------------------------------------------------------------
 
   /// <summary>Console subsystem — the OS attaches a console window providing stdout/stdin/stderr.</summary>
-  ssConsole = Tiger.Backend.TTigerSubsystem.ssConsole;
+  ssConsole = Tiger.Types.TTigerSubsystem.ssConsole;
   /// <summary>GUI subsystem — no console window is created. The application must create its own windows.</summary>
-  ssGui     = Tiger.Backend.TTigerSubsystem.ssGui;
+  ssGui     = Tiger.Types.TTigerSubsystem.ssGui;
 
   //--- Linkage ----------------------------------------------------------------
 
@@ -449,6 +454,7 @@ type
     FErrors: TErrors;
     FIR: TTigerIR;
     FBackend: TTigerBackend;
+    FRuntime: TTigerRuntime;
     FStatus: TCallback<TStatusCallback>;
 
     // Version info
@@ -3213,14 +3219,17 @@ begin
   FIR := TTigerIR.Create();
   FIR.SetErrors(FErrors);
 
-  FBackend := TTigerBackend.Create();
+  FBackend := TTigerWin64Backend.Create();
   FBackend.SetErrors(FErrors);
+
+  FRuntime := TTigerWin64Runtime.Create();
 
   FStatus := Default(TCallback<TStatusCallback>);
 end;
 
 destructor TTiger.Destroy();
 begin
+  FRuntime.Free();
   FBackend.Free();
   FIR.Free();
   FErrors.Free();
@@ -3244,9 +3253,9 @@ begin
   // 1. Add manifest (EXE only)
   if LIsExe then
   begin
-    if TUtils.ResourceExist('EXE_MANIFEST') then
+    if TWin64Utils.ResourceExist('EXE_MANIFEST') then
     begin
-      if not TUtils.AddResManifestFromResource('EXE_MANIFEST', AExePath) then
+      if not TWin64Utils.AddResManifestFromResource('EXE_MANIFEST', AExePath) then
         FErrors.Add(esWarning, 'W980', 'Failed to add manifest to executable')
       else
         FBackend.Status('Added application manifest');
@@ -3265,7 +3274,7 @@ begin
       *)
       if TFile.Exists(LIconPath) then
       begin
-        TUtils.UpdateIconResource(AExePath, LIconPath);
+        TWin64Utils.UpdateIconResource(AExePath, LIconPath);
         FBackend.Status('Added icon: %s', [LIconPath.Replace('\', '/')]);
       end
       else
@@ -3280,7 +3289,7 @@ begin
   if FAddVersionInfo then
   begin
     try
-      TUtils.UpdateVersionInfoResource(
+      TWin64Utils.UpdateVersionInfoResource(
         AExePath,
         FVIMajor,
         FVIMinor,
@@ -3358,8 +3367,12 @@ function TTiger.Build(const AAutoRun: Boolean; AExitCode: PCardinal): Boolean;
 var
   LExitCode: Cardinal;
 begin
+  // Strip any previously-injected runtime, then mark user code boundary
+  FIR.RestoreSnapshot();
+  FIR.SaveSnapshot();
+
   // Inject runtime library (optimizer removes unused routines)
-  TTigerRuntime.AddAll(FIR, FBackend.GetOptimizationLevel());
+  FRuntime.AddAll(FIR, FBackend.GetOptimizationLevel());
 
   // Emit IR to the backend
   FIR.EmitTo(FBackend, FStatus.Callback, FStatus.UserData);
@@ -3386,8 +3399,12 @@ end;
 
 function TTiger.BuildToMemory(): TBytes;
 begin
+  // Strip any previously-injected runtime, then mark user code boundary
+  FIR.RestoreSnapshot();
+  FIR.SaveSnapshot();
+
   // Inject runtime library
-  TTigerRuntime.AddAll(FIR, FBackend.GetOptimizationLevel());
+  FRuntime.AddAll(FIR, FBackend.GetOptimizationLevel());
 
   // Emit IR to the backend
   FIR.EmitTo(FBackend, FStatus.Callback, FStatus.UserData);

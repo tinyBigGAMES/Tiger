@@ -22,6 +22,8 @@ uses
   Tiger.Common,
   Tiger.Errors,
   Tiger.Resources,
+  Tiger.Types,
+  Tiger.Builders,
   Tiger.Backend,
   Tiger.IR;
 
@@ -1722,8 +1724,8 @@ begin
     // Entry points may still need to report leaks even with no managed vars
     if (LManagedLocals.Count = 0) and (LManagedGlobals.Count = 0) then
     begin
-      // Nothing to clean up - but entry points may still report leaks
-      if not ((LIsEntryPoint or LIsDllEntry) and Assigned(FSSABuilder) and (FSSABuilder.GetReportLeaksFuncIdx() >= 0)) then
+      // Nothing to clean up - but EXE entry points may still report leaks
+      if not (LIsEntryPoint and Assigned(FSSABuilder) and (FSSABuilder.GetReportLeaksFuncIdx() >= 0)) then
         Exit;
     end
     else if LFuncIdx < 0 then
@@ -1786,8 +1788,10 @@ begin
               Inc(LInstrIdx);
             end;
             
-            // Call Pax_ReportLeaks after all cleanup (debug mode only)
-            if Assigned(FSSABuilder) and (FSSABuilder.GetReportLeaksFuncIdx() >= 0) then
+            // Call Tiger_ReportLeaks after all cleanup (debug mode only)
+            // Only for EXE entry points, not DLL entries (DllMain fires on
+            // both ATTACH and DETACH, which would produce duplicate reports)
+            if LIsEntryPoint and Assigned(FSSABuilder) and (FSSABuilder.GetReportLeaksFuncIdx() >= 0) then
             begin
               LReleaseInstr := Default(TTigerSSAInstr);
               LReleaseInstr.Kind := sikCall;

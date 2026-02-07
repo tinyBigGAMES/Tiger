@@ -938,13 +938,40 @@ Tiger includes built-in heap management through the runtime. `Tiger_GetMem` allo
 |-----------------|-------------|
 | `Tiger_GetMem(size)` | Allocate zero-initialized memory |
 | `Tiger_FreeMem(ptr)` | Free memory |
-| `Tiger_Halt(exitCode)` | Exit process cleanly |
+| `Tiger_Halt(exitCode)` | Exit process cleanly (reports heap leaks in debug builds) |
+| `Tiger_ReportLeaks()` | Print heap allocation summary (debug builds only) |
 
 ```delphi
 .Assign('ptr', LTiger.CallExpr('Tiger_GetMem', [LTiger.Int(8)]))
 .AssignToExpr(LTiger.Deref(LTiger.Var_('ptr')), LTiger.Int(12345))
 .Assign('val', LTiger.Deref(LTiger.Var_('ptr')))
 .Call('Tiger_FreeMem', [LTiger.Var_('ptr')])
+```
+
+### Heap Leak Detection
+
+At optimization level 0 (debug builds), Tiger automatically tracks every `Tiger_GetMem` and `Tiger_FreeMem` call using internal counters. When the program exits through `Tiger_Halt`, it calls `Tiger_ReportLeaks` before terminating, printing a one-line summary to the console:
+
+```
+[Heap] Allocs: 3, Frees: 2, Leaked: 1
+```
+
+This is a compile-time feature, not a runtime flag. At optimization level 1 and above, the allocation counters, `Tiger_ReportLeaks`, and all leak-tracking code are completely absent from the generated binary — there is zero overhead in optimized builds.
+
+The SSA optimizer also auto-injects `Tiger_ReportLeaks` before return instructions in EXE entry points, so programs that return from `main` instead of calling `Tiger_Halt` still get the report.
+
+You can also call `Tiger_ReportLeaks` manually at any point during execution to get a snapshot of the current allocation state:
+
+```delphi
+LTiger.SetOptimizationLevel(0);  // Enable debug heap tracking
+
+LTiger.BeginFunc('main', vtVoid, True)
+   .Assign('p1', LTiger.CallExpr('Tiger_GetMem', [LTiger.Int(64)]))
+   .Assign('p2', LTiger.CallExpr('Tiger_GetMem', [LTiger.Int(128)]))
+   .Call('Tiger_ReportLeaks', [])       // Snapshot: Allocs: 2, Frees: 0, Leaked: 2
+   .Call('Tiger_FreeMem', [LTiger.Var_('p1')])
+   .Call('Tiger_Halt', [LTiger.Int(0)]) // Final:    Allocs: 2, Frees: 1, Leaked: 1
+.EndFunc();
 ```
 
 ## 🔧 Global Variables

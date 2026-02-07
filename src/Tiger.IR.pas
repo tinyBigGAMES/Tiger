@@ -21,6 +21,8 @@ uses
   Tiger.Utils,
   Tiger.Common,
   Tiger.Errors,
+  Tiger.Types,
+  Tiger.Builders,
   Tiger.Backend,
   Tiger.ABI;
 
@@ -458,6 +460,13 @@ type
     FExpressions: TList<TIRExprNode>;
     FCurrentFunc: Integer;
 
+    // Runtime snapshot (marks boundary between user code and injected runtime)
+    FSnapshotFuncs: Integer;
+    FSnapshotImports: Integer;
+    FSnapshotStrings: Integer;
+    FSnapshotGlobals: Integer;
+    FSnapshotExprs: Integer;
+
     // Type registry
     FTypes: TList<TIRTypeEntry>;
     FBuildingRecordIndex: Integer;  // Index of record being built, -1 if none
@@ -812,6 +821,24 @@ type
     procedure Clear();
 
     //--------------------------------------------------------------------------
+    // Runtime snapshot (for ResetBuild support)
+    //--------------------------------------------------------------------------
+
+    /// <summary>
+    ///   Saves the current IR list counts as a snapshot. Everything added after
+    ///   this point (typically runtime injection) can be removed by calling
+    ///   RestoreSnapshot.
+    /// </summary>
+    procedure SaveSnapshot();
+
+    /// <summary>
+    ///   Truncates all IR lists back to the snapshot point, removing any
+    ///   runtime-injected functions, imports, strings, and globals. No-op if
+    ///   no snapshot has been saved.
+    /// </summary>
+    procedure RestoreSnapshot();
+
+    //--------------------------------------------------------------------------
     // Getters for SSA conversion
     //--------------------------------------------------------------------------
     function GetImportCount(): Integer;
@@ -961,6 +988,11 @@ begin
   FVarHandles := TDictionary<string, TTigerLocalHandle>.Create();
   FBlockStack := TStack<TBlockInfo>.Create();
   FCurrentFunc := -1;
+  FSnapshotFuncs := -1;
+  FSnapshotImports := -1;
+  FSnapshotStrings := -1;
+  FSnapshotGlobals := -1;
+  FSnapshotExprs := -1;
   FBuildingRecordIndex := -1;
   FBuildingUnionIndex := -1;
   FBuildingEnumIndex := -1;
@@ -4477,10 +4509,68 @@ begin
   FAnonUnionFieldStart := -1;
   FNextAnonRecordGroup := 0;
   FAnonRecordInUnion := False;
+  FSnapshotFuncs := -1;
+  FSnapshotImports := -1;
+  FSnapshotStrings := -1;
+  FSnapshotGlobals := -1;
+  FSnapshotExprs := -1;
 
   SetLength(FImportHandles, 0);
   SetLength(FStringHandles, 0);
   SetLength(FGlobalHandles, 0);
+end;
+
+//==============================================================================
+// TTigerIR - Runtime Snapshot
+//==============================================================================
+
+procedure TTigerIR.SaveSnapshot();
+begin
+  FSnapshotFuncs := FFunctions.Count;
+  FSnapshotImports := FImports.Count;
+  FSnapshotStrings := FStrings.Count;
+  FSnapshotGlobals := FGlobals.Count;
+  FSnapshotExprs := FExpressions.Count;
+end;
+
+procedure TTigerIR.RestoreSnapshot();
+var
+  LI: Integer;
+  LCount: Integer;
+begin
+  if FSnapshotFuncs < 0 then
+    Exit;
+
+  // Free owned sub-objects on functions being removed
+  for LI := FFunctions.Count - 1 downto FSnapshotFuncs do
+  begin
+    FFunctions[LI].Vars.Free();
+    FFunctions[LI].Stmts.Free();
+  end;
+
+  // Truncate all lists back to snapshot point
+  LCount := FFunctions.Count - FSnapshotFuncs;
+  if LCount > 0 then
+    FFunctions.DeleteRange(FSnapshotFuncs, LCount);
+
+  LCount := FImports.Count - FSnapshotImports;
+  if LCount > 0 then
+    FImports.DeleteRange(FSnapshotImports, LCount);
+
+  LCount := FStrings.Count - FSnapshotStrings;
+  if LCount > 0 then
+    FStrings.DeleteRange(FSnapshotStrings, LCount);
+
+  LCount := FGlobals.Count - FSnapshotGlobals;
+  if LCount > 0 then
+    FGlobals.DeleteRange(FSnapshotGlobals, LCount);
+
+  LCount := FExpressions.Count - FSnapshotExprs;
+  if LCount > 0 then
+    FExpressions.DeleteRange(FSnapshotExprs, LCount);
+
+  // Reset snapshot
+  FSnapshotFuncs := -1;
 end;
 
 //==============================================================================
