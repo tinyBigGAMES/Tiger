@@ -113,7 +113,7 @@ type
   ///   <para>
   ///     Expression handles are lightweight value types that reference nodes
   ///     in the IR expression graph. They are produced by literal constructors
-  ///     (<see cref="TTiger.Int"/>, <see cref="TTiger.Str"/>, etc.),
+  ///     (<see cref="TTiger.Int64"/>, <see cref="TTiger.Str"/>, etc.),
   ///     arithmetic operators (<see cref="TTiger.Add"/>, <see cref="TTiger.Mul"/>,
   ///     etc.), and other expression builders.
   ///   </para>
@@ -125,10 +125,10 @@ type
   ///     in simple literal contexts.
   ///   </para>
   /// </remarks>
-  /// <seealso cref="TTiger.Int"/>
+  /// <seealso cref="TTiger.Int64"/>
   /// <seealso cref="TTiger.Str"/>
-  /// <seealso cref="TTiger.Var_"/>
-  /// <seealso cref="TTiger.CallExpr"/>
+  /// <seealso cref="TTiger.Get"/>
+  /// <seealso cref="TTiger.Invoke"/>
   TTigerExpr = Tiger.IR.TTigerIRExpr;
 
   /// <summary>
@@ -382,7 +382,7 @@ type
   ///     3. Optionally define types with <see cref="DefineRecord"/>,
   ///        <see cref="DefineArray"/>, <see cref="DefineEnum"/>, etc.<br/>
   ///     4. Define globals with <see cref="Global"/>.<br/>
-  ///     5. Define one or more functions using <see cref="BeginFunc"/> ...
+  ///     5. Define one or more functions using <see cref="Func"/> ...
   ///        <see cref="EndFunc"/>.<br/>
   ///     6. Set the output target with <see cref="TargetExe"/>,
   ///        <see cref="TargetDll"/>, <see cref="TargetLib"/>, or
@@ -424,17 +424,17 @@ type
   ///
   ///         // 2. Define a function
   ///         LTiger
-  ///           .BeginFunc('main', vtVoid, True)
+  ///           .Func('main', vtVoid, True)
   ///             .Local('n', vtInt64)
   ///             .Local('result', vtInt64)
-  ///             .Assign('n', LTiger.Int(5))
-  ///             .Assign('result', LTiger.Int(1))
-  ///             .WhileBegin(LTiger.CmpGt(LTiger.Var_('n'), LTiger.Int(1)))
-  ///               .Assign('result', LTiger.Mul(LTiger.Var_('result'), LTiger.Var_('n')))
-  ///               .Assign('n', LTiger.Sub(LTiger.Var_('n'), LTiger.Int(1)))
-  ///             .WhileEnd()
-  ///             .Call('printf', [LTiger.Str('5! = %d'#10), LTiger.Var_('result')])
-  ///             .Call('ExitProcess', [LTiger.Int(0)])
+  ///             .Assign('n', LTiger.Int64(5))
+  ///             .Assign('result', LTiger.Int64(1))
+  ///             .&While(LTiger.Gt(LTiger.Get('n'), LTiger.Int64(1)))
+  ///               .Assign('result', LTiger.Mul(LTiger.Get('result'), LTiger.Get('n')))
+  ///               .Assign('n', LTiger.Sub(LTiger.Get('n'), LTiger.Int64(1)))
+  ///             .EndWhile()
+  ///             .Call('printf', [LTiger.Str('5! = %d'#10), LTiger.Get('result')])
+  ///             .Call('ExitProcess', [LTiger.Int64(0)])
   ///           .EndFunc();
   ///
   ///         // 3. Build
@@ -515,7 +515,7 @@ type
     ///   </para>
     ///   <para>
     ///     The generated executable requires a function marked as the entry
-    ///     point (<c>AIsEntryPoint = True</c> in <see cref="BeginFunc"/>).
+    ///     point (<c>AIsEntryPoint = True</c> in <see cref="Func"/>).
     ///   </para>
     /// </remarks>
     /// <seealso cref="TargetDll"/>
@@ -536,12 +536,12 @@ type
     ///   <para>
     ///     Functions intended for export should be declared with
     ///     <c>AIsPublic = True</c> and <c>plC</c> linkage in
-    ///     <see cref="BeginFunc"/>. Optionally define a DLL entry point
-    ///     via <see cref="BeginDllMain"/>.
+    ///     <see cref="Func"/>. Optionally define a DLL entry point
+    ///     via <see cref="DllMain"/>.
     ///   </para>
     /// </remarks>
     /// <seealso cref="TargetExe"/>
-    /// <seealso cref="BeginDllMain"/>
+    /// <seealso cref="DllMain"/>
     function TargetDll(const APath: string): TTiger;
 
     /// <summary>
@@ -954,12 +954,12 @@ type
     ///     the Windows loader resolves the function address from the
     ///     specified DLL. Call the imported function by name from any
     ///     Tiger function using <see cref="Call"/> or
-    ///     <see cref="CallExpr"/>.
+    ///     <see cref="Invoke"/>.
     ///   </para>
     /// </remarks>
     /// <seealso cref="ImportLib"/>
     /// <seealso cref="Call"/>
-    /// <seealso cref="CallExpr"/>
+    /// <seealso cref="Invoke"/>
     function ImportDll(
       const ADllName: string;
       const AFuncName: string;
@@ -1027,11 +1027,11 @@ type
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
     ///   The variable is accessible from all functions via
-    ///   <see cref="Var_"/>, <see cref="Assign"/>, <see cref="AddrOf"/>,
+    ///   <see cref="Get"/>, <see cref="Assign"/>, <see cref="AddrOf"/>,
     ///   etc. Its initial value is zero/nil.
     /// </remarks>
     /// <seealso cref="Local"/>
-    /// <seealso cref="Var_"/>
+    /// <seealso cref="Get"/>
     function Global(const AName: string; const AType: TTigerValueType): TTiger; overload;
 
     /// <summary>
@@ -1042,7 +1042,7 @@ type
     /// <param name="AType">Primitive value type.</param>
     /// <param name="AInit">
     ///   Initial value expression, typically a literal such as
-    ///   <see cref="Int"/> or <see cref="Flt"/>.
+    ///   <see cref="Int64"/> or <see cref="Float64"/>.
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
     function Global(const AName: string; const AType: TTigerValueType; const AInit: TTigerExpr): TTiger; overload;
@@ -1139,9 +1139,9 @@ type
     /// <param name="AType">Primitive value type for the field.</param>
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
-    ///   Access this field at runtime via <see cref="FieldExpr"/>.
+    ///   Access this field at runtime via <see cref="GetField"/>.
     /// </remarks>
-    /// <seealso cref="FieldExpr"/>
+    /// <seealso cref="GetField"/>
     /// <seealso cref="BitField"/>
     function Field(const AName: string; const AType: TTigerValueType): TTiger; overload;
 
@@ -1154,7 +1154,7 @@ type
     ///   Name of a previously defined type (record, array, enum, alias, etc.).
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="FieldExpr"/>
+    /// <seealso cref="GetField"/>
     function Field(const AName: string; const ATypeName: string): TTiger; overload;
 
     /// <summary>
@@ -1248,13 +1248,13 @@ type
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
     ///   The array contains <c>AHighBound - ALowBound + 1</c> elements.
-    ///   Access elements at runtime via <see cref="IndexExpr"/>.
+    ///   Access elements at runtime via <see cref="GetIndex"/>.
     /// </remarks>
-    /// <seealso cref="IndexExpr"/>
+    /// <seealso cref="GetIndex"/>
     /// <seealso cref="DefineDynArray"/>
-    /// <seealso cref="High_"/>
-    /// <seealso cref="Low_"/>
-    /// <seealso cref="Len_"/>
+    /// <seealso cref="High"/>
+    /// <seealso cref="Low"/>
+    /// <seealso cref="Len"/>
     function DefineArray(const AName: string; const AElementType: TTigerValueType;
       const ALowBound: Integer; const AHighBound: Integer): TTiger; overload;
 
@@ -1268,7 +1268,7 @@ type
     /// <param name="ALowBound">Inclusive lower bound of the array index.</param>
     /// <param name="AHighBound">Inclusive upper bound of the array index.</param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="IndexExpr"/>
+    /// <seealso cref="GetIndex"/>
     function DefineArray(const AName: string; const AElementTypeName: string;
       const ALowBound: Integer; const AHighBound: Integer): TTiger; overload;
 
@@ -1313,8 +1313,8 @@ type
     ///     Finalize with <see cref="EndEnum"/>.
     ///   </para>
     ///   <para>
-    ///     Enum values can be used with <see cref="Ord_"/>,
-    ///     <see cref="Succ_"/>, <see cref="Pred_"/>, and as
+    ///     Enum values can be used with <see cref="Ord"/>,
+    ///     <see cref="Succ"/>, <see cref="Pred"/>, and as
     ///     <see cref="CaseOf"/> selectors. Enum types can also serve
     ///     as the basis for <see cref="DefineSet"/>.
     ///   </para>
@@ -1447,7 +1447,7 @@ type
     ///   <para>
     ///     Use the resulting type name to declare variables or fields
     ///     that hold function pointers. Call through them using
-    ///     <see cref="CallIndirect"/> or <see cref="IndirectCallExpr"/>.
+    ///     <see cref="CallIndirect"/> or <see cref="InvokeIndirect"/>.
     ///   </para>
     /// </remarks>
     /// <seealso cref="RoutineParam"/>
@@ -1572,7 +1572,7 @@ type
     /// </param>
     /// <returns>Size in bytes, accounting for padding and alignment.</returns>
     /// <seealso cref="GetTypeAlignment"/>
-    /// <seealso cref="SizeOf_"/>
+    /// <seealso cref="&SizeOf"/>
     function GetTypeSize(const ATypeRef: TTigerTypeRef): Integer;
 
     /// <summary>
@@ -1583,7 +1583,7 @@ type
     /// </param>
     /// <returns>Alignment in bytes.</returns>
     /// <seealso cref="GetTypeSize"/>
-    /// <seealso cref="AlignOf_"/>
+    /// <seealso cref="AlignOf"/>
     function GetTypeAlignment(const ATypeRef: TTigerTypeRef): Integer;
 
     /// <summary>
@@ -1610,7 +1610,7 @@ type
     /// </summary>
     /// <param name="AName">
     ///   Unique function name. This is the name used by <see cref="Call"/>,
-    ///   <see cref="CallExpr"/>, and <see cref="FuncAddr"/>.
+    ///   <see cref="Invoke"/>, and <see cref="FuncAddr"/>.
     /// </param>
     /// <param name="AReturnType">
     ///   Primitive return type. Defaults to <c>vtVoid</c> (procedure).
@@ -1639,16 +1639,16 @@ type
     ///     Within the function body, declare parameters with
     ///     <see cref="Param"/>, local variables with <see cref="Local"/>,
     ///     then emit statements (assignments, calls, control flow).
-    ///     Expressions are built using methods like <see cref="Int"/>,
-    ///     <see cref="Var_"/>, <see cref="Add"/>, etc.
+    ///     Expressions are built using methods like <see cref="Int64"/>,
+    ///     <see cref="Get"/>, <see cref="Add"/>, etc.
     ///   </para>
     /// </remarks>
     /// <seealso cref="EndFunc"/>
     /// <seealso cref="Param"/>
     /// <seealso cref="Local"/>
-    /// <seealso cref="BeginOverloadFunc"/>
-    /// <seealso cref="BeginVariadicFunc"/>
-    function BeginFunc(const AName: string;
+    /// <seealso cref="OverloadFunc"/>
+    /// <seealso cref="VariadicFunc"/>
+    function Func(const AName: string;
       const AReturnType: TTigerValueType = vtVoid;
       const AIsEntryPoint: Boolean = False;
       const ALinkage: TTigerLinkage = plDefault;
@@ -1676,8 +1676,8 @@ type
     ///   Overloaded functions always use <c>plDefault</c> linkage since
     ///   C linkage does not support overloading.
     /// </remarks>
-    /// <seealso cref="BeginFunc"/>
-    function BeginOverloadFunc(const AName: string;
+    /// <seealso cref="Func"/>
+    function OverloadFunc(const AName: string;
       const AReturnType: TTigerValueType = vtVoid;
       const AIsEntryPoint: Boolean = False;
       const AIsPublic: Boolean = False): TTiger;
@@ -1699,15 +1699,15 @@ type
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
     ///   <para>
-    ///     Within the function body, use <see cref="VaCount_"/> to get
-    ///     the number of variadic arguments and <see cref="VaArgAt_"/>
+    ///     Within the function body, use <see cref="VaCount"/> to get
+    ///     the number of variadic arguments and <see cref="VaArg"/>
     ///     to access individual arguments by index and type.
     ///   </para>
     /// </remarks>
-    /// <seealso cref="BeginFunc"/>
-    /// <seealso cref="VaCount_"/>
-    /// <seealso cref="VaArgAt_"/>
-    function BeginVariadicFunc(const AName: string;
+    /// <seealso cref="Func"/>
+    /// <seealso cref="VaCount"/>
+    /// <seealso cref="VaArg"/>
+    function VariadicFunc(const AName: string;
       const AReturnType: TTigerValueType = vtVoid;
       const AIsEntryPoint: Boolean = False;
       const AIsPublic: Boolean = False): TTiger;
@@ -1726,19 +1726,19 @@ type
     ///   <para>
     ///     This is only meaningful when the target is a DLL
     ///     (<see cref="TargetDll"/>). Executable targets should use
-    ///     <see cref="BeginFunc"/> with <c>AIsEntryPoint = True</c>.
+    ///     <see cref="Func"/> with <c>AIsEntryPoint = True</c>.
     ///   </para>
     /// </remarks>
     /// <seealso cref="TargetDll"/>
     /// <seealso cref="EndFunc"/>
-    function BeginDllMain(): TTiger;
+    function DllMain(): TTiger;
 
     /// <summary>
     ///   Declare a parameter for the current function being defined.
     /// </summary>
     /// <param name="AName">
     ///   Parameter name. Accessible within the function body via
-    ///   <see cref="Var_"/>.
+    ///   <see cref="Get"/>.
     /// </param>
     /// <param name="AType">Primitive type of the parameter.</param>
     /// <returns>Self for fluent chaining.</returns>
@@ -1747,9 +1747,9 @@ type
     ///   declarations or statements. The order of <c>Param</c> calls
     ///   defines the calling convention parameter order.
     /// </remarks>
-    /// <seealso cref="BeginFunc"/>
+    /// <seealso cref="Func"/>
     /// <seealso cref="Local"/>
-    /// <seealso cref="Var_"/>
+    /// <seealso cref="Get"/>
     function Param(const AName: string; const AType: TTigerValueType): TTiger;
 
     /// <summary>
@@ -1763,11 +1763,11 @@ type
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
     ///   Local variables are allocated on the stack frame and are
-    ///   zero-initialized. Access them via <see cref="Var_"/>.
+    ///   zero-initialized. Access them via <see cref="Get"/>.
     /// </remarks>
     /// <seealso cref="Param"/>
     /// <seealso cref="Global"/>
-    /// <seealso cref="Var_"/>
+    /// <seealso cref="Get"/>
     function Local(const AName: string; const AType: TTigerValueType): TTiger; overload;
 
     /// <summary>
@@ -1780,7 +1780,7 @@ type
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
     /// <seealso cref="Param"/>
-    /// <seealso cref="Var_"/>
+    /// <seealso cref="Get"/>
     function Local(const AName: string; const ATypeName: string): TTiger; overload;
 
     /// <summary>
@@ -1790,11 +1790,11 @@ type
     /// <remarks>
     ///   Finalizes the function, validates its IR, and makes it
     ///   available for calls from other functions. Must be called
-    ///   exactly once for each <see cref="BeginFunc"/>,
-    ///   <see cref="BeginOverloadFunc"/>, <see cref="BeginVariadicFunc"/>,
-    ///   or <see cref="BeginDllMain"/> call.
+    ///   exactly once for each <see cref="Func"/>,
+    ///   <see cref="OverloadFunc"/>, <see cref="VariadicFunc"/>,
+    ///   or <see cref="DllMain"/> call.
     /// </remarks>
-    /// <seealso cref="BeginFunc"/>
+    /// <seealso cref="Func"/>
     function EndFunc(): TTiger;
 
     //==========================================================================
@@ -1807,8 +1807,8 @@ type
     /// <param name="ADest">Name of the target variable.</param>
     /// <param name="AValue">Expression producing the value to assign.</param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="AssignToExpr"/>
-    /// <seealso cref="Var_"/>
+    /// <seealso cref="AssignTo"/>
+    /// <seealso cref="Get"/>
     function Assign(const ADest: string; const AValue: TTigerExpr): TTiger;
 
     /// <summary>
@@ -1817,21 +1817,21 @@ type
     /// </summary>
     /// <param name="ADest">
     ///   An expression that evaluates to an assignable location, typically
-    ///   from <see cref="FieldExpr"/> or <see cref="IndexExpr"/>.
+    ///   from <see cref="GetField"/> or <see cref="GetIndex"/>.
     /// </param>
     /// <param name="AValue">Expression producing the value to assign.</param>
     /// <returns>Self for fluent chaining.</returns>
     /// <seealso cref="Assign"/>
-    /// <seealso cref="FieldExpr"/>
-    /// <seealso cref="IndexExpr"/>
-    function AssignToExpr(const ADest: TTigerExpr; const AValue: TTigerExpr): TTiger;
+    /// <seealso cref="GetField"/>
+    /// <seealso cref="GetIndex"/>
+    function AssignTo(const ADest: TTigerExpr; const AValue: TTigerExpr): TTiger;
 
     /// <summary>
     ///   Call a function with no arguments (discarding any return value).
     /// </summary>
     /// <param name="AFuncName">Name of the function to call.</param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="CallExpr"/>
+    /// <seealso cref="Invoke"/>
     /// <seealso cref="CallAssign"/>
     function Call(const AFuncName: string): TTiger; overload;
 
@@ -1843,7 +1843,7 @@ type
     ///   Open array of <see cref="TTigerExpr"/> argument expressions.
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="CallExpr"/>
+    /// <seealso cref="Invoke"/>
     /// <seealso cref="CallAssign"/>
     function Call(const AFuncName: string; const AArgs: array of TTigerExpr): TTiger; overload;
 
@@ -1859,7 +1859,7 @@ type
     ///   but expressed as a single fluent statement.
     /// </remarks>
     /// <seealso cref="Call"/>
-    /// <seealso cref="CallExpr"/>
+    /// <seealso cref="Invoke"/>
     function CallAssign(const ADest: string; const AFuncName: string; const AArgs: array of TTigerExpr): TTiger;
 
     /// <summary>
@@ -1871,7 +1871,7 @@ type
     ///   type. For functions that return a value, use the overload that
     ///   accepts a <see cref="TTigerExpr"/>.
     /// </remarks>
-    /// <seealso cref="BeginFunc"/>
+    /// <seealso cref="Func"/>
     function Return(): TTiger; overload;
 
     /// <summary>
@@ -1882,7 +1882,7 @@ type
     ///   declared return type.
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="BeginFunc"/>
+    /// <seealso cref="Func"/>
     function Return(const AValue: TTigerExpr): TTiger; overload;
 
     /// <summary>
@@ -1895,7 +1895,7 @@ type
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
     /// <seealso cref="FuncAddr"/>
-    /// <seealso cref="IndirectCallExpr"/>
+    /// <seealso cref="InvokeIndirect"/>
     function CallIndirect(const AFuncPtr: TTigerExpr): TTiger; overload;
 
     /// <summary>
@@ -1906,7 +1906,7 @@ type
     /// <param name="AArgs">Open array of argument expressions.</param>
     /// <returns>Self for fluent chaining.</returns>
     /// <seealso cref="FuncAddr"/>
-    /// <seealso cref="IndirectCallExpr"/>
+    /// <seealso cref="InvokeIndirect"/>
     function CallIndirect(const AFuncPtr: TTigerExpr; const AArgs: array of TTigerExpr): TTiger; overload;
 
     /// <summary>
@@ -1918,7 +1918,7 @@ type
     /// <param name="AArgs">Open array of argument expressions.</param>
     /// <returns>Self for fluent chaining.</returns>
     /// <seealso cref="CallIndirect"/>
-    /// <seealso cref="IndirectCallExpr"/>
+    /// <seealso cref="InvokeIndirect"/>
     function CallIndirectAssign(const ADest: string; const AFuncPtr: TTigerExpr;
       const AArgs: array of TTigerExpr): TTiger;
 
@@ -1935,34 +1935,34 @@ type
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
-    ///   Must be paired with <see cref="IfEnd"/>. Optionally include an
-    ///   <see cref="ElseBegin"/> branch between the if body and
-    ///   <c>IfEnd</c>.
+    ///   Must be paired with <see cref="EndIf"/>. Optionally include an
+    ///   <see cref="&Else"/> branch between the if body and
+    ///   <c>EndIf</c>.
     /// </remarks>
-    /// <seealso cref="ElseBegin"/>
-    /// <seealso cref="IfEnd"/>
-    function IfBegin(const ACond: TTigerExpr): TTiger;
+    /// <seealso cref="&Else"/>
+    /// <seealso cref="EndIf"/>
+    function &If(const ACond: TTigerExpr): TTiger;
 
     /// <summary>
     ///   Begin the else branch of a conditional block.
     /// </summary>
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
-    ///   Must appear between <see cref="IfBegin"/> and
-    ///   <see cref="IfEnd"/>. Statements following this call execute
-    ///   only when the condition in <c>IfBegin</c> was false.
+    ///   Must appear between <see cref="&If"/> and
+    ///   <see cref="EndIf"/>. Statements following this call execute
+    ///   only when the condition in <c>&amp;If</c> was false.
     /// </remarks>
-    /// <seealso cref="IfBegin"/>
-    /// <seealso cref="IfEnd"/>
-    function ElseBegin(): TTiger;
+    /// <seealso cref="&If"/>
+    /// <seealso cref="EndIf"/>
+    function &Else(): TTiger;
 
     /// <summary>
     ///   End a conditional (if/else) block.
     /// </summary>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="IfBegin"/>
-    /// <seealso cref="ElseBegin"/>
-    function IfEnd(): TTiger;
+    /// <seealso cref="&If"/>
+    /// <seealso cref="&Else"/>
+    function EndIf(): TTiger;
 
     /// <summary>
     ///   Begin a while loop.
@@ -1972,17 +1972,17 @@ type
     ///   body executes while <c>ACond</c> is non-zero.
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="WhileEnd"/>
-    /// <seealso cref="ForBegin"/>
-    /// <seealso cref="RepeatBegin"/>
-    function WhileBegin(const ACond: TTigerExpr): TTiger;
+    /// <seealso cref="EndWhile"/>
+    /// <seealso cref="&For"/>
+    /// <seealso cref="&Repeat"/>
+    function &While(const ACond: TTigerExpr): TTiger;
 
     /// <summary>
     ///   End a while loop.
     /// </summary>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="WhileBegin"/>
-    function WhileEnd(): TTiger;
+    /// <seealso cref="&While"/>
+    function EndWhile(): TTiger;
 
     /// <summary>
     ///   Begin a counting for loop (ascending: from low to high).
@@ -1998,9 +1998,9 @@ type
     ///   The counter is incremented by 1 after each iteration. The loop
     ///   body does not execute if <c>AFrom > ATo</c>.
     /// </remarks>
-    /// <seealso cref="ForDownToBegin"/>
-    /// <seealso cref="ForEnd"/>
-    function ForBegin(const AVar: string; const AFrom: TTigerExpr; const ATo: TTigerExpr): TTiger;
+    /// <seealso cref="ForDownTo"/>
+    /// <seealso cref="EndFor"/>
+    function &For(const AVar: string; const AFrom: TTigerExpr; const ATo: TTigerExpr): TTiger;
 
     /// <summary>
     ///   Begin a counting for loop (descending: from high to low).
@@ -2013,17 +2013,17 @@ type
     ///   The counter is decremented by 1 after each iteration. The loop
     ///   body does not execute if <c>AFrom &lt; ATo</c>.
     /// </remarks>
-    /// <seealso cref="ForBegin"/>
-    /// <seealso cref="ForEnd"/>
-    function ForDownToBegin(const AVar: string; const AFrom: TTigerExpr; const ATo: TTigerExpr): TTiger;
+    /// <seealso cref="&For"/>
+    /// <seealso cref="EndFor"/>
+    function ForDownTo(const AVar: string; const AFrom: TTigerExpr; const ATo: TTigerExpr): TTiger;
 
     /// <summary>
     ///   End a for loop (ascending or descending).
     /// </summary>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="ForBegin"/>
-    /// <seealso cref="ForDownToBegin"/>
-    function ForEnd(): TTiger;
+    /// <seealso cref="&For"/>
+    /// <seealso cref="ForDownTo"/>
+    function EndFor(): TTiger;
 
     /// <summary>
     ///   Begin a repeat..until loop (post-test loop).
@@ -2031,12 +2031,12 @@ type
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
     ///   The loop body always executes at least once. The exit condition
-    ///   is evaluated at the end via <see cref="RepeatEnd"/>. The loop
+    ///   is evaluated at the end via <see cref="Until"/>. The loop
     ///   terminates when the condition becomes true (non-zero).
     /// </remarks>
-    /// <seealso cref="RepeatEnd"/>
-    /// <seealso cref="WhileBegin"/>
-    function RepeatBegin(): TTiger;
+    /// <seealso cref="Until"/>
+    /// <seealso cref="&While"/>
+    function &Repeat(): TTiger;
 
     /// <summary>
     ///   End a repeat..until loop with the exit condition.
@@ -2046,8 +2046,8 @@ type
     ///   to non-zero (true).
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="RepeatBegin"/>
-    function RepeatEnd(const ACond: TTigerExpr): TTiger;
+    /// <seealso cref="&Repeat"/>
+    function &Until(const ACond: TTigerExpr): TTiger;
 
     /// <summary>
     ///   Begin a case (switch) statement with a selector expression.
@@ -2059,12 +2059,12 @@ type
     /// <remarks>
     ///   Add branches with <see cref="CaseOf"/>, an optional default
     ///   branch with <see cref="CaseElse"/>, and finalize with
-    ///   <see cref="CaseEnd"/>.
+    ///   <see cref="EndCase"/>.
     /// </remarks>
     /// <seealso cref="CaseOf"/>
     /// <seealso cref="CaseElse"/>
-    /// <seealso cref="CaseEnd"/>
-    function CaseBegin(const ASelector: TTigerExpr): TTiger;
+    /// <seealso cref="EndCase"/>
+    function &Case(const ASelector: TTigerExpr): TTiger;
 
     /// <summary>
     ///   Define a case branch matching one or more expression values.
@@ -2077,9 +2077,9 @@ type
     /// <remarks>
     ///   Statements following this call form the branch body. The body
     ///   ends at the next <c>CaseOf</c>, <c>CaseElse</c>, or
-    ///   <c>CaseEnd</c>.
+    ///   <c>EndCase</c>.
     /// </remarks>
-    /// <seealso cref="CaseBegin"/>
+    /// <seealso cref="&Case"/>
     function CaseOf(const AValues: array of TTigerExpr): TTiger; overload;
 
     /// <summary>
@@ -2087,10 +2087,10 @@ type
     /// </summary>
     /// <param name="AValues">
     ///   Open array of integer values to match. Convenience overload
-    ///   that avoids wrapping each value in <see cref="Int"/>.
+    ///   that avoids wrapping each value in <see cref="Int64"/>.
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="CaseBegin"/>
+    /// <seealso cref="&Case"/>
     function CaseOf(const AValues: array of Integer): TTiger; overload;
 
     /// <summary>
@@ -2100,18 +2100,18 @@ type
     /// <remarks>
     ///   Executes when the selector does not match any <c>CaseOf</c>
     ///   branch. Must appear after all <c>CaseOf</c> calls and before
-    ///   <see cref="CaseEnd"/>.
+    ///   <see cref="EndCase"/>.
     /// </remarks>
-    /// <seealso cref="CaseBegin"/>
-    /// <seealso cref="CaseEnd"/>
+    /// <seealso cref="&Case"/>
+    /// <seealso cref="EndCase"/>
     function CaseElse(): TTiger;
 
     /// <summary>
     ///   End a case statement.
     /// </summary>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="CaseBegin"/>
-    function CaseEnd(): TTiger;
+    /// <seealso cref="&Case"/>
+    function EndCase(): TTiger;
 
     //==========================================================================
     // Exception Handling
@@ -2123,35 +2123,35 @@ type
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
     ///   <para>
-    ///     Must be followed by either <see cref="ExceptBegin"/> (to
-    ///     handle exceptions) or <see cref="FinallyBegin"/> (to ensure
-    ///     cleanup), and terminated with <see cref="TryEnd"/>.
+    ///     Must be followed by either <see cref="Except"/> (to
+    ///     handle exceptions) or <see cref="&Finally"/> (to ensure
+    ///     cleanup), and terminated with <see cref="EndTry"/>.
     ///   </para>
     ///   <para>
     ///     Tiger's exception handling maps to Windows Structured Exception
     ///     Handling (SEH) at the machine code level.
     ///   </para>
     /// </remarks>
-    /// <seealso cref="ExceptBegin"/>
-    /// <seealso cref="FinallyBegin"/>
-    /// <seealso cref="TryEnd"/>
-    /// <seealso cref="Raise_"/>
-    function TryBegin(): TTiger;
+    /// <seealso cref="Except"/>
+    /// <seealso cref="&Finally"/>
+    /// <seealso cref="EndTry"/>
+    /// <seealso cref="&Raise"/>
+    function &Try(): TTiger;
 
     /// <summary>
     ///   Begin the except handler of a try block.
     /// </summary>
     /// <returns>Self for fluent chaining.</returns>
     /// <remarks>
-    ///   Inside the except block, use <see cref="GetExceptionCode"/>
-    ///   and <see cref="GetExceptionMessage"/> to inspect the caught
+    ///   Inside the except block, use <see cref="ExcCode"/>
+    ///   and <see cref="ExcMsg"/> to inspect the caught
     ///   exception.
     /// </remarks>
-    /// <seealso cref="TryBegin"/>
-    /// <seealso cref="TryEnd"/>
-    /// <seealso cref="GetExceptionCode"/>
-    /// <seealso cref="GetExceptionMessage"/>
-    function ExceptBegin(): TTiger;
+    /// <seealso cref="&Try"/>
+    /// <seealso cref="EndTry"/>
+    /// <seealso cref="ExcCode"/>
+    /// <seealso cref="ExcMsg"/>
+    function &Except(): TTiger;
 
     /// <summary>
     ///   Begin the finally handler of a try block.
@@ -2160,18 +2160,18 @@ type
     /// <remarks>
     ///   The finally block executes regardless of whether an exception
     ///   occurred. It cannot catch or suppress exceptions — for that,
-    ///   use <see cref="ExceptBegin"/>.
+    ///   use <see cref="Except"/>.
     /// </remarks>
-    /// <seealso cref="TryBegin"/>
-    /// <seealso cref="TryEnd"/>
-    function FinallyBegin(): TTiger;
+    /// <seealso cref="&Try"/>
+    /// <seealso cref="EndTry"/>
+    function &Finally(): TTiger;
 
     /// <summary>
     ///   End a try/except or try/finally block.
     /// </summary>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="TryBegin"/>
-    function TryEnd(): TTiger;
+    /// <seealso cref="&Try"/>
+    function EndTry(): TTiger;
 
     /// <summary>
     ///   Raise an exception with a message string.
@@ -2185,8 +2185,8 @@ type
     ///   <see cref="RaiseCode"/> to specify both a code and a message.
     /// </remarks>
     /// <seealso cref="RaiseCode"/>
-    /// <seealso cref="TryBegin"/>
-    function Raise_(const AMsg: TTigerExpr): TTiger;
+    /// <seealso cref="&Try"/>
+    function &Raise(const AMsg: TTigerExpr): TTiger;
 
     /// <summary>
     ///   Raise an exception with an explicit error code and message.
@@ -2198,8 +2198,8 @@ type
     ///   Expression evaluating to a string message.
     /// </param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="Raise_"/>
-    /// <seealso cref="GetExceptionCode"/>
+    /// <seealso cref="&Raise"/>
+    /// <seealso cref="ExcCode"/>
     function RaiseCode(const ACode: TTigerExpr; const AMsg: TTigerExpr): TTiger;
 
     //==========================================================================
@@ -2211,8 +2211,8 @@ type
     /// </summary>
     /// <param name="AVarName">Name of an integer variable (local, parameter, or global).</param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="Dec_"/>
-    function Inc_(const AVarName: string): TTiger; overload;
+    /// <seealso cref="&Dec"/>
+    function &Inc(const AVarName: string): TTiger; overload;
 
     /// <summary>
     ///   Increment a variable by a specified amount.
@@ -2220,16 +2220,16 @@ type
     /// <param name="AVarName">Name of an integer variable.</param>
     /// <param name="AAmount">Expression for the increment amount.</param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="Dec_"/>
-    function Inc_(const AVarName: string; const AAmount: TTigerExpr): TTiger; overload;
+    /// <seealso cref="&Dec"/>
+    function &Inc(const AVarName: string; const AAmount: TTigerExpr): TTiger; overload;
 
     /// <summary>
     ///   Decrement a variable by 1.
     /// </summary>
     /// <param name="AVarName">Name of an integer variable.</param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="Inc_"/>
-    function Dec_(const AVarName: string): TTiger; overload;
+    /// <seealso cref="&Inc"/>
+    function &Dec(const AVarName: string): TTiger; overload;
 
     /// <summary>
     ///   Decrement a variable by a specified amount.
@@ -2237,8 +2237,8 @@ type
     /// <param name="AVarName">Name of an integer variable.</param>
     /// <param name="AAmount">Expression for the decrement amount.</param>
     /// <returns>Self for fluent chaining.</returns>
-    /// <seealso cref="Inc_"/>
-    function Dec_(const AVarName: string; const AAmount: TTigerExpr): TTiger; overload;
+    /// <seealso cref="&Inc"/>
+    function &Dec(const AVarName: string; const AAmount: TTigerExpr): TTiger; overload;
 
     //==========================================================================
     // Expressions — Literals
@@ -2290,10 +2290,10 @@ type
     ///   smaller type.
     /// </remarks>
     /// <seealso cref="Int32"/>
-    /// <seealso cref="Int64_"/>
-    /// <seealso cref="Flt"/>
+    /// <seealso cref="Int64"/>
+    /// <seealso cref="Float64"/>
     /// <seealso cref="Bool"/>
-    function Int(const AValue: Int64): TTigerExpr;
+    function Int64(const AValue: Int64): TTigerExpr;
 
     /// <summary>
     ///   Create a 32-bit signed integer literal expression.
@@ -2304,29 +2304,16 @@ type
     ///   Use when you need to explicitly control the width of the
     ///   literal, e.g. for <c>DWORD</c>-sized parameters.
     /// </remarks>
-    /// <seealso cref="Int"/>
+    /// <seealso cref="Int64"/>
     function Int32(const AValue: Int32): TTigerExpr;
-
-    /// <summary>
-    ///   Create an explicitly typed 64-bit signed integer literal.
-    /// </summary>
-    /// <param name="AValue">The integer value.</param>
-    /// <returns>An expression handle of type <c>vtInt64</c>.</returns>
-    /// <remarks>
-    ///   Functionally identical to <see cref="Int"/> but provided for
-    ///   symmetry with <see cref="Int32"/>.
-    /// </remarks>
-    /// <seealso cref="Int"/>
-    /// <seealso cref="Int32"/>
-    function Int64_(const AValue: Int64): TTigerExpr;
 
     /// <summary>
     ///   Create a 64-bit floating-point literal expression.
     /// </summary>
     /// <param name="AValue">The double-precision floating-point value.</param>
     /// <returns>An expression handle of type <c>vtFloat64</c>.</returns>
-    /// <seealso cref="Int"/>
-    function Flt(const AValue: Double): TTigerExpr;
+    /// <seealso cref="Int64"/>
+    function Float64(const AValue: Double): TTigerExpr;
 
     /// <summary>
     ///   Create a boolean literal expression.
@@ -2336,16 +2323,116 @@ type
     ///   An expression handle. <c>True</c> produces a non-zero integer;
     ///   <c>False</c> produces zero.
     /// </returns>
-    /// <seealso cref="Int"/>
+    /// <seealso cref="Int64"/>
     function Bool(const AValue: Boolean): TTigerExpr;
 
+    /// <summary>
+    ///   Create an 8-bit signed integer literal expression.
+    /// </summary>
+    /// <param name="AValue">The integer value (−128..127).</param>
+    /// <returns>An expression handle of type <c>vtInt8</c>.</returns>
+    /// <remarks>
+    ///   Use when targeting C ABI functions that expect an <c>int8_t</c>
+    ///   or <c>signed char</c> parameter.
+    /// </remarks>
+    /// <seealso cref="Int16"/>
+    /// <seealso cref="Int32"/>
+    /// <seealso cref="Int64"/>
+    function Int8(const AValue: Int8): TTigerExpr;
+
+    /// <summary>
+    ///   Create a 16-bit signed integer literal expression.
+    /// </summary>
+    /// <param name="AValue">The integer value (−32768..32767).</param>
+    /// <returns>An expression handle of type <c>vtInt16</c>.</returns>
+    /// <remarks>
+    ///   Use when targeting C ABI functions that expect an <c>int16_t</c>
+    ///   or <c>short</c> parameter.
+    /// </remarks>
+    /// <seealso cref="Int8"/>
+    /// <seealso cref="Int32"/>
+    /// <seealso cref="Int64"/>
+    function Int16(const AValue: Int16): TTigerExpr;
+
+    /// <summary>
+    ///   Create an 8-bit unsigned integer literal expression.
+    /// </summary>
+    /// <param name="AValue">The integer value (0..255).</param>
+    /// <returns>An expression handle of type <c>vtUInt8</c>.</returns>
+    /// <remarks>
+    ///   Use when targeting C ABI functions that expect a <c>uint8_t</c>
+    ///   or <c>unsigned char</c> parameter, such as byte-level I/O.
+    /// </remarks>
+    /// <seealso cref="UInt16"/>
+    /// <seealso cref="UInt32"/>
+    /// <seealso cref="UInt64"/>
+    function UInt8(const AValue: UInt8): TTigerExpr;
+
+    /// <summary>
+    ///   Create a 16-bit unsigned integer literal expression.
+    /// </summary>
+    /// <param name="AValue">The integer value (0..65535).</param>
+    /// <returns>An expression handle of type <c>vtUInt16</c>.</returns>
+    /// <remarks>
+    ///   Use when targeting C ABI functions that expect a <c>uint16_t</c>
+    ///   or <c>unsigned short</c> parameter, such as Windows <c>WORD</c>
+    ///   fields.
+    /// </remarks>
+    /// <seealso cref="UInt8"/>
+    /// <seealso cref="UInt32"/>
+    /// <seealso cref="UInt64"/>
+    function UInt16(const AValue: UInt16): TTigerExpr;
+
+    /// <summary>
+    ///   Create a 32-bit unsigned integer literal expression.
+    /// </summary>
+    /// <param name="AValue">The integer value (0..4294967295).</param>
+    /// <returns>An expression handle of type <c>vtUInt32</c>.</returns>
+    /// <remarks>
+    ///   Use when targeting C ABI functions that expect a <c>uint32_t</c>
+    ///   or Windows <c>DWORD</c> parameter, such as flags and handles.
+    /// </remarks>
+    /// <seealso cref="UInt8"/>
+    /// <seealso cref="UInt16"/>
+    /// <seealso cref="UInt64"/>
+    /// <seealso cref="Int32"/>
+    function UInt32(const AValue: UInt32): TTigerExpr;
+
+    /// <summary>
+    ///   Create a 64-bit unsigned integer literal expression.
+    /// </summary>
+    /// <param name="AValue">The integer value (0..2^64−1).</param>
+    /// <returns>An expression handle of type <c>vtUInt64</c>.</returns>
+    /// <remarks>
+    ///   Use when targeting C ABI functions that expect a <c>uint64_t</c>
+    ///   or <c>size_t</c> parameter on 64-bit platforms. Also suitable
+    ///   for memory sizes and file offsets.
+    /// </remarks>
+    /// <seealso cref="UInt8"/>
+    /// <seealso cref="UInt16"/>
+    /// <seealso cref="UInt32"/>
+    /// <seealso cref="Int64"/>
+    function UInt64(const AValue: UInt64): TTigerExpr;
+
+    /// <summary>
+    ///   Create a 32-bit floating-point literal expression.
+    /// </summary>
+    /// <param name="AValue">The floating-point value.</param>
+    /// <returns>An expression handle of type <c>vtFloat32</c>.</returns>
+    /// <remarks>
+    ///   Use when targeting C ABI functions that expect a <c>float</c>
+    ///   parameter. For general-purpose floating-point use
+    ///   <see cref="Float64"/> instead, which provides double precision.
+    /// </remarks>
+    /// <seealso cref="Float64"/>
+    function Float32(const AValue: Single): TTigerExpr;
     /// <summary>
     ///   Create a nil (null pointer) literal expression.
     /// </summary>
     /// <returns>An expression handle of type <c>vtPointer</c> with value 0.</returns>
     /// <seealso cref="Deref"/>
     /// <seealso cref="AddrOf"/>
-    function Nil_(): TTigerExpr;
+    function Null(): TTigerExpr;
 
     //==========================================================================
     // Expressions — Variable Reference
@@ -2369,7 +2456,7 @@ type
     /// </remarks>
     /// <seealso cref="Assign"/>
     /// <seealso cref="AddrOf"/>
-    function Var_(const AName: string): TTigerExpr;
+    function Get(const AName: string): TTigerExpr;
 
     //==========================================================================
     // Expressions — Arithmetic
@@ -2413,7 +2500,7 @@ type
     ///   For integer operands, this performs truncating division. For
     ///   floating-point operands, IEEE 754 division rules apply.
     /// </remarks>
-    function Div_(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function IDiv(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Modulo (remainder): <c>ALeft mod ARight</c>.
@@ -2421,7 +2508,7 @@ type
     /// <param name="ALeft">Dividend expression.</param>
     /// <param name="ARight">Divisor expression. Must not be zero at runtime.</param>
     /// <returns>An expression handle for the remainder.</returns>
-    function Mod_(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function IMod(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Arithmetic negation: <c>-AValue</c>.
@@ -2471,7 +2558,7 @@ type
     /// <param name="AValue">Value to shift (integer type).</param>
     /// <param name="ACount">Number of bit positions to shift left.</param>
     /// <returns>An expression handle for the shifted result.</returns>
-    function Shl_(const AValue: TTigerExpr; const ACount: TTigerExpr): TTigerExpr;
+    function &Shl(const AValue: TTigerExpr; const ACount: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Shift right: <c>AValue shr ACount</c>.
@@ -2483,7 +2570,7 @@ type
     ///   For unsigned types, this is a logical shift (zero-fill). For
     ///   signed types, this is an arithmetic shift (sign-extending).
     /// </remarks>
-    function Shr_(const AValue: TTigerExpr; const ACount: TTigerExpr): TTigerExpr;
+    function &Shr(const AValue: TTigerExpr; const ACount: TTigerExpr): TTigerExpr;
 
     //==========================================================================
     // Expressions — Comparison
@@ -2495,7 +2582,7 @@ type
     /// <param name="ALeft">Left operand expression.</param>
     /// <param name="ARight">Right operand expression.</param>
     /// <returns>A boolean expression (non-zero if equal, zero otherwise).</returns>
-    function CmpEq(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function Eq(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Inequality comparison: <c>ALeft &lt;&gt; ARight</c>.
@@ -2503,7 +2590,7 @@ type
     /// <param name="ALeft">Left operand expression.</param>
     /// <param name="ARight">Right operand expression.</param>
     /// <returns>A boolean expression (non-zero if not equal).</returns>
-    function CmpNe(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function Ne(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Less-than comparison: <c>ALeft &lt; ARight</c>.
@@ -2511,7 +2598,7 @@ type
     /// <param name="ALeft">Left operand expression.</param>
     /// <param name="ARight">Right operand expression.</param>
     /// <returns>A boolean expression (non-zero if less).</returns>
-    function CmpLt(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function Lt(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Less-than-or-equal comparison: <c>ALeft &lt;= ARight</c>.
@@ -2519,7 +2606,7 @@ type
     /// <param name="ALeft">Left operand expression.</param>
     /// <param name="ARight">Right operand expression.</param>
     /// <returns>A boolean expression (non-zero if less or equal).</returns>
-    function CmpLe(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function Le(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Greater-than comparison: <c>ALeft &gt; ARight</c>.
@@ -2527,7 +2614,7 @@ type
     /// <param name="ALeft">Left operand expression.</param>
     /// <param name="ARight">Right operand expression.</param>
     /// <returns>A boolean expression (non-zero if greater).</returns>
-    function CmpGt(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function Gt(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Greater-than-or-equal comparison: <c>ALeft &gt;= ARight</c>.
@@ -2535,7 +2622,7 @@ type
     /// <param name="ALeft">Left operand expression.</param>
     /// <param name="ARight">Right operand expression.</param>
     /// <returns>A boolean expression (non-zero if greater or equal).</returns>
-    function CmpGe(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function Ge(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     //==========================================================================
     // Expressions — Logical
@@ -2549,7 +2636,7 @@ type
     ///   Right boolean expression. Only evaluated if <c>ALeft</c> is true.
     /// </param>
     /// <returns>A boolean expression (non-zero if both are true).</returns>
-    function And_(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function LogAnd(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Logical OR with short-circuit evaluation.
@@ -2559,14 +2646,14 @@ type
     ///   Right boolean expression. Only evaluated if <c>ALeft</c> is false.
     /// </param>
     /// <returns>A boolean expression (non-zero if either is true).</returns>
-    function Or_(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+    function LogOr(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Logical NOT: inverts a boolean value.
     /// </summary>
     /// <param name="AValue">Boolean expression to invert.</param>
     /// <returns>A boolean expression (non-zero if <c>AValue</c> was zero).</returns>
-    function Not_(const AValue: TTigerExpr): TTigerExpr;
+    function LogNot(const AValue: TTigerExpr): TTigerExpr;
 
     //==========================================================================
     // Expressions — Pointers
@@ -2577,7 +2664,7 @@ type
     /// </summary>
     /// <param name="AName">Name of the variable.</param>
     /// <returns>A <c>vtPointer</c> expression pointing to the variable.</returns>
-    /// <seealso cref="AddrOfExpr"/>
+    /// <seealso cref="AddrOfVal"/>
     /// <seealso cref="Deref"/>
     function AddrOf(const AName: string): TTigerExpr;
 
@@ -2586,13 +2673,13 @@ type
     ///   addressable location (e.g. a record field or array element).
     /// </summary>
     /// <param name="AExpr">
-    ///   An addressable expression, typically from <see cref="FieldExpr"/>
-    ///   or <see cref="IndexExpr"/>.
+    ///   An addressable expression, typically from <see cref="GetField"/>
+    ///   or <see cref="GetIndex"/>.
     /// </param>
     /// <returns>A <c>vtPointer</c> expression pointing to the location.</returns>
     /// <seealso cref="AddrOf"/>
     /// <seealso cref="Deref"/>
-    function AddrOfExpr(const AExpr: TTigerExpr): TTigerExpr;
+    function AddrOfVal(const AExpr: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Dereference a pointer expression (untyped).
@@ -2646,10 +2733,10 @@ type
     /// <remarks>
     ///   The resulting pointer can be stored in a variable of a routine
     ///   type (see <see cref="DefineRoutine"/>) and called via
-    ///   <see cref="CallIndirect"/> or <see cref="IndirectCallExpr"/>.
+    ///   <see cref="CallIndirect"/> or <see cref="InvokeIndirect"/>.
     /// </remarks>
     /// <seealso cref="CallIndirect"/>
-    /// <seealso cref="IndirectCallExpr"/>
+    /// <seealso cref="InvokeIndirect"/>
     /// <seealso cref="DefineRoutine"/>
     function FuncAddr(const AFuncName: string): TTigerExpr;
 
@@ -2667,7 +2754,7 @@ type
     /// </remarks>
     /// <seealso cref="CallIndirect"/>
     /// <seealso cref="FuncAddr"/>
-    function IndirectCallExpr(const AFuncPtr: TTigerExpr; const AArgs: array of TTigerExpr): TTigerExpr;
+    function InvokeIndirect(const AFuncPtr: TTigerExpr; const AArgs: array of TTigerExpr): TTigerExpr;
 
     //==========================================================================
     // Expressions — Composite Access
@@ -2678,26 +2765,26 @@ type
     /// </summary>
     /// <param name="AObject">
     ///   An expression evaluating to a record or union value (e.g. from
-    ///   <see cref="Var_"/> with a record-typed variable).
+    ///   <see cref="Get"/> with a record-typed variable).
     /// </param>
     /// <param name="AFieldName">
     ///   Name of the field as declared in the record or union definition.
     /// </param>
     /// <returns>
     ///   An expression handle for the field's value. This expression is
-    ///   also assignable via <see cref="AssignToExpr"/>.
+    ///   also assignable via <see cref="AssignTo"/>.
     /// </returns>
-    /// <seealso cref="IndexExpr"/>
-    /// <seealso cref="AssignToExpr"/>
+    /// <seealso cref="GetIndex"/>
+    /// <seealso cref="AssignTo"/>
     /// <seealso cref="DefineRecord"/>
-    function FieldExpr(const AObject: TTigerExpr; const AFieldName: string): TTigerExpr;
+    function GetField(const AObject: TTigerExpr; const AFieldName: string): TTigerExpr;
 
     /// <summary>
     ///   Index into an array expression.
     /// </summary>
     /// <param name="AArray">
     ///   An expression evaluating to an array value (e.g. from
-    ///   <see cref="Var_"/> with an array-typed variable).
+    ///   <see cref="Get"/> with an array-typed variable).
     /// </param>
     /// <param name="AIndex">
     ///   Integer expression for the element index. For fixed arrays,
@@ -2705,12 +2792,12 @@ type
     /// </param>
     /// <returns>
     ///   An expression handle for the element's value. This expression
-    ///   is also assignable via <see cref="AssignToExpr"/>.
+    ///   is also assignable via <see cref="AssignTo"/>.
     /// </returns>
-    /// <seealso cref="FieldExpr"/>
-    /// <seealso cref="AssignToExpr"/>
+    /// <seealso cref="GetField"/>
+    /// <seealso cref="AssignTo"/>
     /// <seealso cref="DefineArray"/>
-    function IndexExpr(const AArray: TTigerExpr; const AIndex: TTigerExpr): TTigerExpr;
+    function GetIndex(const AArray: TTigerExpr; const AIndex: TTigerExpr): TTigerExpr;
 
     //==========================================================================
     // Expressions — Function Call
@@ -2733,8 +2820,8 @@ type
     /// </remarks>
     /// <seealso cref="Call"/>
     /// <seealso cref="CallAssign"/>
-    /// <seealso cref="IndirectCallExpr"/>
-    function CallExpr(const AFuncName: string; const AArgs: array of TTigerExpr): TTigerExpr;
+    /// <seealso cref="InvokeIndirect"/>
+    function Invoke(const AFuncName: string; const AArgs: array of TTigerExpr): TTigerExpr;
 
     //==========================================================================
     // Expressions — Exception Intrinsics
@@ -2746,14 +2833,14 @@ type
     /// <returns>An integer expression containing the exception code.</returns>
     /// <remarks>
     ///   Only valid inside an except handler started with
-    ///   <see cref="ExceptBegin"/>. The code corresponds to the value
+    ///   <see cref="Except"/>. The code corresponds to the value
     ///   passed to <see cref="RaiseCode"/> or a default value for
     ///   message-only exceptions.
     /// </remarks>
-    /// <seealso cref="GetExceptionMessage"/>
-    /// <seealso cref="ExceptBegin"/>
+    /// <seealso cref="ExcMsg"/>
+    /// <seealso cref="Except"/>
     /// <seealso cref="RaiseCode"/>
-    function GetExceptionCode(): TTigerExpr;
+    function ExcCode(): TTigerExpr;
 
     /// <summary>
     ///   Get the current exception message string inside an except block.
@@ -2764,11 +2851,11 @@ type
     /// </returns>
     /// <remarks>
     ///   Only valid inside an except handler started with
-    ///   <see cref="ExceptBegin"/>.
+    ///   <see cref="Except"/>.
     /// </remarks>
-    /// <seealso cref="GetExceptionCode"/>
-    /// <seealso cref="ExceptBegin"/>
-    function GetExceptionMessage(): TTigerExpr;
+    /// <seealso cref="ExcCode"/>
+    /// <seealso cref="Except"/>
+    function ExcMsg(): TTigerExpr;
 
     //==========================================================================
     // Expressions — Set Literals & Operations
@@ -2902,18 +2989,18 @@ type
     ///   Equivalent to Delphi's <c>SizeOf()</c>. Includes any padding
     ///   required for alignment.
     /// </remarks>
-    /// <seealso cref="AlignOf_"/>
+    /// <seealso cref="AlignOf"/>
     /// <seealso cref="GetTypeSize"/>
-    function SizeOf_(const ATypeName: string): TTigerExpr;
+    function &SizeOf(const ATypeName: string): TTigerExpr;
 
     /// <summary>
     ///   Get the alignment in bytes of a named type (compile-time constant).
     /// </summary>
     /// <param name="ATypeName">Name of a previously defined type.</param>
     /// <returns>An integer expression containing the type's alignment.</returns>
-    /// <seealso cref="SizeOf_"/>
+    /// <seealso cref="&SizeOf"/>
     /// <seealso cref="GetTypeAlignment"/>
-    function AlignOf_(const ATypeName: string): TTigerExpr;
+    function AlignOf(const ATypeName: string): TTigerExpr;
 
     /// <summary>
     ///   Get the high bound of a named array or enum type (compile-time constant).
@@ -2924,18 +3011,18 @@ type
     ///   For arrays, returns the declared <c>AHighBound</c>. For enums,
     ///   returns the ordinal of the last value.
     /// </remarks>
-    /// <seealso cref="Low_"/>
-    /// <seealso cref="Len_"/>
-    function High_(const ATypeName: string): TTigerExpr;
+    /// <seealso cref="Low"/>
+    /// <seealso cref="Len"/>
+    function High(const ATypeName: string): TTigerExpr;
 
     /// <summary>
     ///   Get the low bound of a named array or enum type (compile-time constant).
     /// </summary>
     /// <param name="ATypeName">Name of an array or enum type.</param>
     /// <returns>An integer expression for the lower bound.</returns>
-    /// <seealso cref="High_"/>
-    /// <seealso cref="Len_"/>
-    function Low_(const ATypeName: string): TTigerExpr;
+    /// <seealso cref="High"/>
+    /// <seealso cref="Len"/>
+    function Low(const ATypeName: string): TTigerExpr;
 
     /// <summary>
     ///   Get the element count of a named array type (compile-time constant).
@@ -2944,9 +3031,9 @@ type
     /// <returns>
     ///   An integer expression: <c>High - Low + 1</c>.
     /// </returns>
-    /// <seealso cref="High_"/>
-    /// <seealso cref="Low_"/>
-    function Len_(const ATypeName: string): TTigerExpr;
+    /// <seealso cref="High"/>
+    /// <seealso cref="Low"/>
+    function Len(const ATypeName: string): TTigerExpr;
 
     //==========================================================================
     // Expressions — Runtime Intrinsics
@@ -2957,18 +3044,18 @@ type
     /// </summary>
     /// <param name="AValue">An enum-typed expression.</param>
     /// <returns>An integer expression for the ordinal value.</returns>
-    /// <seealso cref="Chr_"/>
-    /// <seealso cref="Succ_"/>
-    /// <seealso cref="Pred_"/>
-    function Ord_(const AValue: TTigerExpr): TTigerExpr;
+    /// <seealso cref="Chr"/>
+    /// <seealso cref="Succ"/>
+    /// <seealso cref="Pred"/>
+    function Ord(const AValue: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Convert an integer ordinal to a character value.
     /// </summary>
     /// <param name="AValue">An integer expression (0..255 for ANSI).</param>
     /// <returns>An expression representing the character.</returns>
-    /// <seealso cref="Ord_"/>
-    function Chr_(const AValue: TTigerExpr): TTigerExpr;
+    /// <seealso cref="Ord"/>
+    function Chr(const AValue: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Get the successor (next ordinal value) of an enum or integer
@@ -2976,9 +3063,9 @@ type
     /// </summary>
     /// <param name="AValue">An ordinal expression.</param>
     /// <returns>An expression for <c>AValue + 1</c>.</returns>
-    /// <seealso cref="Pred_"/>
-    /// <seealso cref="Ord_"/>
-    function Succ_(const AValue: TTigerExpr): TTigerExpr;
+    /// <seealso cref="Pred"/>
+    /// <seealso cref="Ord"/>
+    function Succ(const AValue: TTigerExpr): TTigerExpr;
 
     /// <summary>
     ///   Get the predecessor (previous ordinal value) of an enum or
@@ -2986,9 +3073,9 @@ type
     /// </summary>
     /// <param name="AValue">An ordinal expression.</param>
     /// <returns>An expression for <c>AValue - 1</c>.</returns>
-    /// <seealso cref="Succ_"/>
-    /// <seealso cref="Ord_"/>
-    function Pred_(const AValue: TTigerExpr): TTigerExpr;
+    /// <seealso cref="Succ"/>
+    /// <seealso cref="Ord"/>
+    function Pred(const AValue: TTigerExpr): TTigerExpr;
 
     //==========================================================================
     // Expressions — Variadic Intrinsics
@@ -3004,11 +3091,11 @@ type
     /// </returns>
     /// <remarks>
     ///   Only valid inside a function defined with
-    ///   <see cref="BeginVariadicFunc"/>.
+    ///   <see cref="VariadicFunc"/>.
     /// </remarks>
-    /// <seealso cref="VaArgAt_"/>
-    /// <seealso cref="BeginVariadicFunc"/>
-    function VaCount_(): TTigerExpr;
+    /// <seealso cref="VaArg"/>
+    /// <seealso cref="VariadicFunc"/>
+    function VaCount(): TTigerExpr;
 
     /// <summary>
     ///   Get a variadic argument by index, cast to the specified type.
@@ -3023,12 +3110,12 @@ type
     /// <returns>An expression of the specified type.</returns>
     /// <remarks>
     ///   Only valid inside a function defined with
-    ///   <see cref="BeginVariadicFunc"/>. There is no runtime type
+    ///   <see cref="VariadicFunc"/>. There is no runtime type
     ///   checking — an incorrect type produces undefined behavior.
     /// </remarks>
-    /// <seealso cref="VaCount_"/>
-    /// <seealso cref="BeginVariadicFunc"/>
-    function VaArgAt_(const AIndex: TTigerExpr; const AType: TTigerValueType): TTigerExpr;
+    /// <seealso cref="VaCount"/>
+    /// <seealso cref="VariadicFunc"/>
+    function VaArg(const AIndex: TTigerExpr; const AType: TTigerValueType): TTigerExpr;
 
     //==========================================================================
     // Advanced — Direct Access to Internal Objects
@@ -3819,33 +3906,33 @@ end;
 // Function Definition
 //------------------------------------------------------------------------------
 
-function TTiger.BeginFunc(const AName: string;
+function TTiger.Func(const AName: string;
   const AReturnType: TTigerValueType; const AIsEntryPoint: Boolean;
   const ALinkage: TTigerLinkage; const AIsPublic: Boolean): TTiger;
 begin
-  FIR.BeginFunc(AName, AReturnType, AIsEntryPoint, ALinkage, AIsPublic);
+  FIR.Func(AName, AReturnType, AIsEntryPoint, ALinkage, AIsPublic);
   Result := Self;
 end;
 
-function TTiger.BeginOverloadFunc(const AName: string;
+function TTiger.OverloadFunc(const AName: string;
   const AReturnType: TTigerValueType; const AIsEntryPoint: Boolean;
   const AIsPublic: Boolean): TTiger;
 begin
-  FIR.BeginOverloadFunc(AName, AReturnType, AIsEntryPoint, AIsPublic);
+  FIR.OverloadFunc(AName, AReturnType, AIsEntryPoint, AIsPublic);
   Result := Self;
 end;
 
-function TTiger.BeginVariadicFunc(const AName: string;
+function TTiger.VariadicFunc(const AName: string;
   const AReturnType: TTigerValueType; const AIsEntryPoint: Boolean;
   const AIsPublic: Boolean): TTiger;
 begin
-  FIR.BeginVariadicFunc(AName, AReturnType, AIsEntryPoint, AIsPublic);
+  FIR.VariadicFunc(AName, AReturnType, AIsEntryPoint, AIsPublic);
   Result := Self;
 end;
 
-function TTiger.BeginDllMain(): TTiger;
+function TTiger.DllMain(): TTiger;
 begin
-  FIR.BeginDllMain();
+  FIR.DllMain();
   Result := Self;
 end;
 
@@ -3883,10 +3970,10 @@ begin
   Result := Self;
 end;
 
-function TTiger.AssignToExpr(const ADest: TTigerExpr;
+function TTiger.AssignTo(const ADest: TTigerExpr;
   const AValue: TTigerExpr): TTiger;
 begin
-  FIR.AssignToExpr(ADest, AValue);
+  FIR.AssignTo(ADest, AValue);
   Result := Self;
 end;
 
@@ -3946,71 +4033,71 @@ end;
 // Control Flow
 //------------------------------------------------------------------------------
 
-function TTiger.IfBegin(const ACond: TTigerExpr): TTiger;
+function TTiger.&If(const ACond: TTigerExpr): TTiger;
 begin
-  FIR.IfBegin(ACond);
+  FIR.&If(ACond);
   Result := Self;
 end;
 
-function TTiger.ElseBegin(): TTiger;
+function TTiger.&Else(): TTiger;
 begin
-  FIR.ElseBegin();
+  FIR.&Else();
   Result := Self;
 end;
 
-function TTiger.IfEnd(): TTiger;
+function TTiger.EndIf(): TTiger;
 begin
-  FIR.IfEnd();
+  FIR.EndIf();
   Result := Self;
 end;
 
-function TTiger.WhileBegin(const ACond: TTigerExpr): TTiger;
+function TTiger.&While(const ACond: TTigerExpr): TTiger;
 begin
-  FIR.WhileBegin(ACond);
+  FIR.&While(ACond);
   Result := Self;
 end;
 
-function TTiger.WhileEnd(): TTiger;
+function TTiger.EndWhile(): TTiger;
 begin
-  FIR.WhileEnd();
+  FIR.EndWhile();
   Result := Self;
 end;
 
-function TTiger.ForBegin(const AVar: string; const AFrom: TTigerExpr;
+function TTiger.&For(const AVar: string; const AFrom: TTigerExpr;
   const ATo: TTigerExpr): TTiger;
 begin
-  FIR.ForBegin(AVar, AFrom, ATo);
+  FIR.&For(AVar, AFrom, ATo);
   Result := Self;
 end;
 
-function TTiger.ForDownToBegin(const AVar: string; const AFrom: TTigerExpr;
+function TTiger.ForDownTo(const AVar: string; const AFrom: TTigerExpr;
   const ATo: TTigerExpr): TTiger;
 begin
-  FIR.ForDownToBegin(AVar, AFrom, ATo);
+  FIR.ForDownTo(AVar, AFrom, ATo);
   Result := Self;
 end;
 
-function TTiger.ForEnd(): TTiger;
+function TTiger.EndFor(): TTiger;
 begin
-  FIR.ForEnd();
+  FIR.EndFor();
   Result := Self;
 end;
 
-function TTiger.RepeatBegin(): TTiger;
+function TTiger.&Repeat(): TTiger;
 begin
-  FIR.RepeatBegin();
+  FIR.&Repeat();
   Result := Self;
 end;
 
-function TTiger.RepeatEnd(const ACond: TTigerExpr): TTiger;
+function TTiger.&Until(const ACond: TTigerExpr): TTiger;
 begin
-  FIR.RepeatEnd(ACond);
+  FIR.&Until(ACond);
   Result := Self;
 end;
 
-function TTiger.CaseBegin(const ASelector: TTigerExpr): TTiger;
+function TTiger.&Case(const ASelector: TTigerExpr): TTiger;
 begin
-  FIR.CaseBegin(ASelector);
+  FIR.&Case(ASelector);
   Result := Self;
 end;
 
@@ -4032,9 +4119,9 @@ begin
   Result := Self;
 end;
 
-function TTiger.CaseEnd(): TTiger;
+function TTiger.EndCase(): TTiger;
 begin
-  FIR.CaseEnd();
+  FIR.EndCase();
   Result := Self;
 end;
 
@@ -4042,33 +4129,33 @@ end;
 // Exception Handling
 //------------------------------------------------------------------------------
 
-function TTiger.TryBegin(): TTiger;
+function TTiger.&Try(): TTiger;
 begin
-  FIR.TryBegin();
+  FIR.&Try();
   Result := Self;
 end;
 
-function TTiger.ExceptBegin(): TTiger;
+function TTiger.&Except(): TTiger;
 begin
-  FIR.ExceptBegin();
+  FIR.&Except();
   Result := Self;
 end;
 
-function TTiger.FinallyBegin(): TTiger;
+function TTiger.&Finally(): TTiger;
 begin
-  FIR.FinallyBegin();
+  FIR.&Finally();
   Result := Self;
 end;
 
-function TTiger.TryEnd(): TTiger;
+function TTiger.EndTry(): TTiger;
 begin
-  FIR.TryEnd();
+  FIR.EndTry();
   Result := Self;
 end;
 
-function TTiger.Raise_(const AMsg: TTigerExpr): TTiger;
+function TTiger.&Raise(const AMsg: TTigerExpr): TTiger;
 begin
-  FIR.Raise_(AMsg);
+  FIR.&Raise(AMsg);
   Result := Self;
 end;
 
@@ -4083,27 +4170,27 @@ end;
 // Increment / Decrement
 //------------------------------------------------------------------------------
 
-function TTiger.Inc_(const AVarName: string): TTiger;
+function TTiger.&Inc(const AVarName: string): TTiger;
 begin
-  FIR.Inc_(AVarName);
+  FIR.&Inc(AVarName);
   Result := Self;
 end;
 
-function TTiger.Inc_(const AVarName: string; const AAmount: TTigerExpr): TTiger;
+function TTiger.&Inc(const AVarName: string; const AAmount: TTigerExpr): TTiger;
 begin
-  FIR.Inc_(AVarName, AAmount);
+  FIR.&Inc(AVarName, AAmount);
   Result := Self;
 end;
 
-function TTiger.Dec_(const AVarName: string): TTiger;
+function TTiger.&Dec(const AVarName: string): TTiger;
 begin
-  FIR.Dec_(AVarName);
+  FIR.&Dec(AVarName);
   Result := Self;
 end;
 
-function TTiger.Dec_(const AVarName: string; const AAmount: TTigerExpr): TTiger;
+function TTiger.&Dec(const AVarName: string; const AAmount: TTigerExpr): TTiger;
 begin
-  FIR.Dec_(AVarName, AAmount);
+  FIR.&Dec(AVarName, AAmount);
   Result := Self;
 end;
 
@@ -4121,9 +4208,9 @@ begin
   Result := FIR.WStr(AValue);
 end;
 
-function TTiger.Int(const AValue: Int64): TTigerExpr;
+function TTiger.Int64(const AValue: Int64): TTigerExpr;
 begin
-  Result := FIR.Int(AValue);
+  Result := FIR.Int64(AValue);
 end;
 
 function TTiger.Int32(const AValue: Int32): TTigerExpr;
@@ -4131,14 +4218,9 @@ begin
   Result := FIR.Int32(AValue);
 end;
 
-function TTiger.Int64_(const AValue: Int64): TTigerExpr;
+function TTiger.Float64(const AValue: Double): TTigerExpr;
 begin
-  Result := FIR.Int64_(AValue);
-end;
-
-function TTiger.Flt(const AValue: Double): TTigerExpr;
-begin
-  Result := FIR.Flt(AValue);
+  Result := FIR.Float64(AValue);
 end;
 
 function TTiger.Bool(const AValue: Boolean): TTigerExpr;
@@ -4146,18 +4228,53 @@ begin
   Result := FIR.Bool(AValue);
 end;
 
-function TTiger.Nil_(): TTigerExpr;
+function TTiger.Null(): TTigerExpr;
 begin
-  Result := FIR.Nil_();
+  Result := FIR.Null();
+end;
+
+function TTiger.Int8(const AValue: Int8): TTigerExpr;
+begin
+  Result := FIR.Int8(AValue);
+end;
+
+function TTiger.Int16(const AValue: Int16): TTigerExpr;
+begin
+  Result := FIR.Int16(AValue);
+end;
+
+function TTiger.UInt8(const AValue: UInt8): TTigerExpr;
+begin
+  Result := FIR.UInt8(AValue);
+end;
+
+function TTiger.UInt16(const AValue: UInt16): TTigerExpr;
+begin
+  Result := FIR.UInt16(AValue);
+end;
+
+function TTiger.UInt32(const AValue: UInt32): TTigerExpr;
+begin
+  Result := FIR.UInt32(AValue);
+end;
+
+function TTiger.UInt64(const AValue: UInt64): TTigerExpr;
+begin
+  Result := FIR.UInt64(AValue);
+end;
+
+function TTiger.Float32(const AValue: Single): TTigerExpr;
+begin
+  Result := FIR.Float32(AValue);
 end;
 
 //------------------------------------------------------------------------------
 // Expressions — Variable Reference
 //------------------------------------------------------------------------------
 
-function TTiger.Var_(const AName: string): TTigerExpr;
+function TTiger.Get(const AName: string): TTigerExpr;
 begin
-  Result := FIR.Var_(AName);
+  Result := FIR.Get(AName);
 end;
 
 //------------------------------------------------------------------------------
@@ -4179,14 +4296,14 @@ begin
   Result := FIR.Mul(ALeft, ARight);
 end;
 
-function TTiger.Div_(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.IDiv(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Div_(ALeft, ARight);
+  Result := FIR.IDiv(ALeft, ARight);
 end;
 
-function TTiger.Mod_(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.IMod(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Mod_(ALeft, ARight);
+  Result := FIR.IMod(ALeft, ARight);
 end;
 
 function TTiger.Neg(const AValue: TTigerExpr): TTigerExpr;
@@ -4218,67 +4335,67 @@ begin
   Result := FIR.BitNot(AValue);
 end;
 
-function TTiger.Shl_(const AValue: TTigerExpr; const ACount: TTigerExpr): TTigerExpr;
+function TTiger.&Shl(const AValue: TTigerExpr; const ACount: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Shl_(AValue, ACount);
+  Result := FIR.&Shl(AValue, ACount);
 end;
 
-function TTiger.Shr_(const AValue: TTigerExpr; const ACount: TTigerExpr): TTigerExpr;
+function TTiger.&Shr(const AValue: TTigerExpr; const ACount: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Shr_(AValue, ACount);
+  Result := FIR.&Shr(AValue, ACount);
 end;
 
 //------------------------------------------------------------------------------
 // Expressions — Comparison
 //------------------------------------------------------------------------------
 
-function TTiger.CmpEq(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.Eq(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.CmpEq(ALeft, ARight);
+  Result := FIR.Eq(ALeft, ARight);
 end;
 
-function TTiger.CmpNe(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.Ne(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.CmpNe(ALeft, ARight);
+  Result := FIR.Ne(ALeft, ARight);
 end;
 
-function TTiger.CmpLt(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.Lt(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.CmpLt(ALeft, ARight);
+  Result := FIR.Lt(ALeft, ARight);
 end;
 
-function TTiger.CmpLe(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.Le(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.CmpLe(ALeft, ARight);
+  Result := FIR.Le(ALeft, ARight);
 end;
 
-function TTiger.CmpGt(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.Gt(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.CmpGt(ALeft, ARight);
+  Result := FIR.Gt(ALeft, ARight);
 end;
 
-function TTiger.CmpGe(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.Ge(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.CmpGe(ALeft, ARight);
+  Result := FIR.Ge(ALeft, ARight);
 end;
 
 //------------------------------------------------------------------------------
 // Expressions — Logical
 //------------------------------------------------------------------------------
 
-function TTiger.And_(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.LogAnd(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.And_(ALeft, ARight);
+  Result := FIR.LogAnd(ALeft, ARight);
 end;
 
-function TTiger.Or_(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+function TTiger.LogOr(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Or_(ALeft, ARight);
+  Result := FIR.LogOr(ALeft, ARight);
 end;
 
-function TTiger.Not_(const AValue: TTigerExpr): TTigerExpr;
+function TTiger.LogNot(const AValue: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Not_(AValue);
+  Result := FIR.LogNot(AValue);
 end;
 
 //------------------------------------------------------------------------------
@@ -4290,9 +4407,9 @@ begin
   Result := FIR.AddrOf(AName);
 end;
 
-function TTiger.AddrOfExpr(const AExpr: TTigerExpr): TTigerExpr;
+function TTiger.AddrOfVal(const AExpr: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.AddrOfExpr(AExpr);
+  Result := FIR.AddrOfVal(AExpr);
 end;
 
 function TTiger.Deref(const APtr: TTigerExpr): TTigerExpr;
@@ -4319,50 +4436,50 @@ begin
   Result := FIR.FuncAddr(AFuncName);
 end;
 
-function TTiger.IndirectCallExpr(const AFuncPtr: TTigerExpr;
+function TTiger.InvokeIndirect(const AFuncPtr: TTigerExpr;
   const AArgs: array of TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.IndirectCallExpr(AFuncPtr, AArgs);
+  Result := FIR.InvokeIndirect(AFuncPtr, AArgs);
 end;
 
 //------------------------------------------------------------------------------
 // Expressions — Composite Access
 //------------------------------------------------------------------------------
 
-function TTiger.FieldExpr(const AObject: TTigerExpr;
+function TTiger.GetField(const AObject: TTigerExpr;
   const AFieldName: string): TTigerExpr;
 begin
-  Result := FIR.FieldExpr(AObject, AFieldName);
+  Result := FIR.GetField(AObject, AFieldName);
 end;
 
-function TTiger.IndexExpr(const AArray: TTigerExpr;
+function TTiger.GetIndex(const AArray: TTigerExpr;
   const AIndex: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.IndexExpr(AArray, AIndex);
+  Result := FIR.GetIndex(AArray, AIndex);
 end;
 
 //------------------------------------------------------------------------------
 // Expressions — Function Call
 //------------------------------------------------------------------------------
 
-function TTiger.CallExpr(const AFuncName: string;
+function TTiger.Invoke(const AFuncName: string;
   const AArgs: array of TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.CallExpr(AFuncName, AArgs);
+  Result := FIR.Invoke(AFuncName, AArgs);
 end;
 
 //------------------------------------------------------------------------------
 // Expressions — Exception Intrinsics
 //------------------------------------------------------------------------------
 
-function TTiger.GetExceptionCode(): TTigerExpr;
+function TTiger.ExcCode(): TTigerExpr;
 begin
-  Result := FIR.GetExceptionCode();
+  Result := FIR.ExcCode();
 end;
 
-function TTiger.GetExceptionMessage(): TTigerExpr;
+function TTiger.ExcMsg(): TTigerExpr;
 begin
-  Result := FIR.GetExceptionMessage();
+  Result := FIR.ExcMsg();
 end;
 
 //------------------------------------------------------------------------------
@@ -4430,68 +4547,68 @@ end;
 // Expressions — Compile-Time Intrinsics
 //------------------------------------------------------------------------------
 
-function TTiger.SizeOf_(const ATypeName: string): TTigerExpr;
+function TTiger.&SizeOf(const ATypeName: string): TTigerExpr;
 begin
-  Result := FIR.SizeOf_(ATypeName);
+  Result := FIR.&SizeOf(ATypeName);
 end;
 
-function TTiger.AlignOf_(const ATypeName: string): TTigerExpr;
+function TTiger.AlignOf(const ATypeName: string): TTigerExpr;
 begin
-  Result := FIR.AlignOf_(ATypeName);
+  Result := FIR.AlignOf(ATypeName);
 end;
 
-function TTiger.High_(const ATypeName: string): TTigerExpr;
+function TTiger.High(const ATypeName: string): TTigerExpr;
 begin
-  Result := FIR.High_(ATypeName);
+  Result := FIR.High(ATypeName);
 end;
 
-function TTiger.Low_(const ATypeName: string): TTigerExpr;
+function TTiger.Low(const ATypeName: string): TTigerExpr;
 begin
-  Result := FIR.Low_(ATypeName);
+  Result := FIR.Low(ATypeName);
 end;
 
-function TTiger.Len_(const ATypeName: string): TTigerExpr;
+function TTiger.Len(const ATypeName: string): TTigerExpr;
 begin
-  Result := FIR.Len_(ATypeName);
+  Result := FIR.Len(ATypeName);
 end;
 
 //------------------------------------------------------------------------------
 // Expressions — Runtime Intrinsics
 //------------------------------------------------------------------------------
 
-function TTiger.Ord_(const AValue: TTigerExpr): TTigerExpr;
+function TTiger.Ord(const AValue: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Ord_(AValue);
+  Result := FIR.Ord(AValue);
 end;
 
-function TTiger.Chr_(const AValue: TTigerExpr): TTigerExpr;
+function TTiger.Chr(const AValue: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Chr_(AValue);
+  Result := FIR.Chr(AValue);
 end;
 
-function TTiger.Succ_(const AValue: TTigerExpr): TTigerExpr;
+function TTiger.Succ(const AValue: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Succ_(AValue);
+  Result := FIR.Succ(AValue);
 end;
 
-function TTiger.Pred_(const AValue: TTigerExpr): TTigerExpr;
+function TTiger.Pred(const AValue: TTigerExpr): TTigerExpr;
 begin
-  Result := FIR.Pred_(AValue);
+  Result := FIR.Pred(AValue);
 end;
 
 //------------------------------------------------------------------------------
 // Expressions — Variadic Intrinsics
 //------------------------------------------------------------------------------
 
-function TTiger.VaCount_(): TTigerExpr;
+function TTiger.VaCount(): TTigerExpr;
 begin
-  Result := FIR.VaCount_();
+  Result := FIR.VaCount();
 end;
 
-function TTiger.VaArgAt_(const AIndex: TTigerExpr;
+function TTiger.VaArg(const AIndex: TTigerExpr;
   const AType: TTigerValueType): TTigerExpr;
 begin
-  Result := FIR.VaArgAt_(AIndex, AType);
+  Result := FIR.VaArg(AIndex, AType);
 end;
 
 //------------------------------------------------------------------------------

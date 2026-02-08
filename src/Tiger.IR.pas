@@ -128,8 +128,8 @@ type
       ekGetExceptionCode,  // getexceptioncode()
       ekGetExceptionMsg,   // getexceptionmessage()
       ekSetLiteral,        // {1, 3, 5..10}
-      ekVaCount,           // VaCount_()
-      ekVaArgAt            // VaArgAt_(index, type)
+      ekVaCount,           // VaCount()
+      ekVaArgAt            // VaArg(index, type)
     );
 
     //--------------------------------------------------------------------------
@@ -604,26 +604,26 @@ type
     //--------------------------------------------------------------------------
     // Function Definition (fluent)
     //--------------------------------------------------------------------------
-    function BeginFunc(
+    function Func(
       const AName: string;
       const AReturnType: TTigerValueType = vtVoid;
       const AIsEntryPoint: Boolean = False;
       const ALinkage: TTigerLinkage = plDefault;
       const AIsPublic: Boolean = False
     ): TTigerIR;
-    function BeginOverloadFunc(
+    function OverloadFunc(
       const AName: string;
       const AReturnType: TTigerValueType = vtVoid;
       const AIsEntryPoint: Boolean = False;
       const AIsPublic: Boolean = False
     ): TTigerIR;
-    function BeginVariadicFunc(
+    function VariadicFunc(
       const AName: string;
       const AReturnType: TTigerValueType = vtVoid;
       const AIsEntryPoint: Boolean = False;
       const AIsPublic: Boolean = False
     ): TTigerIR;
-    function BeginDllMain(): TTigerIR;
+    function DllMain(): TTigerIR;
     function Param(const AName: string; const AType: TTigerValueType): TTigerIR;
     function Local(const AName: string; const AType: TTigerValueType): TTigerIR; overload;
     function Local(const AName: string; const ATypeName: string): TTigerIR; overload;
@@ -633,7 +633,7 @@ type
     // Statements (fluent)
     //--------------------------------------------------------------------------
     function Assign(const ADest: string; const AValue: TTigerIRExpr): TTigerIR;
-    function AssignToExpr(const ADest: TTigerIRExpr; const AValue: TTigerIRExpr): TTigerIR;
+    function AssignTo(const ADest: TTigerIRExpr; const AValue: TTigerIRExpr): TTigerIR;
     function Call(const AFuncName: string): TTigerIR; overload;
     function Call(const AFuncName: string; const AArgs: array of TTigerIRExpr): TTigerIR; overload;
     function CallAssign(const ADest: string; const AFuncName: string; const AArgs: array of TTigerIRExpr): TTigerIR;
@@ -649,55 +649,61 @@ type
     //--------------------------------------------------------------------------
     // Control Flow (fluent)
     //--------------------------------------------------------------------------
-    function IfBegin(const ACond: TTigerIRExpr): TTigerIR;
-    function ElseBegin(): TTigerIR;
-    function IfEnd(): TTigerIR;
+    function &If(const ACond: TTigerIRExpr): TTigerIR;
+    function &Else(): TTigerIR;
+    function EndIf(): TTigerIR;
 
-    function WhileBegin(const ACond: TTigerIRExpr): TTigerIR;
-    function WhileEnd(): TTigerIR;
+    function &While(const ACond: TTigerIRExpr): TTigerIR;
+    function EndWhile(): TTigerIR;
 
-    function ForBegin(const AVar: string; const AFrom: TTigerIRExpr; const ATo: TTigerIRExpr): TTigerIR;
-    function ForDownToBegin(const AVar: string; const AFrom: TTigerIRExpr; const ATo: TTigerIRExpr): TTigerIR;
-    function ForEnd(): TTigerIR;
+    function &For(const AVar: string; const AFrom: TTigerIRExpr; const ATo: TTigerIRExpr): TTigerIR;
+    function ForDownTo(const AVar: string; const AFrom: TTigerIRExpr; const ATo: TTigerIRExpr): TTigerIR;
+    function EndFor(): TTigerIR;
 
-    function RepeatBegin(): TTigerIR;
-    function RepeatEnd(const ACond: TTigerIRExpr): TTigerIR;
+    function &Repeat(): TTigerIR;
+    function &Until(const ACond: TTigerIRExpr): TTigerIR;
 
-    function CaseBegin(const ASelector: TTigerIRExpr): TTigerIR;
+    function &Case(const ASelector: TTigerIRExpr): TTigerIR;
     function CaseOf(const AValues: array of TTigerIRExpr): TTigerIR; overload;
     function CaseOf(const AValues: array of Integer): TTigerIR; overload;
     function CaseElse(): TTigerIR;
-    function CaseEnd(): TTigerIR;
+    function EndCase(): TTigerIR;
 
-    function TryBegin(): TTigerIR;
-    function ExceptBegin(): TTigerIR;
-    function FinallyBegin(): TTigerIR;
-    function TryEnd(): TTigerIR;
+    function &Try(): TTigerIR;
+    function &Except(): TTigerIR;
+    function &Finally(): TTigerIR;
+    function EndTry(): TTigerIR;
 
-    function Raise_(const AMsg: TTigerIRExpr): TTigerIR;
+    function &Raise(const AMsg: TTigerIRExpr): TTigerIR;
     function RaiseCode(const ACode: TTigerIRExpr; const AMsg: TTigerIRExpr): TTigerIR;
 
-    function Inc_(const AVarName: string): TTigerIR; overload;
-    function Inc_(const AVarName: string; const AAmount: TTigerIRExpr): TTigerIR; overload;
-    function Dec_(const AVarName: string): TTigerIR; overload;
-    function Dec_(const AVarName: string; const AAmount: TTigerIRExpr): TTigerIR; overload;
+    function &Inc(const AVarName: string): TTigerIR; overload;
+    function &Inc(const AVarName: string; const AAmount: TTigerIRExpr): TTigerIR; overload;
+    function &Dec(const AVarName: string): TTigerIR; overload;
+    function &Dec(const AVarName: string; const AAmount: TTigerIRExpr): TTigerIR; overload;
 
     //--------------------------------------------------------------------------
     // Expressions - Literals
     //--------------------------------------------------------------------------
     function Str(const AValue: string): TTigerIRExpr;
     function WStr(const AValue: string): TTigerIRExpr;
-    function Int(const AValue: Int64): TTigerIRExpr;
+    function &Int64(const AValue: Int64): TTigerIRExpr;
     function Int32(const AValue: Int32): TTigerIRExpr;
-    function Int64_(const AValue: Int64): TTigerIRExpr;
-    function Flt(const AValue: Double): TTigerIRExpr;
+    function Float64(const AValue: Double): TTigerIRExpr;
     function Bool(const AValue: Boolean): TTigerIRExpr;
-    function Nil_(): TTigerIRExpr;
+    function Int8(const AValue: Int8): TTigerIRExpr;
+    function Int16(const AValue: Int16): TTigerIRExpr;
+    function UInt8(const AValue: UInt8): TTigerIRExpr;
+    function UInt16(const AValue: UInt16): TTigerIRExpr;
+    function UInt32(const AValue: UInt32): TTigerIRExpr;
+    function UInt64(const AValue: UInt64): TTigerIRExpr;
+    function Float32(const AValue: Single): TTigerIRExpr;
+    function Null(): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Variable Reference
     //--------------------------------------------------------------------------
-    function Var_(const AName: string): TTigerIRExpr;
+    function Get(const AName: string): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Arithmetic
@@ -705,8 +711,8 @@ type
     function Add(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function Sub(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function Mul(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function Div_(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function Mod_(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function IDiv(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function IMod(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function Neg(const AValue: TTigerIRExpr): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
@@ -716,31 +722,31 @@ type
     function BitOr(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function BitXor(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function BitNot(const AValue: TTigerIRExpr): TTigerIRExpr;
-    function Shl_(const AValue: TTigerIRExpr; const ACount: TTigerIRExpr): TTigerIRExpr;
-    function Shr_(const AValue: TTigerIRExpr; const ACount: TTigerIRExpr): TTigerIRExpr;
+    function &Shl(const AValue: TTigerIRExpr; const ACount: TTigerIRExpr): TTigerIRExpr;
+    function &Shr(const AValue: TTigerIRExpr; const ACount: TTigerIRExpr): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Comparison
     //--------------------------------------------------------------------------
-    function CmpEq(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function CmpNe(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function CmpLt(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function CmpLe(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function CmpGt(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function CmpGe(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function Eq(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function Ne(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function Lt(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function Le(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function Gt(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function Ge(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Logical
     //--------------------------------------------------------------------------
-    function And_(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function Or_(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function Not_(const AValue: TTigerIRExpr): TTigerIRExpr;
+    function LogAnd(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function LogOr(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function LogNot(const AValue: TTigerIRExpr): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Pointers
     //--------------------------------------------------------------------------
     function AddrOf(const AName: string): TTigerIRExpr;
-    function AddrOfExpr(const AExpr: TTigerIRExpr): TTigerIRExpr;
+    function AddrOfVal(const AExpr: TTigerIRExpr): TTigerIRExpr;
     function Deref(const APtr: TTigerIRExpr): TTigerIRExpr; overload;
     function Deref(const APtr: TTigerIRExpr; const ATypeName: string): TTigerIRExpr; overload;
     function Deref(const APtr: TTigerIRExpr; const AType: TTigerValueType): TTigerIRExpr; overload;
@@ -749,24 +755,24 @@ type
     // Expressions - Function Pointers
     //--------------------------------------------------------------------------
     function FuncAddr(const AFuncName: string): TTigerIRExpr;
-    function IndirectCallExpr(const AFuncPtr: TTigerIRExpr; const AArgs: array of TTigerIRExpr): TTigerIRExpr;
+    function InvokeIndirect(const AFuncPtr: TTigerIRExpr; const AArgs: array of TTigerIRExpr): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Composite Type Access
     //--------------------------------------------------------------------------
-    function FieldExpr(const AObject: TTigerIRExpr; const AFieldName: string): TTigerIRExpr;
-    function IndexExpr(const AArray: TTigerIRExpr; const AIndex: TTigerIRExpr): TTigerIRExpr;
+    function GetField(const AObject: TTigerIRExpr; const AFieldName: string): TTigerIRExpr;
+    function GetIndex(const AArray: TTigerIRExpr; const AIndex: TTigerIRExpr): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Function Call
     //--------------------------------------------------------------------------
-    function CallExpr(const AFuncName: string; const AArgs: array of TTigerIRExpr): TTigerIRExpr;
+    function Invoke(const AFuncName: string; const AArgs: array of TTigerIRExpr): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Exception Intrinsics
     //--------------------------------------------------------------------------
-    function GetExceptionCode(): TTigerIRExpr;
-    function GetExceptionMessage(): TTigerIRExpr;
+    function ExcCode(): TTigerIRExpr;
+    function ExcMsg(): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Set Literals
@@ -790,25 +796,25 @@ type
     //--------------------------------------------------------------------------
     // Expressions - Compile-Time Intrinsics
     //--------------------------------------------------------------------------
-    function SizeOf_(const ATypeName: string): TTigerIRExpr;
-    function AlignOf_(const ATypeName: string): TTigerIRExpr;
-    function High_(const ATypeName: string): TTigerIRExpr;
-    function Low_(const ATypeName: string): TTigerIRExpr;
-    function Len_(const ATypeName: string): TTigerIRExpr;
+    function &SizeOf(const ATypeName: string): TTigerIRExpr;
+    function AlignOf(const ATypeName: string): TTigerIRExpr;
+    function High(const ATypeName: string): TTigerIRExpr;
+    function Low(const ATypeName: string): TTigerIRExpr;
+    function Len(const ATypeName: string): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Runtime Intrinsics
     //--------------------------------------------------------------------------
-    function Ord_(const AValue: TTigerIRExpr): TTigerIRExpr;
-    function Chr_(const AValue: TTigerIRExpr): TTigerIRExpr;
-    function Succ_(const AValue: TTigerIRExpr): TTigerIRExpr;
-    function Pred_(const AValue: TTigerIRExpr): TTigerIRExpr;
+    function Ord(const AValue: TTigerIRExpr): TTigerIRExpr;
+    function Chr(const AValue: TTigerIRExpr): TTigerIRExpr;
+    function Succ(const AValue: TTigerIRExpr): TTigerIRExpr;
+    function Pred(const AValue: TTigerIRExpr): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Variadic Intrinsics
     //--------------------------------------------------------------------------
-    function VaCount_(): TTigerIRExpr;
-    function VaArgAt_(const AIndex: TTigerIRExpr; const AType: TTigerValueType): TTigerIRExpr;
+    function VaCount(): TTigerIRExpr;
+    function VaArg(const AIndex: TTigerIRExpr; const AType: TTigerValueType): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Emit to Backend
@@ -902,7 +908,7 @@ end;
 
 class operator TTigerIRExpr.Implicit(const AValue: Double): TTigerIRExpr;
 begin
-  // For doubles, we can't encode directly - user should use Flt()
+  // For doubles, we can't encode directly - user should use Float64()
   Result.Index := -1;
 end;
 
@@ -1678,7 +1684,7 @@ begin
     end;
 
     // Start new anonymous record group
-    Inc(FNextAnonRecordGroup);
+    System.Inc(FNextAnonRecordGroup);
     FAnonRecordInUnion := True;
   end
   else
@@ -1753,7 +1759,7 @@ begin
     end;
 
     // Start new overlay group
-    Inc(FNextOverlayGroup);
+    System.Inc(FNextOverlayGroup);
     LEntry := FTypes[FBuildingRecordIndex];
     FAnonUnionFieldStart := Length(LEntry.RecordType.Fields);
   end
@@ -1921,7 +1927,7 @@ begin
   LValue := Default(TIREnumValue);
   LValue.ValueName := AName;
   LValue.OrdinalValue := FNextEnumOrdinal;
-  Inc(FNextEnumOrdinal);
+  System.Inc(FNextEnumOrdinal);
 
   LLen := Length(LEntry.EnumType.Values);
   SetLength(LEntry.EnumType.Values, LLen + 1);
@@ -2269,8 +2275,8 @@ function TTigerIR.DefineSet(const AName: string; const AEnumTypeName: string): T
 var
   LEnumIndex: Integer;
   LEnumEntry: TIRTypeEntry;
-  LMinOrd: Int64;
-  LMaxOrd: Int64;
+  LMinOrd: System.Int64;
+  LMaxOrd: System.Int64;
   LI: Integer;
   LEntry: TIRTypeEntry;
   LSpan: Integer;
@@ -2304,7 +2310,7 @@ begin
 
   LMinOrd := LEnumEntry.EnumType.Values[0].OrdinalValue;
   LMaxOrd := LMinOrd;
-  for LI := 1 to High(LEnumEntry.EnumType.Values) do
+  for LI := 1 to System.High(LEnumEntry.EnumType.Values) do
   begin
     if LEnumEntry.EnumType.Values[LI].OrdinalValue < LMinOrd then
       LMinOrd := LEnumEntry.EnumType.Values[LI].OrdinalValue;
@@ -2542,7 +2548,7 @@ begin
   LImport.Linkage := ALinkage;
 
   SetLength(LImport.ParamTypes, Length(AParams));
-  for LI := 0 to High(AParams) do
+  for LI := 0 to System.High(AParams) do
     LImport.ParamTypes[LI] := AParams[LI];
 
   FImports.Add(LImport);
@@ -2580,7 +2586,7 @@ begin
   LImport.Linkage := ALinkage;
 
   SetLength(LImport.ParamTypes, Length(AParams));
-  for LI := 0 to High(AParams) do
+  for LI := 0 to System.High(AParams) do
     LImport.ParamTypes[LI] := AParams[LI];
 
   FImports.Add(LImport);
@@ -2660,7 +2666,7 @@ end;
 // TTigerIR - Function Definition
 //==============================================================================
 
-function TTigerIR.BeginFunc(
+function TTigerIR.Func(
   const AName: string;
   const AReturnType: TTigerValueType;
   const AIsEntryPoint: Boolean;
@@ -2686,7 +2692,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.BeginOverloadFunc(
+function TTigerIR.OverloadFunc(
   const AName: string;
   const AReturnType: TTigerValueType;
   const AIsEntryPoint: Boolean;
@@ -2729,7 +2735,7 @@ begin
   FFunctions.Add(LFunc);
 end;
 
-function TTigerIR.BeginVariadicFunc(
+function TTigerIR.VariadicFunc(
   const AName: string;
   const AReturnType: TTigerValueType;
   const AIsEntryPoint: Boolean;
@@ -2769,7 +2775,7 @@ begin
   FFunctions.Add(LFunc);
 end;
 
-function TTigerIR.BeginDllMain(): TTigerIR;
+function TTigerIR.DllMain(): TTigerIR;
 var
   LFunc: TIRFunc;
 begin
@@ -2892,7 +2898,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.AssignToExpr(const ADest: TTigerIRExpr; const AValue: TTigerIRExpr): TTigerIR;
+function TTigerIR.AssignTo(const ADest: TTigerIRExpr; const AValue: TTigerIRExpr): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -2928,7 +2934,7 @@ begin
   LStmt.CallTarget := AFuncName;
 
   SetLength(LStmt.CallArgs, Length(AArgs));
-  for LI := 0 to High(AArgs) do
+  for LI := 0 to System.High(AArgs) do
     LStmt.CallArgs[LI] := AArgs[LI].Index;
 
   LFunc.Stmts.Add(LStmt);
@@ -2940,7 +2946,7 @@ function TTigerIR.CallAssign(const ADest: string; const AFuncName: string; const
 var
   LCallExpr: TTigerIRExpr;
 begin
-  LCallExpr := CallExpr(AFuncName, AArgs);
+  LCallExpr := Invoke(AFuncName, AArgs);
   Result := Assign(ADest, LCallExpr);
 end;
 
@@ -2993,7 +2999,7 @@ begin
   LStmt.IndirectTarget := AFuncPtr.Index;
 
   SetLength(LStmt.CallArgs, Length(AArgs));
-  for LI := 0 to High(AArgs) do
+  for LI := 0 to System.High(AArgs) do
     LStmt.CallArgs[LI] := AArgs[LI].Index;
 
   LFunc.Stmts.Add(LStmt);
@@ -3006,7 +3012,7 @@ function TTigerIR.CallIndirectAssign(const ADest: string; const AFuncPtr: TTiger
 var
   LCallExpr: TTigerIRExpr;
 begin
-  LCallExpr := IndirectCallExpr(AFuncPtr, AArgs);
+  LCallExpr := InvokeIndirect(AFuncPtr, AArgs);
   Result := Assign(ADest, LCallExpr);
 end;
 
@@ -3014,7 +3020,7 @@ end;
 // TTigerIR - Control Flow
 //==============================================================================
 
-function TTigerIR.IfBegin(const ACond: TTigerIRExpr): TTigerIR;
+function TTigerIR.&If(const ACond: TTigerIRExpr): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3030,7 +3036,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.ElseBegin(): TTigerIR;
+function TTigerIR.&Else(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3045,7 +3051,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.IfEnd(): TTigerIR;
+function TTigerIR.EndIf(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3060,7 +3066,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.WhileBegin(const ACond: TTigerIRExpr): TTigerIR;
+function TTigerIR.&While(const ACond: TTigerIRExpr): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3076,7 +3082,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.WhileEnd(): TTigerIR;
+function TTigerIR.EndWhile(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3091,7 +3097,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.ForBegin(const AVar: string; const AFrom: TTigerIRExpr; const ATo: TTigerIRExpr): TTigerIR;
+function TTigerIR.&For(const AVar: string; const AFrom: TTigerIRExpr; const ATo: TTigerIRExpr): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3110,7 +3116,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.ForDownToBegin(const AVar: string; const AFrom: TTigerIRExpr; const ATo: TTigerIRExpr): TTigerIR;
+function TTigerIR.ForDownTo(const AVar: string; const AFrom: TTigerIRExpr; const ATo: TTigerIRExpr): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3129,7 +3135,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.ForEnd(): TTigerIR;
+function TTigerIR.EndFor(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3144,7 +3150,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.RepeatBegin(): TTigerIR;
+function TTigerIR.&Repeat(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3159,7 +3165,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.RepeatEnd(const ACond: TTigerIRExpr): TTigerIR;
+function TTigerIR.&Until(const ACond: TTigerIRExpr): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3179,7 +3185,7 @@ end;
 // TTigerIR - Case Statement
 //==============================================================================
 
-function TTigerIR.CaseBegin(const ASelector: TTigerIRExpr): TTigerIR;
+function TTigerIR.&Case(const ASelector: TTigerIRExpr): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3209,7 +3215,7 @@ begin
 
   // Extract constant values from expressions
   SetLength(LStmt.CaseValues, Length(AValues));
-  for LI := 0 to High(AValues) do
+  for LI := 0 to System.High(AValues) do
   begin
     if (AValues[LI].Index >= 0) and (AValues[LI].Index < FExpressions.Count) then
     begin
@@ -3241,7 +3247,7 @@ begin
 
   // Store raw integer values directly (these are case match values, not expression indices)
   SetLength(LStmt.CaseValues, Length(AValues));
-  for LI := 0 to High(AValues) do
+  for LI := 0 to System.High(AValues) do
     LStmt.CaseValues[LI] := AValues[LI];
 
   LFunc.Stmts.Add(LStmt);
@@ -3264,7 +3270,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.CaseEnd(): TTigerIR;
+function TTigerIR.EndCase(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3279,7 +3285,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.TryBegin(): TTigerIR;
+function TTigerIR.&Try(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3294,7 +3300,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.ExceptBegin(): TTigerIR;
+function TTigerIR.&Except(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3309,7 +3315,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.FinallyBegin(): TTigerIR;
+function TTigerIR.&Finally(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3324,7 +3330,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.TryEnd(): TTigerIR;
+function TTigerIR.EndTry(): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3339,7 +3345,7 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.Raise_(const AMsg: TTigerIRExpr): TTigerIR;
+function TTigerIR.&Raise(const AMsg: TTigerIRExpr): TTigerIR;
 var
   LStmt: TIRStmt;
   LFunc: TIRFunc;
@@ -3373,28 +3379,28 @@ begin
   Result := Self;
 end;
 
-function TTigerIR.Inc_(const AVarName: string): TTigerIR;
+function TTigerIR.&Inc(const AVarName: string): TTigerIR;
 begin
   // Inc(x) = x := x + 1
-  Result := Assign(AVarName, Add(Var_(AVarName), Int(1)));
+  Result := Assign(AVarName, Add(Get(AVarName), Int64(1)));
 end;
 
-function TTigerIR.Inc_(const AVarName: string; const AAmount: TTigerIRExpr): TTigerIR;
+function TTigerIR.&Inc(const AVarName: string; const AAmount: TTigerIRExpr): TTigerIR;
 begin
   // Inc(x, n) = x := x + n
-  Result := Assign(AVarName, Add(Var_(AVarName), AAmount));
+  Result := Assign(AVarName, Add(Get(AVarName), AAmount));
 end;
 
-function TTigerIR.Dec_(const AVarName: string): TTigerIR;
+function TTigerIR.&Dec(const AVarName: string): TTigerIR;
 begin
   // Dec(x) = x := x - 1
-  Result := Assign(AVarName, Sub(Var_(AVarName), Int(1)));
+  Result := Assign(AVarName, Sub(Get(AVarName), Int64(1)));
 end;
 
-function TTigerIR.Dec_(const AVarName: string; const AAmount: TTigerIRExpr): TTigerIR;
+function TTigerIR.&Dec(const AVarName: string; const AAmount: TTigerIRExpr): TTigerIR;
 begin
   // Dec(x, n) = x := x - n
-  Result := Assign(AVarName, Sub(Var_(AVarName), AAmount));
+  Result := Assign(AVarName, Sub(Get(AVarName), AAmount));
 end;
 
 //==============================================================================
@@ -3437,14 +3443,14 @@ begin
   Result := AddExpr(LNode);
 end;
 
-function TTigerIR.Int(const AValue: Int64): TTigerIRExpr;
+function TTigerIR.&Int64(const AValue: Int64): TTigerIRExpr;
 var
   LNode: TIRExprNode;
 begin
   LNode := Default(TIRExprNode);
   LNode.Kind := ekConstInt;
   LNode.ConstInt := AValue;
-  // Default to Int64 for generic Int()
+  // Int64 literal
   LNode.ResultType := TTigerTypeRef.FromPrimitive(vtInt64);
   Result := AddExpr(LNode);
 end;
@@ -3460,18 +3466,8 @@ begin
   Result := AddExpr(LNode);
 end;
 
-function TTigerIR.Int64_(const AValue: Int64): TTigerIRExpr;
-var
-  LNode: TIRExprNode;
-begin
-  LNode := Default(TIRExprNode);
-  LNode.Kind := ekConstInt;
-  LNode.ConstInt := AValue;
-  LNode.ResultType := TTigerTypeRef.FromPrimitive(vtInt64);
-  Result := AddExpr(LNode);
-end;
 
-function TTigerIR.Flt(const AValue: Double): TTigerIRExpr;
+function TTigerIR.Float64(const AValue: Double): TTigerIRExpr;
 var
   LNode: TIRExprNode;
 begin
@@ -3485,12 +3481,89 @@ end;
 function TTigerIR.Bool(const AValue: Boolean): TTigerIRExpr;
 begin
   if AValue then
-    Result := Int(1)
+    Result := Int64(1)
   else
-    Result := Int(0);
+    Result := Int64(0);
 end;
 
-function TTigerIR.Nil_(): TTigerIRExpr;
+function TTigerIR.Int8(const AValue: Int8): TTigerIRExpr;
+var
+  LNode: TIRExprNode;
+begin
+  LNode := Default(TIRExprNode);
+  LNode.Kind := ekConstInt;
+  LNode.ConstInt := AValue;
+  LNode.ResultType := TTigerTypeRef.FromPrimitive(vtInt8);
+  Result := AddExpr(LNode);
+end;
+
+function TTigerIR.Int16(const AValue: Int16): TTigerIRExpr;
+var
+  LNode: TIRExprNode;
+begin
+  LNode := Default(TIRExprNode);
+  LNode.Kind := ekConstInt;
+  LNode.ConstInt := AValue;
+  LNode.ResultType := TTigerTypeRef.FromPrimitive(vtInt16);
+  Result := AddExpr(LNode);
+end;
+
+function TTigerIR.UInt8(const AValue: UInt8): TTigerIRExpr;
+var
+  LNode: TIRExprNode;
+begin
+  LNode := Default(TIRExprNode);
+  LNode.Kind := ekConstInt;
+  LNode.ConstInt := AValue;
+  LNode.ResultType := TTigerTypeRef.FromPrimitive(vtUInt8);
+  Result := AddExpr(LNode);
+end;
+
+function TTigerIR.UInt16(const AValue: UInt16): TTigerIRExpr;
+var
+  LNode: TIRExprNode;
+begin
+  LNode := Default(TIRExprNode);
+  LNode.Kind := ekConstInt;
+  LNode.ConstInt := AValue;
+  LNode.ResultType := TTigerTypeRef.FromPrimitive(vtUInt16);
+  Result := AddExpr(LNode);
+end;
+
+function TTigerIR.UInt32(const AValue: UInt32): TTigerIRExpr;
+var
+  LNode: TIRExprNode;
+begin
+  LNode := Default(TIRExprNode);
+  LNode.Kind := ekConstInt;
+  LNode.ConstInt := AValue;
+  LNode.ResultType := TTigerTypeRef.FromPrimitive(vtUInt32);
+  Result := AddExpr(LNode);
+end;
+
+function TTigerIR.UInt64(const AValue: UInt64): TTigerIRExpr;
+var
+  LNode: TIRExprNode;
+begin
+  LNode := Default(TIRExprNode);
+  LNode.Kind := ekConstInt;
+  LNode.ConstInt := System.Int64(AValue);
+  LNode.ResultType := TTigerTypeRef.FromPrimitive(vtUInt64);
+  Result := AddExpr(LNode);
+end;
+
+function TTigerIR.Float32(const AValue: Single): TTigerIRExpr;
+var
+  LNode: TIRExprNode;
+begin
+  LNode := Default(TIRExprNode);
+  LNode.Kind := ekConstFloat;
+  LNode.ConstFloat := AValue;
+  LNode.ResultType := TTigerTypeRef.FromPrimitive(vtFloat32);
+  Result := AddExpr(LNode);
+end;
+
+function TTigerIR.Null(): TTigerIRExpr;
 var
   LNode: TIRExprNode;
 begin
@@ -3505,7 +3578,7 @@ end;
 // TTigerIR - Expressions: Variable Reference
 //==============================================================================
 
-function TTigerIR.Var_(const AName: string): TTigerIRExpr;
+function TTigerIR.Get(const AName: string): TTigerIRExpr;
 var
   LNode: TIRExprNode;
 begin
@@ -3535,12 +3608,12 @@ begin
   Result := MakeBinaryExpr(ALeft, ARight, opMul);
 end;
 
-function TTigerIR.Div_(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.IDiv(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opDiv);
 end;
 
-function TTigerIR.Mod_(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.IMod(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opMod);
 end;
@@ -3574,12 +3647,12 @@ begin
   Result := MakeUnaryExpr(AValue, opBitNot);
 end;
 
-function TTigerIR.Shl_(const AValue: TTigerIRExpr; const ACount: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.&Shl(const AValue: TTigerIRExpr; const ACount: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(AValue, ACount, opShl);
 end;
 
-function TTigerIR.Shr_(const AValue: TTigerIRExpr; const ACount: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.&Shr(const AValue: TTigerIRExpr; const ACount: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(AValue, ACount, opShr);
 end;
@@ -3588,32 +3661,32 @@ end;
 // TTigerIR - Expressions: Comparison
 //==============================================================================
 
-function TTigerIR.CmpEq(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Eq(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opCmpEq);
 end;
 
-function TTigerIR.CmpNe(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Ne(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opCmpNe);
 end;
 
-function TTigerIR.CmpLt(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Lt(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opCmpLt);
 end;
 
-function TTigerIR.CmpLe(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Le(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opCmpLe);
 end;
 
-function TTigerIR.CmpGt(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Gt(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opCmpGt);
 end;
 
-function TTigerIR.CmpGe(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Ge(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opCmpGe);
 end;
@@ -3622,17 +3695,17 @@ end;
 // TTigerIR - Expressions: Logical
 //==============================================================================
 
-function TTigerIR.And_(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.LogAnd(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opAnd);
 end;
 
-function TTigerIR.Or_(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.LogOr(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opOr);
 end;
 
-function TTigerIR.Not_(const AValue: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.LogNot(const AValue: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeUnaryExpr(AValue, opNot);
 end;
@@ -3653,7 +3726,7 @@ begin
   Result := AddExpr(LNode);
 end;
 
-function TTigerIR.AddrOfExpr(const AExpr: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.AddrOfVal(const AExpr: TTigerIRExpr): TTigerIRExpr;
 var
   LNode: TIRExprNode;
 begin
@@ -3719,7 +3792,7 @@ begin
   Result := AddExpr(LNode);
 end;
 
-function TTigerIR.IndirectCallExpr(const AFuncPtr: TTigerIRExpr; const AArgs: array of TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.InvokeIndirect(const AFuncPtr: TTigerIRExpr; const AArgs: array of TTigerIRExpr): TTigerIRExpr;
 var
   LNode: TIRExprNode;
   LI: Integer;
@@ -3729,7 +3802,7 @@ begin
   LNode.IndirectTarget := AFuncPtr.Index;
 
   SetLength(LNode.CallArgs, Length(AArgs));
-  for LI := 0 to High(AArgs) do
+  for LI := 0 to System.High(AArgs) do
     LNode.CallArgs[LI] := AArgs[LI].Index;
 
   Result := AddExpr(LNode);
@@ -3739,7 +3812,7 @@ end;
 // TTigerIR - Expressions: Composite Type Access
 //==============================================================================
 
-function TTigerIR.FieldExpr(const AObject: TTigerIRExpr; const AFieldName: string): TTigerIRExpr;
+function TTigerIR.GetField(const AObject: TTigerIRExpr; const AFieldName: string): TTigerIRExpr;
 var
   LNode: TIRExprNode;
   LObjectNode: TIRExprNode;
@@ -3770,7 +3843,7 @@ begin
   Result := AddExpr(LNode);
 end;
 
-function TTigerIR.IndexExpr(const AArray: TTigerIRExpr; const AIndex: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.GetIndex(const AArray: TTigerIRExpr; const AIndex: TTigerIRExpr): TTigerIRExpr;
 var
   LNode: TIRExprNode;
   LArrayNode: TIRExprNode;
@@ -3808,7 +3881,7 @@ end;
 // TTigerIR - Expressions: Function Call
 //==============================================================================
 
-function TTigerIR.CallExpr(const AFuncName: string; const AArgs: array of TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Invoke(const AFuncName: string; const AArgs: array of TTigerIRExpr): TTigerIRExpr;
 var
   LNode: TIRExprNode;
   LI: Integer;
@@ -3818,13 +3891,13 @@ begin
   LNode.CallTarget := AFuncName;
 
   SetLength(LNode.CallArgs, Length(AArgs));
-  for LI := 0 to High(AArgs) do
+  for LI := 0 to System.High(AArgs) do
     LNode.CallArgs[LI] := AArgs[LI].Index;
 
   Result := AddExpr(LNode);
 end;
 
-function TTigerIR.GetExceptionCode(): TTigerIRExpr;
+function TTigerIR.ExcCode(): TTigerIRExpr;
 var
   LNode: TIRExprNode;
 begin
@@ -3834,7 +3907,7 @@ begin
   Result := AddExpr(LNode);
 end;
 
-function TTigerIR.GetExceptionMessage(): TTigerIRExpr;
+function TTigerIR.ExcMsg(): TTigerIRExpr;
 var
   LNode: TIRExprNode;
 begin
@@ -3877,7 +3950,7 @@ begin
 
   // Store elements (they will be adjusted by LowBound during code generation)
   SetLength(LNode.SetElements, Length(AElements));
-  for LI := 0 to High(AElements) do
+  for LI := 0 to System.High(AElements) do
     LNode.SetElements[LI] := AElements[LI];
 
   Result := AddExpr(LNode);
@@ -4010,7 +4083,7 @@ end;
 // TTigerIR - Expressions: Compile-Time Intrinsics
 //==============================================================================
 
-function TTigerIR.SizeOf_(const ATypeName: string): TTigerIRExpr;
+function TTigerIR.&SizeOf(const ATypeName: string): TTigerIRExpr;
 var
   LTypeIndex: Integer;
   LTypeRef: TTigerTypeRef;
@@ -4025,10 +4098,10 @@ begin
   end;
 
   LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-  Result := Int(GetTypeSize(LTypeRef));
+  Result := Int64(GetTypeSize(LTypeRef));
 end;
 
-function TTigerIR.AlignOf_(const ATypeName: string): TTigerIRExpr;
+function TTigerIR.AlignOf(const ATypeName: string): TTigerIRExpr;
 var
   LTypeIndex: Integer;
   LTypeRef: TTigerTypeRef;
@@ -4043,10 +4116,10 @@ begin
   end;
 
   LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-  Result := Int(GetTypeAlignment(LTypeRef));
+  Result := Int64(GetTypeAlignment(LTypeRef));
 end;
 
-function TTigerIR.High_(const ATypeName: string): TTigerIRExpr;
+function TTigerIR.High(const ATypeName: string): TTigerIRExpr;
 var
   LTypeIndex: Integer;
   LEntry: TIRTypeEntry;
@@ -4063,16 +4136,16 @@ begin
   LEntry := FTypes[LTypeIndex];
   case LEntry.Kind of
     tkFixedArray:
-      Result := Int(LEntry.FixedArrayType.HighBound);
+      Result := Int64(LEntry.FixedArrayType.HighBound);
     tkEnum:
       begin
         if Length(LEntry.EnumType.Values) > 0 then
-          Result := Int(LEntry.EnumType.Values[High(LEntry.EnumType.Values)].OrdinalValue)
+          Result := Int64(LEntry.EnumType.Values[System.High(LEntry.EnumType.Values)].OrdinalValue)
         else
-          Result := Int(0);
+          Result := Int64(0);
       end;
     tkSet:
-      Result := Int(LEntry.SetType.HighBound);
+      Result := Int64(LEntry.SetType.HighBound);
   else
     if Assigned(FErrors) then
       FErrors.Add(esError, ERR_IR_TYPE_BUILD, 'High: Not applicable to type: %s', [ATypeName]);
@@ -4080,7 +4153,7 @@ begin
   end;
 end;
 
-function TTigerIR.Low_(const ATypeName: string): TTigerIRExpr;
+function TTigerIR.Low(const ATypeName: string): TTigerIRExpr;
 var
   LTypeIndex: Integer;
   LEntry: TIRTypeEntry;
@@ -4097,16 +4170,16 @@ begin
   LEntry := FTypes[LTypeIndex];
   case LEntry.Kind of
     tkFixedArray:
-      Result := Int(LEntry.FixedArrayType.LowBound);
+      Result := Int64(LEntry.FixedArrayType.LowBound);
     tkEnum:
       begin
         if Length(LEntry.EnumType.Values) > 0 then
-          Result := Int(LEntry.EnumType.Values[0].OrdinalValue)
+          Result := Int64(LEntry.EnumType.Values[0].OrdinalValue)
         else
-          Result := Int(0);
+          Result := Int64(0);
       end;
     tkSet:
-      Result := Int(LEntry.SetType.LowBound);
+      Result := Int64(LEntry.SetType.LowBound);
   else
     if Assigned(FErrors) then
       FErrors.Add(esError, ERR_IR_TYPE_BUILD, 'Low: Not applicable to type: %s', [ATypeName]);
@@ -4114,7 +4187,7 @@ begin
   end;
 end;
 
-function TTigerIR.Len_(const ATypeName: string): TTigerIRExpr;
+function TTigerIR.Len(const ATypeName: string): TTigerIRExpr;
 var
   LTypeIndex: Integer;
   LEntry: TIRTypeEntry;
@@ -4131,7 +4204,7 @@ begin
   LEntry := FTypes[LTypeIndex];
   case LEntry.Kind of
     tkFixedArray:
-      Result := Int(LEntry.FixedArrayType.HighBound - LEntry.FixedArrayType.LowBound + 1);
+      Result := Int64(LEntry.FixedArrayType.HighBound - LEntry.FixedArrayType.LowBound + 1);
   else
     if Assigned(FErrors) then
       FErrors.Add(esError, ERR_IR_TYPE_BUILD, 'Len: Not applicable to type: %s', [ATypeName]);
@@ -4143,37 +4216,37 @@ end;
 // TTigerIR - Expressions: Runtime Intrinsics
 //==============================================================================
 
-function TTigerIR.Ord_(const AValue: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Ord(const AValue: TTigerIRExpr): TTigerIRExpr;
 begin
   // Ord is a pass-through - the ordinal value is the integer representation
   // The expression already holds the numeric value
   Result := AValue;
 end;
 
-function TTigerIR.Chr_(const AValue: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Chr(const AValue: TTigerIRExpr): TTigerIRExpr;
 begin
   // Chr is a pass-through - we just interpret the integer as a character
   // The expression already holds the numeric value
   Result := AValue;
 end;
 
-function TTigerIR.Succ_(const AValue: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Succ(const AValue: TTigerIRExpr): TTigerIRExpr;
 begin
   // Succ(x) = x + 1
-  Result := Add(AValue, Int(1));
+  Result := Add(AValue, Int64(1));
 end;
 
-function TTigerIR.Pred_(const AValue: TTigerIRExpr): TTigerIRExpr;
+function TTigerIR.Pred(const AValue: TTigerIRExpr): TTigerIRExpr;
 begin
   // Pred(x) = x - 1
-  Result := Sub(AValue, Int(1));
+  Result := Sub(AValue, Int64(1));
 end;
 
 //==============================================================================
 // TTigerIR - Expressions: Variadic Intrinsics
 //==============================================================================
 
-function TTigerIR.VaCount_(): TTigerIRExpr;
+function TTigerIR.VaCount(): TTigerIRExpr;
 var
   LNode: TIRExprNode;
 begin
@@ -4183,7 +4256,7 @@ begin
   Result := AddExpr(LNode);
 end;
 
-function TTigerIR.VaArgAt_(const AIndex: TTigerIRExpr; const AType: TTigerValueType): TTigerIRExpr;
+function TTigerIR.VaArg(const AIndex: TTigerIRExpr; const AType: TTigerValueType): TTigerIRExpr;
 var
   LNode: TIRExprNode;
 begin
@@ -4356,7 +4429,7 @@ begin
       begin
         // Evaluate arguments
         SetLength(LArgs, Length(LNode.CallArgs));
-        for LI := 0 to High(LNode.CallArgs) do
+        for LI := 0 to System.High(LNode.CallArgs) do
           LArgs[LI] := EmitExpr(ABackend, LNode.CallArgs[LI]);
 
         // Find target
