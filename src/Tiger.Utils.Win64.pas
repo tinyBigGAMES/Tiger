@@ -94,6 +94,7 @@ type
     class procedure ProcessMessages(); static;
 
     class function  RunExe(const AExe, AParams, AWorkDir: string; const AWait: Boolean = True; const AShowCmd: Word = SW_SHOWNORMAL): Cardinal; static;
+    class function  RunElf(const AElf, AWorkDir: string): Cardinal; static;
     class procedure CaptureConsoleOutput(const ATitle: string; const ACommand: PChar; const AParameters: PChar; const AWorkDir: string; var AExitCode: DWORD; const AUserData: Pointer; const ACallback: TCaptureConsoleCallback); static;
     class procedure CaptureZigConsolePTY(const ACommand: PChar; const AParameters: PChar; const AWorkDir: string; var AExitCode: DWORD; const AUserData: Pointer; const ACallback: TCaptureConsoleCallback); static;
     class function  CreateProcessWithPipes(const AExe, AParams, AWorkDir: string; out AStdinWrite: THandle; out AStdoutRead: THandle; out AProcessHandle: THandle; out AThreadHandle: THandle): Boolean; static;
@@ -671,6 +672,106 @@ begin
   end;
 end;
 
+class function TWin64Utils.RunElf(const AElf, AWorkDir: string): Cardinal;
+var
+  LFullPath: string;
+  LWslPath: string;
+  LDrive: Char;
+  LCmd: UnicodeString;
+  LSI: STARTUPINFOW;
+  LPI: PROCESS_INFORMATION;
+  LExit: DWORD;
+begin
+  if AElf = '' then
+    raise Exception.Create('RunElf: ELF path is empty');
+
+  // Resolve relative paths to absolute (WSL needs a drive letter)
+  LFullPath := TPath.GetFullPath(AElf);
+
+  // Convert Windows path to WSL path: C:\foo\bar -> /mnt/c/foo/bar
+  if (Length(LFullPath) >= 3) and (LFullPath[2] = ':') and (LFullPath[3] = '\') then
+  begin
+    LDrive := LowerCase(LFullPath[1])[1];
+    LWslPath := '/mnt/' + LDrive + '/' +
+      StringReplace(Copy(LFullPath, 4, MaxInt), '\', '/', [rfReplaceAll]);
+  end
+  else
+    raise Exception.CreateFmt('RunElf: Expected absolute Windows path: %s', [LFullPath]);
+
+  //--------------------------------------------------------------------------
+  // Step 1: chmod +x via WSL (make the ELF executable)
+  //--------------------------------------------------------------------------
+  LCmd := 'wsl.exe chmod +x "' + LWslPath + '"';
+  UniqueString(LCmd);
+
+  ZeroMemory(@LSI, SizeOf(LSI));
+  ZeroMemory(@LPI, SizeOf(LPI));
+  LSI.cb := SizeOf(LSI);
+  LSI.dwFlags := STARTF_USESHOWWINDOW;
+  LSI.wShowWindow := SW_HIDE;
+
+  if not CreateProcessW(
+    nil,                   // lpApplicationName
+    PWideChar(LCmd),       // lpCommandLine
+    nil,                   // lpProcessAttributes
+    nil,                   // lpThreadAttributes
+    False,                 // bInheritHandles
+    CREATE_UNICODE_ENVIRONMENT,
+    nil,                   // lpEnvironment
+    PWideChar(AWorkDir),   // lpCurrentDirectory
+    LSI,                   // lpStartupInfo
+    LPI                    // lpProcessInformation
+  ) then
+    raise Exception.CreateFmt('RunElf: chmod CreateProcess failed (%d) %s',
+      [GetLastError, SysErrorMessage(GetLastError)]);
+
+  try
+    WaitForSingleObject(LPI.hProcess, INFINITE);
+  finally
+    CloseHandle(LPI.hThread);
+    CloseHandle(LPI.hProcess);
+  end;
+
+  //--------------------------------------------------------------------------
+  // Step 2: Execute the ELF binary via WSL
+  //--------------------------------------------------------------------------
+  LCmd := 'wsl.exe "' + LWslPath + '"';
+  UniqueString(LCmd);
+
+  ZeroMemory(@LSI, SizeOf(LSI));
+  ZeroMemory(@LPI, SizeOf(LPI));
+  LSI.cb := SizeOf(LSI);
+  LSI.dwFlags := STARTF_USESHOWWINDOW;
+  LSI.wShowWindow := SW_HIDE;
+
+  if not CreateProcessW(
+    nil,                   // lpApplicationName
+    PWideChar(LCmd),       // lpCommandLine
+    nil,                   // lpProcessAttributes
+    nil,                   // lpThreadAttributes
+    False,                 // bInheritHandles
+    CREATE_UNICODE_ENVIRONMENT,
+    nil,                   // lpEnvironment
+    PWideChar(AWorkDir),   // lpCurrentDirectory
+    LSI,                   // lpStartupInfo
+    LPI                    // lpProcessInformation
+  ) then
+    raise Exception.CreateFmt('RunElf: execute CreateProcess failed (%d) %s',
+      [GetLastError, SysErrorMessage(GetLastError)]);
+
+  try
+    WaitForSingleObject(LPI.hProcess, INFINITE);
+    LExit := 0;
+    if GetExitCodeProcess(LPI.hProcess, LExit) then
+      Result := LExit
+    else
+      raise Exception.CreateFmt('RunElf: GetExitCodeProcess failed (%d) %s',
+        [GetLastError, SysErrorMessage(GetLastError)]);
+  finally
+    CloseHandle(LPI.hThread);
+    CloseHandle(LPI.hProcess);
+  end;
+end;
 
 
 class procedure TWin64Utils.CaptureConsoleOutput(const ATitle: string; const ACommand: PChar; const AParameters: PChar; const AWorkDir: string; var AExitCode: DWORD; const AUserData: Pointer; const ACallback: TCaptureConsoleCallback);

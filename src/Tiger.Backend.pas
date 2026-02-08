@@ -45,6 +45,9 @@ type
     FLinkedObjs: TStringList;
     FLibPaths: TStringList;
 
+    procedure PreBuild(); virtual;
+    procedure PostBuild(); virtual;
+
   public
     constructor Create(); override;
     destructor Destroy(); override;
@@ -52,7 +55,7 @@ type
     //--------------------------------------------------------------------------
     // Target Configuration
     //--------------------------------------------------------------------------
-    function TargetExe(const APath: string; const ASubsystem: TTigerSubsystem = ssConsole): TTigerBackend;
+    function TargetExe(const APath: string; const ASubsystem: TTigerSubsystem = ssConsole): TTigerBackend; virtual;
     function TargetDll(const APath: string): TTigerBackend;
     function TargetLib(const APath: string): TTigerBackend;
     function TargetObj(const APath: string): TTigerBackend;
@@ -195,6 +198,17 @@ begin
   Result := Self;
 end;
 
+procedure TTigerBackend.PreBuild();
+begin
+  // Default: ensure output directory exists
+  TUtils.CreateDirInPath(FOutputPath);
+end;
+
+procedure TTigerBackend.PostBuild();
+begin
+  // Default: no-op — override for signing, permissions, etc.
+end;
+
 function TTigerBackend.Build(): Boolean;
 var
   LData: TBytes;
@@ -208,8 +222,8 @@ begin
     Exit;
   end;
 
-  // Ensure directory exists
-  TUtils.CreateDirInPath(FOutputPath);
+  // Pre-build hook (directory creation, path fixups, etc.)
+  PreBuild();
 
   LData := BuildToMemory();
   if Length(LData) = 0 then
@@ -228,6 +242,9 @@ begin
     Result := True;
     Status('Build successful: %s', [FOutputPath.Replace('\', '/')]);
 
+    // Post-build hook (signing, permissions, etc.)
+    PostBuild();
+
   except
     on E: Exception do
       Status('Error writing output: %s', [E.Message]);
@@ -236,18 +253,7 @@ end;
 
 function TTigerBackend.Run(): Cardinal;
 begin
-  if FOutputType <> otExe then
-    Exit(ERROR_BAD_FORMAT);  // 11 - not a valid executable
-
-  try
-    Result := TWin64Utils.RunExe(FOutputPath, '', ExtractFilePath(FOutputPath));
-  except
-    on E: Exception do
-    begin
-      Status('Run failed: %s', [E.Message]);
-      Result := ERROR_FILE_NOT_FOUND;
-    end;
-  end;
+  Result := ERROR_BAD_FORMAT;
 end;
 
 function TTigerBackend.BuildToMemory(): TBytes;

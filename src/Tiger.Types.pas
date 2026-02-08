@@ -253,6 +253,7 @@ type
     ikJumpIfNot,
     ikVaCount,       // dest := VaCount_()
     ikVaArgAt,       // dest := VaArgAt_(index, type)
+    ikSyscall,       // syscall(nr, args...) — Linux syscall
     ikLabel
   );
 
@@ -266,6 +267,7 @@ type
     FuncTarget: TTigerFuncHandle;
     ImportTarget: TTigerImportHandle;
     Args: TArray<TTigerOperand>;
+    SyscallNr: Integer;             // Linux syscall number (for ikSyscall)
   end;
 
   { TTigerExceptionScope }

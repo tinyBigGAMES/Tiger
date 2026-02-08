@@ -186,7 +186,11 @@ type
     
     // Variadic intrinsics
     sikVaCount,       // dest := VaCount_()
-    sikVaArgAt        // dest := VaArgAt_(index, type)
+    sikVaArgAt,       // dest := VaArgAt_(index, type)
+
+    // Syscall intrinsics (Linux)
+    sikSyscall,       // syscall(nr, args...) — discard result
+    sikSyscallAssign  // dest := syscall(nr, args...) — capture RAX
   );
 
   //============================================================================
@@ -225,6 +229,8 @@ type
     
     // For sikVaArgAt
     VaArgType: TTigerValueType;  // Type to read vararg as
+    // For sikSyscall / sikSyscallAssign
+    SyscallNr: Integer;          // Linux syscall number
   end;
 
   //============================================================================
@@ -1457,8 +1463,8 @@ begin
           if not LInstr.Dest.IsValid() then
             Continue;
           
-          // Skip calls (have side effects)
-          if LInstr.Kind in [sikCall, sikCallAssign] then
+          // Skip calls and syscalls (have side effects)
+          if LInstr.Kind in [sikCall, sikCallAssign, sikSyscall, sikSyscallAssign] then
             Continue;
           
           // Skip control flow
@@ -2304,6 +2310,23 @@ begin
             LInstr := Default(TTigerSSAInstr);
             LInstr.Kind := sikIndirectCall;
             LInstr.Op1 := TTigerSSAOperand.FromVar(LExprVar);  // Function pointer
+            LInstr.CallArgs := LCallArgs;
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+          end;
+
+        TTigerIR.TIRStmtKind.skSyscall:
+          begin
+            // Convert syscall arguments
+            SetLength(LCallArgs, Length(LStmt.CallArgs));
+            for LArgIdx := 0 to High(LStmt.CallArgs) do
+            begin
+              LArgVar := ConvertExpression(AIR, LStmt.CallArgs[LArgIdx], ASSAFunc);
+              LCallArgs[LArgIdx] := TTigerSSAOperand.FromVar(LArgVar);
+            end;
+
+            LInstr := Default(TTigerSSAInstr);
+            LInstr.Kind := sikSyscall;
+            LInstr.SyscallNr := LStmt.SyscallNr;
             LInstr.CallArgs := LCallArgs;
             ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
           end;
@@ -3643,6 +3666,28 @@ begin
         
         Result := LResultVar;
       end;
+
+    TTigerIR.TIRExprKind.ekSyscall:
+      begin
+        // Convert syscall arguments
+        SetLength(LCallArgs, Length(LExpr.CallArgs));
+        for LArgIdx := 0 to High(LExpr.CallArgs) do
+        begin
+          LArgVar := ConvertExpression(AIR, LExpr.CallArgs[LArgIdx], ASSAFunc);
+          LCallArgs[LArgIdx] := TTigerSSAOperand.FromVar(LArgVar);
+        end;
+
+        LResultVar := ASSAFunc.NewVersion('_t');
+
+        LInstr := Default(TTigerSSAInstr);
+        LInstr.Kind := sikSyscallAssign;
+        LInstr.Dest := LResultVar;
+        LInstr.SyscallNr := LExpr.SyscallNr;
+        LInstr.CallArgs := LCallArgs;
+        ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+
+        Result := LResultVar;
+      end;
   else
     Result := TTigerSSAVar.None();
   end;
@@ -4325,6 +4370,7 @@ var
   LI: Integer;
   LJ: Integer;
   LK: Integer;
+  //LM: Integer;
   LFunc: TTigerSSAFunc;
   LBlock: TTigerSSABlock;
   LInstr: TTigerSSAInstr;
@@ -4594,6 +4640,26 @@ begin
                 end;
                 LLine := LLine + ')';
               end;
+            sikSyscall:
+              begin
+                LLine := Format('syscall %d(', [LInstr.SyscallNr]);
+                for LArgIdx := 0 to High(LInstr.CallArgs) do
+                begin
+                  if LArgIdx > 0 then LLine := LLine + ', ';
+                  LLine := LLine + LInstr.CallArgs[LArgIdx].ToString();
+                end;
+                LLine := LLine + ')';
+              end;
+            sikSyscallAssign:
+              begin
+                LLine := Format('%s = syscall %d(', [LInstr.Dest.ToString(), LInstr.SyscallNr]);
+                for LArgIdx := 0 to High(LInstr.CallArgs) do
+                begin
+                  if LArgIdx > 0 then LLine := LLine + ', ';
+                  LLine := LLine + LInstr.CallArgs[LArgIdx].ToString();
+                end;
+                LLine := LLine + ')';
+              end;
             sikReturn: LLine := 'return';
             sikReturnValue: LLine := Format('return %s', [LInstr.Op1.ToString()]);
             sikPhi:
@@ -4655,6 +4721,7 @@ var
   LI: Integer;
   LJ: Integer;
   LK: Integer;
+  LM: Integer;
   LFunc: TTigerSSAFunc;
   LBlock: TTigerSSABlock;
   LInstr: TTigerSSAInstr;
@@ -4674,6 +4741,8 @@ var
   LExceptHandle: TTigerLabelHandle;
   LFinallyHandle: TTigerLabelHandle;
   LEndHandle: TTigerLabelHandle;
+  // Syscall argument array
+  LArgs: TArray<TTigerOperand>;
 begin
   Status('SSA: Emitting to backend (%d functions)', [FFunctions.Count]);
   
@@ -5068,6 +5137,25 @@ begin
             sikVaArgAt:
               begin
                 LDestTemp := ABackend.GetCode.VaArgAt(LOp1, LInstr.VaArgType);
+                LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
+              end;
+
+            sikSyscall:
+              begin
+                // Syscall as statement (discard result)
+                SetLength(LArgs, Length(LInstr.CallArgs));
+                for LM := 0 to High(LInstr.CallArgs) do
+                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, ABackend);
+                ABackend.GetCode().EmitSyscall(LInstr.SyscallNr, LArgs);
+              end;
+
+            sikSyscallAssign:
+              begin
+                // Syscall as expression (capture result)
+                SetLength(LArgs, Length(LInstr.CallArgs));
+                for LM := 0 to High(LInstr.CallArgs) do
+                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, ABackend);
+                LDestTemp := ABackend.GetCode().EmitSyscallFunc(LInstr.SyscallNr, LArgs);
                 LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
               end;
           end;

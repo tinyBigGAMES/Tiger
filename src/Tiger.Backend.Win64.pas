@@ -44,6 +44,7 @@ type
     function BuildToMemory(): TBytes; override;
     function Run(): Cardinal; override;
     procedure Clear(); override;
+    function TargetExe(const APath: string; const ASubsystem: TTigerSubsystem = ssConsole): TTigerBackend; override;
   end;
 
 implementation
@@ -202,6 +203,13 @@ type
 //==============================================================================
 // TTigerWin64Backend
 //==============================================================================
+
+function TTigerWin64Backend.TargetExe(const APath: string; const ASubsystem: TTigerSubsystem): TTigerBackend;
+begin
+  inherited;
+  FOutputPath := TPath.ChangeExtension(FOutputPath, '.exe');
+  Result := Self;
+end;
 
 function TTigerWin64Backend.BuildToMemory(): TBytes;
 begin

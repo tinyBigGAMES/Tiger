@@ -244,6 +244,12 @@ type
     function VaArgAt(const AIndex: TTigerOperand; const AType: TTigerValueType): TTigerTempHandle;
 
     //--------------------------------------------------------------------------
+    // Syscall (Linux)
+    //--------------------------------------------------------------------------
+    function EmitSyscall(const ANr: Integer; const AArgs: array of TTigerOperand): TTigerCodeBuilder;
+    function EmitSyscallFunc(const ANr: Integer; const AArgs: array of TTigerOperand): TTigerTempHandle;
+
+    //--------------------------------------------------------------------------
     // Memory Operations
     //--------------------------------------------------------------------------
     function Store(const ADest: TTigerLocalHandle; const AValue: TTigerOperand): TTigerCodeBuilder;
@@ -1539,6 +1545,45 @@ begin
   LInstr.Dest := Result;
   LInstr.Op1 := AIndex;                          // Index expression
   LInstr.Op2 := TTigerOperand.FromImm(Ord(AType)); // Type to read as
+  AddInstr(LInstr);
+end;
+
+function TTigerCodeBuilder.EmitSyscall(const ANr: Integer;
+  const AArgs: array of TTigerOperand): TTigerCodeBuilder;
+var
+  LInstr: TTigerInstruction;
+  LI: Integer;
+begin
+  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr.Kind := ikSyscall;
+  LInstr.SyscallNr := ANr;
+  LInstr.Dest := TTigerTempHandle.Invalid();
+
+  SetLength(LInstr.Args, Length(AArgs));
+  for LI := 0 to High(AArgs) do
+    LInstr.Args[LI] := AArgs[LI];
+
+  AddInstr(LInstr);
+  Result := Self;
+end;
+
+function TTigerCodeBuilder.EmitSyscallFunc(const ANr: Integer;
+  const AArgs: array of TTigerOperand): TTigerTempHandle;
+var
+  LInstr: TTigerInstruction;
+  LI: Integer;
+begin
+  Result := AllocTemp();
+
+  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr.Kind := ikSyscall;
+  LInstr.SyscallNr := ANr;
+  LInstr.Dest := Result;
+
+  SetLength(LInstr.Args, Length(AArgs));
+  for LI := 0 to High(AArgs) do
+    LInstr.Args[LI] := AArgs[LI];
+
   AddInstr(LInstr);
 end;
 

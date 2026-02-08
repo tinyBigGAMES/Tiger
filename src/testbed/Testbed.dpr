@@ -18,8 +18,10 @@ program Testbed;
 uses
   System.SysUtils,
   UTestbed in 'UTestbed.pas',
+  Tiger.ABI.Linux64 in '..\Tiger.ABI.Linux64.pas',
   Tiger.ABI in '..\Tiger.ABI.pas',
   Tiger.ABI.Win64 in '..\Tiger.ABI.Win64.pas',
+  Tiger.Backend.Linux64 in '..\Tiger.Backend.Linux64.pas',
   Tiger.Backend in '..\Tiger.Backend.pas',
   Tiger.Backend.Win64 in '..\Tiger.Backend.Win64.pas',
   Tiger.Backend.X64 in '..\Tiger.Backend.X64.pas',
@@ -31,6 +33,7 @@ uses
   Tiger.Linker in '..\Tiger.Linker.pas',
   Tiger in '..\Tiger.pas',
   Tiger.Resources in '..\Tiger.Resources.pas',
+  Tiger.Runtime.Linux64 in '..\Tiger.Runtime.Linux64.pas',
   Tiger.Runtime in '..\Tiger.Runtime.pas',
   Tiger.Runtime.Win64 in '..\Tiger.Runtime.Win64.pas',
   Tiger.SSA in '..\Tiger.SSA.pas',

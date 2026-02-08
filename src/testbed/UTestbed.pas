@@ -98,23 +98,25 @@ end;
   single main function that prints "Hello, World!", and builds a console
   executable. Validates the basic end-to-end pipeline.
 ==============================================================================*)
-procedure Test01(const ADumpSSA: Boolean=False);
+procedure Test01(const APlatform: TTigerPlatform=tpWin64; ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test01.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-
+    if APlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test01.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
     LTiger.Func('main', vtVoid, True)
       .Call('printf', [LTiger.Str('Hello, World!'#10)])
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
-
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test01.exe'), ssConsole);
-
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test01'), ssConsole);
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
   finally
@@ -128,7 +130,7 @@ end;
   variables, while loop, arithmetic (Mul/Sub), and printf output.
   Validates: BeginFunc, Local, Assign, WhileBegin/End, Var_, Int, Str, Call.
 ==============================================================================*)
-procedure Test02(const ADumpSSA: Boolean=False);
+procedure Test02(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -170,7 +172,7 @@ end;
   elimination (a+2 reused), and dead code elimination (unused variable e)
   all work correctly without changing program output.
 ==============================================================================*)
-procedure Test03(const ADumpSSA: Boolean=False);
+procedure Test03(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -237,7 +239,7 @@ end;
   level instead of using ResetBuild. This isolates whether crashes are caused
   by stale state in ResetBuild vs the optimizer itself.
 ==============================================================================*)
-procedure Test03_2(const ADumpSSA: Boolean=False);
+procedure Test03_2(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 
   procedure BuildAndRun(const AOptLevel: Integer; const AOutputName: string);
   var
@@ -302,7 +304,7 @@ end;
   phi node insertion and loop-carried variable updates (n, result) survive
   the full optimizer pipeline without corruption.
 ==============================================================================*)
-procedure Test04(const ADumpSSA: Boolean=False);
+procedure Test04(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -346,7 +348,7 @@ end;
   and verifies correct branch selection across three test values (1=Weekday,
   6=Weekend, 9=Unknown).
 ==============================================================================*)
-procedure Test05(const ADumpSSA: Boolean=False);
+procedure Test05(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -421,7 +423,7 @@ end;
   and cross-global expressions. Validates the .bss section and global
   variable addressing in the generated PE.
 ==============================================================================*)
-procedure Test06(const ADumpSSA: Boolean=False);
+procedure Test06(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -487,7 +489,7 @@ end;
   size, alignment, and TypeRef properties for each type. Builds a trivial
   executable to confirm no errors from the type definitions.
 ==============================================================================*)
-procedure Test07(const ADumpSSA: Boolean=False);
+procedure Test07(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
   LTypeIndex: Integer;
@@ -507,30 +509,30 @@ begin
 
     // Record: TPoint (X: int32, Y: int32) - size should be 8, align 4
     LTiger.DefineRecord('TPoint')
-         .Field('X', vtInt32)
-         .Field('Y', vtInt32)
-       .EndRecord();
+      .Field('X', vtInt32)
+      .Field('Y', vtInt32)
+    .EndRecord();
 
     // Record: TRect (TopLeft: TPoint, BottomRight: TPoint) - size should be 16
     LTiger.DefineRecord('TRect')
-         .Field('TopLeft', 'TPoint')
-         .Field('BottomRight', 'TPoint')
-       .EndRecord();
+      .Field('TopLeft', 'TPoint')
+      .Field('BottomRight', 'TPoint')
+    .EndRecord();
 
     // Packed record: TPackedPoint - size should be 8 (no padding)
     LTiger.DefineRecord('TPackedPoint', True)
-         .Field('X', vtInt32)
-         .Field('Y', vtInt32)
-       .EndRecord();
+      .Field('X', vtInt32)
+      .Field('Y', vtInt32)
+    .EndRecord();
 
     // Record with mixed sizes: TStudent
     // name: pointer (8), age: int8 (1), grade: float64 (8)
     // With alignment: 8 + 8(padded age) + 8 = 24
     LTiger.DefineRecord('TStudent')
-         .Field('NamePtr', vtPointer)
-         .Field('Age', vtUInt8)
-         .Field('Grade', vtFloat64)
-       .EndRecord();
+      .Field('NamePtr', vtPointer)
+      .Field('Age', vtUInt8)
+      .Field('Grade', vtFloat64)
+    .EndRecord();
 
     // Fixed array: TIntArray = array[0..9] of int32 - size should be 40
     LTiger.DefineArray('TIntArray', vtInt32, 0, 9);
@@ -543,17 +545,17 @@ begin
 
     // Enum: TColor (Red=0, Green=1, Blue=2)
     LTiger.DefineEnum('TColor')
-         .EnumValue('Red')
-         .EnumValue('Green')
-         .EnumValue('Blue')
-       .EndEnum();
+      .EnumValue('Red')
+      .EnumValue('Green')
+      .EnumValue('Blue')
+    .EndEnum();
 
     // Enum with explicit values: TStatus
     LTiger.DefineEnum('TStatus')
-         .EnumValue('OK', 0)
-         .EnumValue('Error', -1)
-         .EnumValue('Pending', 100)
-       .EndEnum();
+      .EnumValue('OK', 0)
+      .EnumValue('Error', -1)
+      .EnumValue('Pending', 100)
+    .EndEnum();
 
     // Type alias: TMyInt = int32
     LTiger.DefineAlias('TMyInt', vtInt32);
@@ -572,32 +574,32 @@ begin
     // TPoint
     LTypeIndex := LTiger.FindType('TPoint');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TWin64Utils.PrintLn(Format('TPoint: index=%d, size=%d, align=%d',
-      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
+    TWin64Utils.PrintLn('TPoint: index=%d, size=%d, align=%d',
+      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // TRect
     LTypeIndex := LTiger.FindType('TRect');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TWin64Utils.PrintLn(Format('TRect: index=%d, size=%d, align=%d',
-      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
+    TWin64Utils.PrintLn('TRect: index=%d, size=%d, align=%d',
+      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // TPackedPoint
     LTypeIndex := LTiger.FindType('TPackedPoint');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TWin64Utils.PrintLn(Format('TPackedPoint: index=%d, size=%d, align=%d',
-      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
+    TWin64Utils.PrintLn('TPackedPoint: index=%d, size=%d, align=%d',
+      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // TStudent
     LTypeIndex := LTiger.FindType('TStudent');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TWin64Utils.PrintLn(Format('TStudent: index=%d, size=%d, align=%d',
-      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
+    TWin64Utils.PrintLn('TStudent: index=%d, size=%d, align=%d',
+      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // TIntArray
     LTypeIndex := LTiger.FindType('TIntArray');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TWin64Utils.PrintLn(Format('TIntArray: index=%d, size=%d, align=%d',
-      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
+    TWin64Utils.PrintLn('TIntArray: index=%d, size=%d, align=%d',
+      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // TPointArray
     LTypeIndex := LTiger.FindType('TPointArray');
@@ -608,36 +610,36 @@ begin
     // TDynInts (dynamic array = pointer size)
     LTypeIndex := LTiger.FindType('TDynInts');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TWin64Utils.PrintLn(Format('TDynInts: index=%d, size=%d, align=%d',
-      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
+    TWin64Utils.PrintLn('TDynInts: index=%d, size=%d, align=%d',
+      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // TColor (enum = int32)
     LTypeIndex := LTiger.FindType('TColor');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TWin64Utils.PrintLn(Format('TColor: index=%d, size=%d, align=%d',
-      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
+    TWin64Utils.PrintLn('TColor: index=%d, size=%d, align=%d',
+      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // TMyInt (alias to int32)
     LTypeIndex := LTiger.FindType('TMyInt');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TWin64Utils.PrintLn(Format('TMyInt: index=%d, size=%d, align=%d',
-      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
+    TWin64Utils.PrintLn('TMyInt: index=%d, size=%d, align=%d',
+      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // TCoord (alias to TPoint)
     LTypeIndex := LTiger.FindType('TCoord');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
-    TWin64Utils.PrintLn(Format('TCoord: index=%d, size=%d, align=%d',
-      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]));
+    TWin64Utils.PrintLn('TCoord: index=%d, size=%d, align=%d',
+      [LTypeIndex, LTiger.GetTypeSize(LTypeRef), LTiger.GetTypeAlignment(LTypeRef)]);
 
     // Test TypeRef helper
     LTypeRef := LTiger.TypeRef('TPoint');
-    TWin64Utils.PrintLn(Format('TypeRef(TPoint): IsPrimitive=%s, TypeIndex=%d',
-      [BoolToStr(LTypeRef.IsPrimitive, True), LTypeRef.TypeIndex]));
+    TWin64Utils.PrintLn('TypeRef(TPoint): IsPrimitive=%s, TypeIndex=%d',
+      [BoolToStr(LTypeRef.IsPrimitive, True), LTypeRef.TypeIndex]);
 
     // Test primitive TypeRef
     LTypeRef := TTigerTypeRef.FromPrimitive(vtInt64);
-    TWin64Utils.PrintLn(Format('TypeRef(vtInt64): IsPrimitive=%s, size=%d',
-      [BoolToStr(LTypeRef.IsPrimitive, True), LTiger.GetTypeSize(LTypeRef)]));
+    TWin64Utils.PrintLn('TypeRef(vtInt64): IsPrimitive=%s, size=%d',
+      [BoolToStr(LTypeRef.IsPrimitive, True), LTiger.GetTypeSize(LTypeRef)]);
 
     TWin64Utils.PrintLn('');
     TWin64Utils.PrintLn('--- Type System Test Complete ---');
@@ -646,8 +648,8 @@ begin
     // Build a simple executable to verify no errors
     //------------------------------------------------------------------------
     LTiger.Func('main', vtVoid, True)
-       .Call('printf', [LTiger.Str('Type system test passed!'#10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str('Type system test passed!'#10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test07.exe'), ssConsole);
@@ -672,7 +674,7 @@ end;
   record fields, union reinterpretation, inherited fields, bit field
   isolation, and explicit alignment via generated machine code.
 ==============================================================================*)
-procedure Test08(const ADumpSSA: Boolean=False);
+procedure Test08(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
   LTypeIndex: Integer;
@@ -695,20 +697,20 @@ begin
 
     // Normal record (natural alignment = 4)
     LTiger.DefineRecord('TNaturalAlign')
-         .Field('A', vtInt32)
-         .Field('B', vtInt32)
-       .EndRecord();
+      .Field('A', vtInt32)
+      .Field('B', vtInt32)
+    .EndRecord();
 
     // Explicit align(16)
     LTiger.DefineRecord('TAlign16', False, 16)
-         .Field('A', vtInt32)
-         .Field('B', vtInt32)
-       .EndRecord();
+      .Field('A', vtInt32)
+      .Field('B', vtInt32)
+    .EndRecord();
 
     // Explicit align(8) on small record - forces padding
     LTiger.DefineRecord('TAlign8', False, 8)
-         .Field('A', vtInt32)  // 4 bytes, natural align=4
-       .EndRecord();
+      .Field('A', vtInt32)  // 4 bytes, natural align=4
+    .EndRecord();
 
     LTypeIndex := LTiger.FindType('TNaturalAlign');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
@@ -733,16 +735,16 @@ begin
     TWin64Utils.PrintLn('--- 4b: Union Types ---');
 
     LTiger.DefineUnion('TVariant')
-         .Field('AsInt', vtInt64)
-         .Field('AsFloat', vtFloat64)
-         .Field('AsPtr', vtPointer)
-       .EndUnion();
+      .Field('AsInt', vtInt64)
+      .Field('AsFloat', vtFloat64)
+      .Field('AsPtr', vtPointer)
+    .EndUnion();
 
     LTiger.DefineUnion('TMixedUnion')
-         .Field('AsByte', vtUInt8)
-         .Field('AsInt', vtInt32)
-         .Field('AsLong', vtInt64)
-       .EndUnion();
+      .Field('AsByte', vtUInt8)
+      .Field('AsInt', vtInt32)
+      .Field('AsLong', vtInt64)
+    .EndUnion();
 
     LTypeIndex := LTiger.FindType('TVariant');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
@@ -762,26 +764,26 @@ begin
     TWin64Utils.PrintLn('--- 4c: Anonymous Unions in Records ---');
 
     LTiger.DefineRecord('TPacket')
-         .Field('Header', vtUInt32)
-         .BeginUnion()
-           .Field('IntPayload', vtInt64)
-           .Field('FloatPayload', vtFloat64)
-         .EndUnion()
-         .Field('Checksum', vtUInt32)
-       .EndRecord();
+      .Field('Header', vtUInt32)
+      .BeginUnion()
+        .Field('IntPayload', vtInt64)
+        .Field('FloatPayload', vtFloat64)
+      .EndUnion()
+      .Field('Checksum', vtUInt32)
+    .EndRecord();
 
     LTiger.DefineRecord('TMultiUnion')
-         .Field('Tag1', vtUInt8)
-         .BeginUnion()
-           .Field('A1', vtInt32)
-           .Field('B1', vtFloat32)
-         .EndUnion()
-         .Field('Tag2', vtUInt8)
-         .BeginUnion()
-           .Field('A2', vtInt64)
-           .Field('B2', vtFloat64)
-         .EndUnion()
-       .EndRecord();
+      .Field('Tag1', vtUInt8)
+      .BeginUnion()
+        .Field('A1', vtInt32)
+        .Field('B1', vtFloat32)
+      .EndUnion()
+      .Field('Tag2', vtUInt8)
+      .BeginUnion()
+        .Field('A2', vtInt64)
+        .Field('B2', vtFloat64)
+      .EndUnion()
+    .EndRecord();
 
     LTypeIndex := LTiger.FindType('TPacket');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
@@ -801,13 +803,13 @@ begin
     TWin64Utils.PrintLn('--- 4d: Anonymous Records in Unions ---');
 
     LTiger.DefineUnion('TSplitValue')
-         .Field('AsInt64', vtInt64)
-         .BeginRecord()
-           .Field('Lo', vtInt32)
-           .Field('Hi', vtInt32)
-         .EndRecord()
-         .Field('AsFloat', vtFloat64)
-       .EndUnion();
+      .Field('AsInt64', vtInt64)
+      .BeginRecord()
+        .Field('Lo', vtInt32)
+        .Field('Hi', vtInt32)
+       .EndRecord()
+       .Field('AsFloat', vtFloat64)
+    .EndUnion();
 
     LTypeIndex := LTiger.FindType('TSplitValue');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
@@ -822,25 +824,25 @@ begin
     TWin64Utils.PrintLn('--- 4e: Bit Fields ---');
 
     LTiger.DefineRecord('TFlags')
-         .BitField('Enabled', vtUInt32, 1)
-         .BitField('Priority', vtUInt32, 3)
-         .BitField('Mode', vtUInt32, 4)
-         .BitField('Reserved', vtUInt32, 24)
-       .EndRecord();
+      .BitField('Enabled', vtUInt32, 1)
+      .BitField('Priority', vtUInt32, 3)
+      .BitField('Mode', vtUInt32, 4)
+      .BitField('Reserved', vtUInt32, 24)
+    .EndRecord();
 
     LTiger.DefineRecord('TLargeFlags')
-         .BitField('A', vtUInt32, 16)
-         .BitField('B', vtUInt32, 16)
-         .BitField('C', vtUInt32, 16)
-       .EndRecord();
+      .BitField('A', vtUInt32, 16)
+      .BitField('B', vtUInt32, 16)
+      .BitField('C', vtUInt32, 16)
+    .EndRecord();
 
     LTiger.DefineRecord('TMixedFields')
-         .Field('Header', vtUInt8)
-         .BitField('Flag1', vtUInt8, 1)
-         .BitField('Flag2', vtUInt8, 1)
-         .BitField('Flag3', vtUInt8, 6)
-         .Field('Data', vtInt64)
-       .EndRecord();
+      .Field('Header', vtUInt8)
+      .BitField('Flag1', vtUInt8, 1)
+      .BitField('Flag2', vtUInt8, 1)
+      .BitField('Flag3', vtUInt8, 6)
+      .Field('Data', vtInt64)
+    .EndRecord();
 
     LTypeIndex := LTiger.FindType('TFlags');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
@@ -865,17 +867,17 @@ begin
     TWin64Utils.PrintLn('--- 4f: Record Inheritance ---');
 
     LTiger.DefineRecord('TPoint2D')
-         .Field('X', vtInt32)
-         .Field('Y', vtInt32)
-       .EndRecord();
+      .Field('X', vtInt32)
+      .Field('Y', vtInt32)
+    .EndRecord();
 
     LTiger.DefineRecord('TPoint3D', False, 0, 'TPoint2D')
-         .Field('Z', vtInt32)
-       .EndRecord();
+      .Field('Z', vtInt32)
+    .EndRecord();
 
     LTiger.DefineRecord('TPoint4D', False, 0, 'TPoint3D')
-         .Field('W', vtInt32)
-       .EndRecord();
+      .Field('W', vtInt32)
+    .EndRecord();
 
     LTypeIndex := LTiger.FindType('TPoint2D');
     LTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
@@ -911,44 +913,44 @@ begin
     TWin64Utils.PrintLn('--- Runtime ABI Tests ---');
 
     LTiger.DefineRecord('TTestPoint')
-         .Field('X', vtInt64)
-         .Field('Y', vtInt64)
-       .EndRecord();
+      .Field('X', vtInt64)
+      .Field('Y', vtInt64)
+    .EndRecord();
 
     LTiger.DefineUnion('TTestUnion')
-         .Field('AsInt', vtInt64)
-         .Field('AsUInt', vtUInt64)
-       .EndUnion();
+      .Field('AsInt', vtInt64)
+      .Field('AsUInt', vtUInt64)
+    .EndUnion();
 
     LTiger.DefineRecord('TBasePoint')
-         .Field('X', vtInt32)
-         .Field('Y', vtInt32)
-       .EndRecord();
+      .Field('X', vtInt32)
+      .Field('Y', vtInt32)
+    .EndRecord();
 
     LTiger.DefineRecord('TDerivedPoint', False, 0, 'TBasePoint')
-         .Field('Z', vtInt32)
-       .EndRecord();
+      .Field('Z', vtInt32)
+    .EndRecord();
 
     LTiger.DefineRecord('TPacketTest')
-         .Field('Header', vtInt32)
-         .BeginUnion()
-           .Field('IntData', vtInt64)
-           .Field('FloatData', vtFloat64)
-         .EndUnion()
-         .Field('Footer', vtInt32)
-       .EndRecord();
+      .Field('Header', vtInt32)
+      .BeginUnion()
+        .Field('IntData', vtInt64)
+        .Field('FloatData', vtFloat64)
+      .EndUnion()
+      .Field('Footer', vtInt32)
+    .EndRecord();
 
     LTiger.DefineRecord('TBitFlags')
-         .BitField('Flag0', vtUInt32, 1)
-         .BitField('Flag1', vtUInt32, 1)
-         .BitField('Value', vtUInt32, 4)
-         .BitField('Mode', vtUInt32, 2)
-       .EndRecord();
+      .BitField('Flag0', vtUInt32, 1)
+      .BitField('Flag1', vtUInt32, 1)
+      .BitField('Value', vtUInt32, 4)
+      .BitField('Mode', vtUInt32, 2)
+   .EndRecord();
 
     LTiger.DefineRecord('TAligned16', False, 16)
-         .Field('A', vtInt32)
-         .Field('B', vtInt64)
-       .EndRecord();
+      .Field('A', vtInt32)
+      .Field('B', vtInt64)
+    .EndRecord();
 
     LTiger.Func('main', vtVoid, True)
        .Local('pt', 'TTestPoint')
@@ -1036,7 +1038,7 @@ end;
   address of array elements (@arr[1]). Verifies that modifications through
   pointers are reflected in the original variables.
 ==============================================================================*)
-procedure Test09(const ADumpSSA: Boolean=False);
+procedure Test09(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
   LTypeIndex: Integer;
@@ -1065,9 +1067,9 @@ begin
     LTiger.DefinePointer('TRawPointer');
 
     LTiger.DefineRecord('TPoint')
-         .Field('X', vtInt32)
-         .Field('Y', vtInt32)
-       .EndRecord();
+      .Field('X', vtInt32)
+      .Field('Y', vtInt32)
+    .EndRecord();
 
     LTiger.DefinePointer('PPoint', 'TPoint');
     LTiger.DefineArray('TIntArray', vtInt32, 0, 4);
@@ -1095,66 +1097,66 @@ begin
     TWin64Utils.PrintLn('--- Runtime Pointer Tests ---');
 
     LTiger.Func('main', vtVoid, True)
-       .Local('x', vtInt32)
-       .Local('p', vtPointer)
-       .Local('y', vtInt32)
-       .Local('pt', 'TPoint')
-       .Local('px', vtPointer)
-       .Local('arr', 'TIntArray')
-       .Local('pa', vtPointer)
+      .Local('x', vtInt32)
+      .Local('p', vtPointer)
+      .Local('y', vtInt32)
+      .Local('pt', 'TPoint')
+      .Local('px', vtPointer)
+      .Local('arr', 'TIntArray')
+      .Local('pa', vtPointer)
 
-       // Test 1: Basic pointer operations
-       .Call('printf', [LTiger.Str('=== Test 1: Basic Pointer Operations ===' + #10)])
-       .Assign('x', LTiger.Int64(42))
-       .Call('printf', [LTiger.Str('x = %d (initial value 42)' + #10), LTiger.Get('x')])
-       .Assign('p', LTiger.AddrOf('x'))
-       .Call('printf', [LTiger.Str('p := @x (took address)' + #10)])
-       .Assign('y', LTiger.Deref(LTiger.Get('p')))
-       .Call('printf', [LTiger.Str('y := p^ -> y = %d (expected 42)' + #10), LTiger.Get('y')])
-       .AssignTo(LTiger.Deref(LTiger.Get('p')), LTiger.Int64(100))
-       .Call('printf', [LTiger.Str('p^ := 100' + #10)])
-       .Call('printf', [LTiger.Str('x = %d (expected 100, modified via pointer)' + #10), LTiger.Get('x')])
+      // Test 1: Basic pointer operations
+      .Call('printf', [LTiger.Str('=== Test 1: Basic Pointer Operations ===' + #10)])
+      .Assign('x', LTiger.Int64(42))
+      .Call('printf', [LTiger.Str('x = %d (initial value 42)' + #10), LTiger.Get('x')])
+      .Assign('p', LTiger.AddrOf('x'))
+      .Call('printf', [LTiger.Str('p := @x (took address)' + #10)])
+      .Assign('y', LTiger.Deref(LTiger.Get('p')))
+      .Call('printf', [LTiger.Str('y := p^ -> y = %d (expected 42)' + #10), LTiger.Get('y')])
+      .AssignTo(LTiger.Deref(LTiger.Get('p')), LTiger.Int64(100))
+      .Call('printf', [LTiger.Str('p^ := 100' + #10)])
+      .Call('printf', [LTiger.Str('x = %d (expected 100, modified via pointer)' + #10), LTiger.Get('x')])
 
-       // Test 2: Address of record field
-       .Call('printf', [LTiger.Str('=== Test 2: Address of Record Field ===' + #10)])
-       .AssignTo(LTiger.GetField(LTiger.Get('pt'), 'X'), LTiger.Int64(10))
-       .AssignTo(LTiger.GetField(LTiger.Get('pt'), 'Y'), LTiger.Int64(20))
-       .Call('printf', [LTiger.Str('pt.X = %d, pt.Y = %d (initial)' + #10),
-         LTiger.GetField(LTiger.Get('pt'), 'X'),
-         LTiger.GetField(LTiger.Get('pt'), 'Y')])
-       .Assign('px', LTiger.AddrOfVal(LTiger.GetField(LTiger.Get('pt'), 'X')))
-       .Call('printf', [LTiger.Str('px := @pt.X (took address of field)' + #10)])
-       .Assign('y', LTiger.Deref(LTiger.Get('px')))
-       .Call('printf', [LTiger.Str('y := px^ -> y = %d (expected 10)' + #10), LTiger.Get('y')])
-       .AssignTo(LTiger.Deref(LTiger.Get('px')), LTiger.Int64(55))
-       .Call('printf', [LTiger.Str('px^ := 55' + #10)])
-       .Call('printf', [LTiger.Str('pt.X = %d (expected 55, modified via pointer)' + #10),
-         LTiger.GetField(LTiger.Get('pt'), 'X')])
-       .Assign('px', LTiger.AddrOfVal(LTiger.GetField(LTiger.Get('pt'), 'Y')))
-       .AssignTo(LTiger.Deref(LTiger.Get('px')), LTiger.Int64(77))
-       .Call('printf', [LTiger.Str('pt.Y = %d (expected 77, modified via pointer)' + #10),
-         LTiger.GetField(LTiger.Get('pt'), 'Y')])
+      // Test 2: Address of record field
+      .Call('printf', [LTiger.Str('=== Test 2: Address of Record Field ===' + #10)])
+      .AssignTo(LTiger.GetField(LTiger.Get('pt'), 'X'), LTiger.Int64(10))
+      .AssignTo(LTiger.GetField(LTiger.Get('pt'), 'Y'), LTiger.Int64(20))
+      .Call('printf', [LTiger.Str('pt.X = %d, pt.Y = %d (initial)' + #10),
+       LTiger.GetField(LTiger.Get('pt'), 'X'),
+       LTiger.GetField(LTiger.Get('pt'), 'Y')])
+      .Assign('px', LTiger.AddrOfVal(LTiger.GetField(LTiger.Get('pt'), 'X')))
+      .Call('printf', [LTiger.Str('px := @pt.X (took address of field)' + #10)])
+      .Assign('y', LTiger.Deref(LTiger.Get('px')))
+      .Call('printf', [LTiger.Str('y := px^ -> y = %d (expected 10)' + #10), LTiger.Get('y')])
+      .AssignTo(LTiger.Deref(LTiger.Get('px')), LTiger.Int64(55))
+      .Call('printf', [LTiger.Str('px^ := 55' + #10)])
+      .Call('printf', [LTiger.Str('pt.X = %d (expected 55, modified via pointer)' + #10),
+       LTiger.GetField(LTiger.Get('pt'), 'X')])
+      .Assign('px', LTiger.AddrOfVal(LTiger.GetField(LTiger.Get('pt'), 'Y')))
+      .AssignTo(LTiger.Deref(LTiger.Get('px')), LTiger.Int64(77))
+      .Call('printf', [LTiger.Str('pt.Y = %d (expected 77, modified via pointer)' + #10),
+       LTiger.GetField(LTiger.Get('pt'), 'Y')])
 
-       // Test 3: Address of array element
-       .Call('printf', [LTiger.Str('=== Test 3: Address of Array Element ===' + #10)])
-       .AssignTo(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(0)), LTiger.Int64(100))
-       .AssignTo(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(1)), LTiger.Int64(200))
-       .AssignTo(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(2)), LTiger.Int64(300))
-       .Call('printf', [LTiger.Str('arr[0]=%d, arr[1]=%d, arr[2]=%d (initial)' + #10),
-         LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(0)),
-         LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(1)),
-         LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(2))])
-       .Assign('pa', LTiger.AddrOfVal(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(1))))
-       .Call('printf', [LTiger.Str('pa := @arr[1] (took address of element)' + #10)])
-       .Assign('y', LTiger.Deref(LTiger.Get('pa')))
-       .Call('printf', [LTiger.Str('y := pa^ -> y = %d (expected 200)' + #10), LTiger.Get('y')])
-       .AssignTo(LTiger.Deref(LTiger.Get('pa')), LTiger.Int64(999))
-       .Call('printf', [LTiger.Str('pa^ := 999' + #10)])
-       .Call('printf', [LTiger.Str('arr[1] = %d (expected 999, modified via pointer)' + #10),
-         LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(1))])
+      // Test 3: Address of array element
+      .Call('printf', [LTiger.Str('=== Test 3: Address of Array Element ===' + #10)])
+      .AssignTo(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(0)), LTiger.Int64(100))
+      .AssignTo(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(1)), LTiger.Int64(200))
+      .AssignTo(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(2)), LTiger.Int64(300))
+      .Call('printf', [LTiger.Str('arr[0]=%d, arr[1]=%d, arr[2]=%d (initial)' + #10),
+       LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(0)),
+       LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(1)),
+       LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(2))])
+      .Assign('pa', LTiger.AddrOfVal(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(1))))
+      .Call('printf', [LTiger.Str('pa := @arr[1] (took address of element)' + #10)])
+      .Assign('y', LTiger.Deref(LTiger.Get('pa')))
+      .Call('printf', [LTiger.Str('y := pa^ -> y = %d (expected 200)' + #10), LTiger.Get('y')])
+      .AssignTo(LTiger.Deref(LTiger.Get('pa')), LTiger.Int64(999))
+      .Call('printf', [LTiger.Str('pa^ := 999' + #10)])
+      .Call('printf', [LTiger.Str('arr[1] = %d (expected 999, modified via pointer)' + #10),
+       LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(1))])
 
-       .Call('printf', [LTiger.Str('=== All Pointer Tests Complete ===' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str('=== All Pointer Tests Complete ===' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test09.exe'), ssConsole);
@@ -1173,7 +1175,7 @@ end;
   pointer between functions, parameterless function pointers, and chained
   indirect calls (result of one fed into another).
 ==============================================================================*)
-procedure Test10(const ADumpSSA: Boolean=False);
+procedure Test10(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -1190,57 +1192,57 @@ begin
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('add_func', vtInt32, False)
-       .Param('a', vtInt32)
-       .Param('b', vtInt32)
-       .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
     .EndFunc();
 
     LTiger.Func('mul_func', vtInt32, False)
-       .Param('x', vtInt32)
-       .Param('y', vtInt32)
-       .Return(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')))
+      .Param('x', vtInt32)
+      .Param('y', vtInt32)
+      .Return(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')))
     .EndFunc();
 
     LTiger.Func('get_magic', vtInt32, False)
-       .Return(LTiger.Int64(42))
+      .Return(LTiger.Int64(42))
     .EndFunc();
 
     LTiger.Func('main', vtVoid, True)
-       .Local('pFunc', vtPointer)
-       .Local('result', vtInt32)
+      .Local('pFunc', vtPointer)
+      .Local('result', vtInt32)
 
-       // Test 1: Basic function pointer
-       .Call('printf', [LTiger.Str('=== Test 1: Basic Function Pointer ===' + #10)])
-       .Assign('pFunc', LTiger.FuncAddr('add_func'))
-       .Call('printf', [LTiger.Str('pFunc := @add_func' + #10)])
-       .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), [LTiger.Int64(10), LTiger.Int64(20)]))
-       .Call('printf', [LTiger.Str('result := pFunc(10, 20) -> %d (expected 30)' + #10), LTiger.Get('result')])
+      // Test 1: Basic function pointer
+      .Call('printf', [LTiger.Str('=== Test 1: Basic Function Pointer ===' + #10)])
+      .Assign('pFunc', LTiger.FuncAddr('add_func'))
+      .Call('printf', [LTiger.Str('pFunc := @add_func' + #10)])
+      .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), [LTiger.Int64(10), LTiger.Int64(20)]))
+      .Call('printf', [LTiger.Str('result := pFunc(10, 20) -> %d (expected 30)' + #10), LTiger.Get('result')])
 
-       // Test 2: Switch function pointer
-       .Call('printf', [LTiger.Str(#10 + '=== Test 2: Switching Function Pointers ===' + #10)])
-       .Assign('pFunc', LTiger.FuncAddr('mul_func'))
-       .Call('printf', [LTiger.Str('pFunc := @mul_func' + #10)])
-       .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), [LTiger.Int64(6), LTiger.Int64(7)]))
-       .Call('printf', [LTiger.Str('result := pFunc(6, 7) -> %d (expected 42)' + #10), LTiger.Get('result')])
+      // Test 2: Switch function pointer
+      .Call('printf', [LTiger.Str(#10 + '=== Test 2: Switching Function Pointers ===' + #10)])
+      .Assign('pFunc', LTiger.FuncAddr('mul_func'))
+      .Call('printf', [LTiger.Str('pFunc := @mul_func' + #10)])
+      .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), [LTiger.Int64(6), LTiger.Int64(7)]))
+      .Call('printf', [LTiger.Str('result := pFunc(6, 7) -> %d (expected 42)' + #10), LTiger.Get('result')])
 
-       // Test 3: Parameterless function pointer
-       .Call('printf', [LTiger.Str(#10 + '=== Test 3: Parameterless Function Pointer ===' + #10)])
-       .Assign('pFunc', LTiger.FuncAddr('get_magic'))
-       .Call('printf', [LTiger.Str('pFunc := @get_magic' + #10)])
-       .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), []))
-       .Call('printf', [LTiger.Str('result := pFunc() -> %d (expected 42)' + #10), LTiger.Get('result')])
+      // Test 3: Parameterless function pointer
+      .Call('printf', [LTiger.Str(#10 + '=== Test 3: Parameterless Function Pointer ===' + #10)])
+      .Assign('pFunc', LTiger.FuncAddr('get_magic'))
+      .Call('printf', [LTiger.Str('pFunc := @get_magic' + #10)])
+      .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), []))
+      .Call('printf', [LTiger.Str('result := pFunc() -> %d (expected 42)' + #10), LTiger.Get('result')])
 
-       // Test 4: Chained indirect calls
-       .Call('printf', [LTiger.Str(#10 + '=== Test 4: Chained Indirect Calls ===' + #10)])
-       .Assign('pFunc', LTiger.FuncAddr('add_func'))
-       .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), [LTiger.Int64(5), LTiger.Int64(3)]))
-       .Call('printf', [LTiger.Str('add_func(5, 3) = %d (expected 8)' + #10), LTiger.Get('result')])
-       .Assign('pFunc', LTiger.FuncAddr('mul_func'))
-       .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), [LTiger.Get('result'), LTiger.Int64(4)]))
-       .Call('printf', [LTiger.Str('mul_func(8, 4) = %d (expected 32)' + #10), LTiger.Get('result')])
+      // Test 4: Chained indirect calls
+      .Call('printf', [LTiger.Str(#10 + '=== Test 4: Chained Indirect Calls ===' + #10)])
+      .Assign('pFunc', LTiger.FuncAddr('add_func'))
+      .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), [LTiger.Int64(5), LTiger.Int64(3)]))
+      .Call('printf', [LTiger.Str('add_func(5, 3) = %d (expected 8)' + #10), LTiger.Get('result')])
+      .Assign('pFunc', LTiger.FuncAddr('mul_func'))
+      .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'), [LTiger.Get('result'), LTiger.Int64(4)]))
+      .Call('printf', [LTiger.Str('mul_func(8, 4) = %d (expected 32)' + #10), LTiger.Get('result')])
 
-       .Call('printf', [LTiger.Str(#10 + '=== All Function Pointer Tests Complete ===' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str(#10 + '=== All Function Pointer Tests Complete ===' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test10.exe'), ssConsole);
@@ -1259,7 +1261,7 @@ end;
   not exported). Verifies all are callable internally and that only the
   public ones appear in the PE export table (checkable via dumpbin).
 ==============================================================================*)
-procedure Test11(const ADumpSSA: Boolean=False);
+procedure Test11(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -1276,45 +1278,45 @@ begin
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('MyAdd', vtInt32, False, plC, True)
-       .Param('a', vtInt32)
-       .Param('b', vtInt32)
-       .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
     .EndFunc();
 
     LTiger.Func('MyMul', vtInt32, False, plC, True)
-       .Param('x', vtInt32)
-       .Param('y', vtInt32)
-       .Return(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')))
+      .Param('x', vtInt32)
+      .Param('y', vtInt32)
+      .Return(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')))
     .EndFunc();
 
     LTiger.Func('MySquare', vtInt32, False, plDefault, True)
-       .Param('n', vtInt32)
-       .Return(LTiger.Mul(LTiger.Get('n'), LTiger.Get('n')))
+      .Param('n', vtInt32)
+      .Return(LTiger.Mul(LTiger.Get('n'), LTiger.Get('n')))
     .EndFunc();
 
     LTiger.Func('PrivateHelper', vtInt32, False, plC, False)
-       .Param('v', vtInt32)
-       .Return(LTiger.Add(LTiger.Get('v'), LTiger.Int64(100)))
+      .Param('v', vtInt32)
+      .Return(LTiger.Add(LTiger.Get('v'), LTiger.Int64(100)))
     .EndFunc();
 
     LTiger.Func('main', vtVoid, True)
-       .Local('result', vtInt32)
+      .Local('result', vtInt32)
 
-       .Call('printf', [LTiger.Str('=== Test11: Public Exports ===' + #10)])
-       .Assign('result', LTiger.Invoke('MyAdd', [LTiger.Int64(10), LTiger.Int64(20)]))
-       .Call('printf', [LTiger.Str('MyAdd(10, 20) = %d (expected 30)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('MyMul', [LTiger.Int64(6), LTiger.Int64(7)]))
-       .Call('printf', [LTiger.Str('MyMul(6, 7) = %d (expected 42)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('MySquare', [LTiger.Int64(9)]))
-       .Call('printf', [LTiger.Str('MySquare(9) = %d (expected 81)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('PrivateHelper', [LTiger.Int64(5)]))
-       .Call('printf', [LTiger.Str('PrivateHelper(5) = %d (expected 105)' + #10), LTiger.Get('result')])
+      .Call('printf', [LTiger.Str('=== Test11: Public Exports ===' + #10)])
+      .Assign('result', LTiger.Invoke('MyAdd', [LTiger.Int64(10), LTiger.Int64(20)]))
+      .Call('printf', [LTiger.Str('MyAdd(10, 20) = %d (expected 30)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('MyMul', [LTiger.Int64(6), LTiger.Int64(7)]))
+      .Call('printf', [LTiger.Str('MyMul(6, 7) = %d (expected 42)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('MySquare', [LTiger.Int64(9)]))
+      .Call('printf', [LTiger.Str('MySquare(9) = %d (expected 81)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('PrivateHelper', [LTiger.Int64(5)]))
+      .Call('printf', [LTiger.Str('PrivateHelper(5) = %d (expected 105)' + #10), LTiger.Get('result')])
 
-       .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test11.exe" to verify exports:' + #10)])
-       .Call('printf', [LTiger.Str('  Expected: MyAdd, MyMul, MySquare' + #10)])
-       .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, main' + #10)])
+      .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test11.exe" to verify exports:' + #10)])
+      .Call('printf', [LTiger.Str('  Expected: MyAdd, MyMul, MySquare' + #10)])
+      .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, main' + #10)])
 
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test11.exe'), ssConsole);
@@ -1333,7 +1335,7 @@ end;
   Multiply(int32,int32,int32). Verifies correct dispatch and that each
   overload gets a unique mangled export name.
 ==============================================================================*)
-procedure Test12(const ADumpSSA: Boolean=False);
+procedure Test12(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -1350,48 +1352,48 @@ begin
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.OverloadFunc('Add', vtInt32, False, True)
-       .Param('a', vtInt32)
-       .Param('b', vtInt32)
-       .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
     .EndFunc();
 
     LTiger.OverloadFunc('Add', vtInt64, False, True)
-       .Param('a', vtInt64)
-       .Param('b', vtInt64)
-       .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
+      .Param('a', vtInt64)
+      .Param('b', vtInt64)
+      .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
     .EndFunc();
 
     LTiger.OverloadFunc('Multiply', vtInt32, False, True)
-       .Param('x', vtInt32)
-       .Param('y', vtInt32)
-       .Return(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')))
+      .Param('x', vtInt32)
+      .Param('y', vtInt32)
+      .Return(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')))
     .EndFunc();
 
     LTiger.OverloadFunc('Multiply', vtInt32, False, True)
-       .Param('x', vtInt32)
-       .Param('y', vtInt32)
-       .Param('z', vtInt32)
-       .Return(LTiger.Mul(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')), LTiger.Get('z')))
+      .Param('x', vtInt32)
+      .Param('y', vtInt32)
+      .Param('z', vtInt32)
+      .Return(LTiger.Mul(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')), LTiger.Get('z')))
     .EndFunc();
 
     LTiger.Func('main', vtVoid, True)
-       .Local('r32', vtInt32)
-       .Local('r64', vtInt64)
+      .Local('r32', vtInt32)
+      .Local('r64', vtInt64)
 
-       .Call('printf', [LTiger.Str('=== Test12: Function Overloading ===' + #10)])
-       .Assign('r32', LTiger.Invoke('Add', [LTiger.Int32(10), LTiger.Int32(20)]))
-       .Call('printf', [LTiger.Str('Add(10, 20) int32 = %d (expected 30)' + #10), LTiger.Get('r32')])
-       .Assign('r64', LTiger.Invoke('Add', [LTiger.Int64(100), LTiger.Int64(200)]))
-       .Call('printf', [LTiger.Str('Add(100, 200) int64 = %lld (expected 300)' + #10), LTiger.Get('r64')])
-       .Assign('r32', LTiger.Invoke('Multiply', [LTiger.Int32(6), LTiger.Int32(7)]))
-       .Call('printf', [LTiger.Str('Multiply(6, 7) = %d (expected 42)' + #10), LTiger.Get('r32')])
-       .Assign('r32', LTiger.Invoke('Multiply', [LTiger.Int32(2), LTiger.Int32(3), LTiger.Int32(4)]))
-       .Call('printf', [LTiger.Str('Multiply(2, 3, 4) = %d (expected 24)' + #10), LTiger.Get('r32')])
+      .Call('printf', [LTiger.Str('=== Test12: Function Overloading ===' + #10)])
+      .Assign('r32', LTiger.Invoke('Add', [LTiger.Int32(10), LTiger.Int32(20)]))
+      .Call('printf', [LTiger.Str('Add(10, 20) int32 = %d (expected 30)' + #10), LTiger.Get('r32')])
+      .Assign('r64', LTiger.Invoke('Add', [LTiger.Int64(100), LTiger.Int64(200)]))
+      .Call('printf', [LTiger.Str('Add(100, 200) int64 = %lld (expected 300)' + #10), LTiger.Get('r64')])
+      .Assign('r32', LTiger.Invoke('Multiply', [LTiger.Int32(6), LTiger.Int32(7)]))
+      .Call('printf', [LTiger.Str('Multiply(6, 7) = %d (expected 42)' + #10), LTiger.Get('r32')])
+      .Assign('r32', LTiger.Invoke('Multiply', [LTiger.Int32(2), LTiger.Int32(3), LTiger.Int32(4)]))
+      .Call('printf', [LTiger.Str('Multiply(2, 3, 4) = %d (expected 24)' + #10), LTiger.Get('r32')])
 
-       .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test12.exe" to verify mangled exports:' + #10)])
-       .Call('printf', [LTiger.Str('  Each overload should have a unique mangled name' + #10)])
+      .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test12.exe" to verify mangled exports:' + #10)])
+      .Call('printf', [LTiger.Str('  Each overload should have a unique mangled name' + #10)])
 
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test12.exe'), ssConsole);
@@ -1411,7 +1413,7 @@ end;
   from the generated DLL and calls them. Validates the full DLL build
   pipeline including export tables, import resolution, and cross-module calls.
 ==============================================================================*)
-procedure Test13(const ADumpSSA: Boolean=False);
+procedure Test13(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -1436,28 +1438,28 @@ begin
     SetExeResources(LTiger, 'Test13.dll');
 
     LTiger.Func('PrivateHelper', vtInt32, False, plC, False)
-       .Param('x', vtInt32)
-       .Param('y', vtInt32)
-       .Local('sum', vtInt32)
-       .Assign('sum', LTiger.Add(LTiger.Get('x'), LTiger.Get('y')))
-       .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.Int64(100)))
-       .Return(LTiger.Get('sum'))
+      .Param('x', vtInt32)
+      .Param('y', vtInt32)
+      .Local('sum', vtInt32)
+      .Assign('sum', LTiger.Add(LTiger.Get('x'), LTiger.Get('y')))
+      .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.Int64(100)))
+      .Return(LTiger.Get('sum'))
     .EndFunc();
 
     LTiger.Func('AddC', vtInt32, False, plC, True)
-       .Param('a', vtInt32)
-       .Param('b', vtInt32)
-       .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
     .EndFunc();
 
     LTiger.Func('AddCpp', vtInt32, False, plDefault, True)
-       .Param('a', vtInt32)
-       .Param('b', vtInt32)
-       .Return(LTiger.Invoke('PrivateHelper', [LTiger.Get('a'), LTiger.Get('b')]))
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Invoke('PrivateHelper', [LTiger.Get('a'), LTiger.Get('b')]))
     .EndFunc();
 
     LTiger.DllMain()
-       .Return(LTiger.Int64(1))
+      .Return(LTiger.Int64(1))
     .EndFunc();
 
     LTiger.TargetDll(TPath.Combine(COutputPath, 'Test13.dll'));
@@ -1484,26 +1486,26 @@ begin
     LTiger.ImportDll('Test13.dll', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('r1', vtInt32)
-       .Local('r2', vtInt32)
+      .Local('r1', vtInt32)
+      .Local('r2', vtInt32)
 
-       .Call('printf', [LTiger.Str('=== Test13: DLL Generation ===' + #10)])
-       .Call('printf', [LTiger.Str(#10)])
-       .Assign('r1', LTiger.Invoke('AddC', [LTiger.Int64(10), LTiger.Int64(20)]))
-       .Call('printf', [LTiger.Str('AddC(10, 20) = %d (expected 30)' + #10), LTiger.Get('r1')])
-       .Assign('r2', LTiger.Invoke('AddCpp', [LTiger.Int64(10), LTiger.Int64(20)]))
-       .Call('printf', [LTiger.Str('AddCpp(10, 20) = %d (expected 130, includes +100 from PrivateHelper)' + #10), LTiger.Get('r2')])
+      .Call('printf', [LTiger.Str('=== Test13: DLL Generation ===' + #10)])
+      .Call('printf', [LTiger.Str(#10)])
+      .Assign('r1', LTiger.Invoke('AddC', [LTiger.Int64(10), LTiger.Int64(20)]))
+      .Call('printf', [LTiger.Str('AddC(10, 20) = %d (expected 30)' + #10), LTiger.Get('r1')])
+      .Assign('r2', LTiger.Invoke('AddCpp', [LTiger.Int64(10), LTiger.Int64(20)]))
+      .Call('printf', [LTiger.Str('AddCpp(10, 20) = %d (expected 130, includes +100 from PrivateHelper)' + #10), LTiger.Get('r2')])
 
-       .Call('printf', [LTiger.Str(#10 + 'DLL Import Tests:' + #10)])
-       .Call('printf', [LTiger.Str('  - C linkage import (AddC): works if result = 30' + #10)])
-       .Call('printf', [LTiger.Str('  - C++ linkage import (AddCpp): works if result = 130' + #10)])
-       .Call('printf', [LTiger.Str('  - Private function not exported but callable internally' + #10)])
+      .Call('printf', [LTiger.Str(#10 + 'DLL Import Tests:' + #10)])
+      .Call('printf', [LTiger.Str('  - C linkage import (AddC): works if result = 30' + #10)])
+      .Call('printf', [LTiger.Str('  - C++ linkage import (AddCpp): works if result = 130' + #10)])
+      .Call('printf', [LTiger.Str('  - Private function not exported but callable internally' + #10)])
 
-       .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test13.dll" to verify:' + #10)])
-       .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
-       .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, DllMain' + #10)])
+      .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test13.dll" to verify:' + #10)])
+      .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
+      .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, DllMain' + #10)])
 
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test13.exe'), ssConsole);
@@ -1523,7 +1525,7 @@ end;
   Also includes an unused function to verify DCE removes it at opt level 1.
   Uses Tiger_Halt instead of ExitProcess.
 ==============================================================================*)
-procedure Test14(const ADumpSSA: Boolean=False);
+procedure Test14(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -1541,54 +1543,54 @@ begin
 
     // Add an UNUSED function to test DCE removes it
     LTiger.Func('UnusedFunc', vtInt32, False, plC, False)
-       .Param('x', vtInt32)
-       .Return(LTiger.Get('x'))
+      .Param('x', vtInt32)
+      .Return(LTiger.Get('x'))
     .EndFunc();
 
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('ptr', vtPointer)
-       .Local('val', vtInt32)
+      .Local('ptr', vtPointer)
+      .Local('val', vtInt32)
 
-       .Call('printf', [LTiger.Str('=== Test14: Runtime Memory ===' + #10)])
-       .Call('printf', [LTiger.Str(#10)])
+      .Call('printf', [LTiger.Str('=== Test14: Runtime Memory ===' + #10)])
+      .Call('printf', [LTiger.Str(#10)])
 
-       // Test 1: Allocate, write, read, free
-       .Call('printf', [LTiger.Str('Test 1: Basic GetMem/FreeMem' + #10)])
-       .Assign('ptr', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(8)]))
-       .Call('printf', [LTiger.Str('  Allocated 8 bytes at: %p' + #10), LTiger.Get('ptr')])
-       .AssignTo(LTiger.Deref(LTiger.Get('ptr')), LTiger.Int64(12345))
-       .Call('printf', [LTiger.Str('  Wrote value: 12345' + #10)])
-       .Assign('val', LTiger.Deref(LTiger.Get('ptr')))
-       .Call('printf', [LTiger.Str('  Read back: %d (expected 12345)' + #10), LTiger.Get('val')])
-       .Call('Tiger_FreeMem', [LTiger.Get('ptr')])
-       .Call('printf', [LTiger.Str('  Freed memory' + #10)])
+      // Test 1: Allocate, write, read, free
+      .Call('printf', [LTiger.Str('Test 1: Basic GetMem/FreeMem' + #10)])
+      .Assign('ptr', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(8)]))
+      .Call('printf', [LTiger.Str('  Allocated 8 bytes at: %p' + #10), LTiger.Get('ptr')])
+      .AssignTo(LTiger.Deref(LTiger.Get('ptr')), LTiger.Int64(12345))
+      .Call('printf', [LTiger.Str('  Wrote value: 12345' + #10)])
+      .Assign('val', LTiger.Deref(LTiger.Get('ptr')))
+      .Call('printf', [LTiger.Str('  Read back: %d (expected 12345)' + #10), LTiger.Get('val')])
+      .Call('Tiger_FreeMem', [LTiger.Get('ptr')])
+      .Call('printf', [LTiger.Str('  Freed memory' + #10)])
 
-       // Test 2: Multiple allocations
-       .Call('printf', [LTiger.Str(#10 + 'Test 2: Multiple allocations' + #10)])
-       .Local('ptr1', vtPointer)
-       .Local('ptr2', vtPointer)
-       .Local('ptr3', vtPointer)
-       .Assign('ptr1', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(16)]))
-       .Assign('ptr2', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(32)]))
-       .Assign('ptr3', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(64)]))
-       .Call('printf', [LTiger.Str('  ptr1 (16 bytes): %p' + #10), LTiger.Get('ptr1')])
-       .Call('printf', [LTiger.Str('  ptr2 (32 bytes): %p' + #10), LTiger.Get('ptr2')])
-       .Call('printf', [LTiger.Str('  ptr3 (64 bytes): %p' + #10), LTiger.Get('ptr3')])
-       .AssignTo(LTiger.Deref(LTiger.Get('ptr1')), LTiger.Int64(111))
-       .AssignTo(LTiger.Deref(LTiger.Get('ptr2')), LTiger.Int64(222))
-       .AssignTo(LTiger.Deref(LTiger.Get('ptr3')), LTiger.Int64(333))
-       .Call('printf', [LTiger.Str('  *ptr1 = %d (expected 111)' + #10), LTiger.Deref(LTiger.Get('ptr1'))])
-       .Call('printf', [LTiger.Str('  *ptr2 = %d (expected 222)' + #10), LTiger.Deref(LTiger.Get('ptr2'))])
-       .Call('printf', [LTiger.Str('  *ptr3 = %d (expected 333)' + #10), LTiger.Deref(LTiger.Get('ptr3'))])
-       .Call('Tiger_FreeMem', [LTiger.Get('ptr1')])
-       .Call('Tiger_FreeMem', [LTiger.Get('ptr2')])
-       .Call('Tiger_FreeMem', [LTiger.Get('ptr3')])
-       .Call('printf', [LTiger.Str('  All freed' + #10)])
+      // Test 2: Multiple allocations
+      .Call('printf', [LTiger.Str(#10 + 'Test 2: Multiple allocations' + #10)])
+      .Local('ptr1', vtPointer)
+      .Local('ptr2', vtPointer)
+      .Local('ptr3', vtPointer)
+      .Assign('ptr1', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(16)]))
+      .Assign('ptr2', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(32)]))
+      .Assign('ptr3', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(64)]))
+      .Call('printf', [LTiger.Str('  ptr1 (16 bytes): %p' + #10), LTiger.Get('ptr1')])
+      .Call('printf', [LTiger.Str('  ptr2 (32 bytes): %p' + #10), LTiger.Get('ptr2')])
+      .Call('printf', [LTiger.Str('  ptr3 (64 bytes): %p' + #10), LTiger.Get('ptr3')])
+      .AssignTo(LTiger.Deref(LTiger.Get('ptr1')), LTiger.Int64(111))
+      .AssignTo(LTiger.Deref(LTiger.Get('ptr2')), LTiger.Int64(222))
+      .AssignTo(LTiger.Deref(LTiger.Get('ptr3')), LTiger.Int64(333))
+      .Call('printf', [LTiger.Str('  *ptr1 = %d (expected 111)' + #10), LTiger.Deref(LTiger.Get('ptr1'))])
+      .Call('printf', [LTiger.Str('  *ptr2 = %d (expected 222)' + #10), LTiger.Deref(LTiger.Get('ptr2'))])
+      .Call('printf', [LTiger.Str('  *ptr3 = %d (expected 333)' + #10), LTiger.Deref(LTiger.Get('ptr3'))])
+      .Call('Tiger_FreeMem', [LTiger.Get('ptr1')])
+      .Call('Tiger_FreeMem', [LTiger.Get('ptr2')])
+      .Call('Tiger_FreeMem', [LTiger.Get('ptr3')])
+      .Call('printf', [LTiger.Str('  All freed' + #10)])
 
-       .Call('printf', [LTiger.Str(#10 + 'Memory tests complete!' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str(#10 + 'Memory tests complete!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test14.exe'), ssConsole);
@@ -1609,7 +1611,7 @@ end;
   assignment). Verifies correct string content, lengths, and that
   refcounts increment/decrement as expected.
 ==============================================================================*)
-procedure Test15(const ADumpSSA: Boolean=False);
+procedure Test15(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -1627,71 +1629,71 @@ begin
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('s1', vtPointer)
-       .Local('s2', vtPointer)
-       .Local('s3', vtPointer)
-       .Local('len', vtUInt64)
-       .Local('data', vtPointer)
+      .Local('s1', vtPointer)
+      .Local('s2', vtPointer)
+      .Local('s3', vtPointer)
+      .Local('len', vtUInt64)
+      .Local('data', vtPointer)
 
-       .Call('printf', [LTiger.Str('=== Test15: Managed Strings ===' + #10)])
-       .Call('printf', [LTiger.Str(#10)])
+      .Call('printf', [LTiger.Str('=== Test15: Managed Strings ===' + #10)])
+      .Call('printf', [LTiger.Str(#10)])
 
-       // Test 1: Create string from literal
-       .Call('printf', [LTiger.Str('Test 1: Create string from literal' + #10)])
-       .Assign('s1', LTiger.Invoke('Tiger_StrFromLiteral', [LTiger.Str('Hello'), LTiger.Int64(5)]))
-       .Assign('len', LTiger.Invoke('Tiger_StrLen', [LTiger.Get('s1')]))
-       .Assign('data', LTiger.Invoke('Tiger_StrData', [LTiger.Get('s1')]))
-       .Call('printf', [LTiger.Str('  s1 = "%s"' + #10), LTiger.Get('data')])
-       .Call('printf', [LTiger.Str('  len(s1) = %llu (expected 5)' + #10), LTiger.Get('len')])
+      // Test 1: Create string from literal
+      .Call('printf', [LTiger.Str('Test 1: Create string from literal' + #10)])
+      .Assign('s1', LTiger.Invoke('Tiger_StrFromLiteral', [LTiger.Str('Hello'), LTiger.Int64(5)]))
+      .Assign('len', LTiger.Invoke('Tiger_StrLen', [LTiger.Get('s1')]))
+      .Assign('data', LTiger.Invoke('Tiger_StrData', [LTiger.Get('s1')]))
+      .Call('printf', [LTiger.Str('  s1 = "%s"' + #10), LTiger.Get('data')])
+      .Call('printf', [LTiger.Str('  len(s1) = %llu (expected 5)' + #10), LTiger.Get('len')])
 
-       // Test 2: Create another string
-       .Call('printf', [LTiger.Str(#10 + 'Test 2: Create another string' + #10)])
-       .Assign('s2', LTiger.Invoke('Tiger_StrFromLiteral', [LTiger.Str(' World'), LTiger.Int64(6)]))
-       .Assign('len', LTiger.Invoke('Tiger_StrLen', [LTiger.Get('s2')]))
-       .Assign('data', LTiger.Invoke('Tiger_StrData', [LTiger.Get('s2')]))
-       .Call('printf', [LTiger.Str('  s2 = "%s"' + #10), LTiger.Get('data')])
-       .Call('printf', [LTiger.Str('  len(s2) = %llu (expected 6)' + #10), LTiger.Get('len')])
+      // Test 2: Create another string
+      .Call('printf', [LTiger.Str(#10 + 'Test 2: Create another string' + #10)])
+      .Assign('s2', LTiger.Invoke('Tiger_StrFromLiteral', [LTiger.Str(' World'), LTiger.Int64(6)]))
+      .Assign('len', LTiger.Invoke('Tiger_StrLen', [LTiger.Get('s2')]))
+      .Assign('data', LTiger.Invoke('Tiger_StrData', [LTiger.Get('s2')]))
+      .Call('printf', [LTiger.Str('  s2 = "%s"' + #10), LTiger.Get('data')])
+      .Call('printf', [LTiger.Str('  len(s2) = %llu (expected 6)' + #10), LTiger.Get('len')])
 
-       // Test 3: Concatenate strings
-       .Call('printf', [LTiger.Str(#10 + 'Test 3: Concatenate strings' + #10)])
-       .Assign('s3', LTiger.Invoke('Tiger_StrConcat', [LTiger.Get('s1'), LTiger.Get('s2')]))
-       .Assign('len', LTiger.Invoke('Tiger_StrLen', [LTiger.Get('s3')]))
-       .Assign('data', LTiger.Invoke('Tiger_StrData', [LTiger.Get('s3')]))
-       .Call('printf', [LTiger.Str('  s3 = s1 + s2 = "%s"' + #10), LTiger.Get('data')])
-       .Call('printf', [LTiger.Str('  len(s3) = %llu (expected 11)' + #10), LTiger.Get('len')])
+      // Test 3: Concatenate strings
+      .Call('printf', [LTiger.Str(#10 + 'Test 3: Concatenate strings' + #10)])
+      .Assign('s3', LTiger.Invoke('Tiger_StrConcat', [LTiger.Get('s1'), LTiger.Get('s2')]))
+      .Assign('len', LTiger.Invoke('Tiger_StrLen', [LTiger.Get('s3')]))
+      .Assign('data', LTiger.Invoke('Tiger_StrData', [LTiger.Get('s3')]))
+      .Call('printf', [LTiger.Str('  s3 = s1 + s2 = "%s"' + #10), LTiger.Get('data')])
+      .Call('printf', [LTiger.Str('  len(s3) = %llu (expected 11)' + #10), LTiger.Get('len')])
 
-       // Test 4: Reference counting
-       .Call('printf', [LTiger.Str(#10 + 'Test 4: Reference counting' + #10)])
-       .Call('printf', [LTiger.Str('  s1 refcount before AddRef: %lld' + #10),
-          LTiger.GetField(LTiger.Deref(LTiger.Get('s1'), 'TStringRec'), 'RefCount')])
-       .Call('Tiger_StrAddRef', [LTiger.Get('s1')])
-       .Call('printf', [LTiger.Str('  s1 refcount after AddRef: %lld (expected 2)' + #10),
-          LTiger.GetField(LTiger.Deref(LTiger.Get('s1'), 'TStringRec'), 'RefCount')])
-       .Call('Tiger_StrRelease', [LTiger.Get('s1')])
-       .Call('printf', [LTiger.Str('  s1 refcount after Release: %lld (expected 1)' + #10),
-          LTiger.GetField(LTiger.Deref(LTiger.Get('s1'), 'TStringRec'), 'RefCount')])
+      // Test 4: Reference counting
+      .Call('printf', [LTiger.Str(#10 + 'Test 4: Reference counting' + #10)])
+      .Call('printf', [LTiger.Str('  s1 refcount before AddRef: %lld' + #10),
+        LTiger.GetField(LTiger.Deref(LTiger.Get('s1'), 'TStringRec'), 'RefCount')])
+      .Call('Tiger_StrAddRef', [LTiger.Get('s1')])
+      .Call('printf', [LTiger.Str('  s1 refcount after AddRef: %lld (expected 2)' + #10),
+        LTiger.GetField(LTiger.Deref(LTiger.Get('s1'), 'TStringRec'), 'RefCount')])
+      .Call('Tiger_StrRelease', [LTiger.Get('s1')])
+      .Call('printf', [LTiger.Str('  s1 refcount after Release: %lld (expected 1)' + #10),
+        LTiger.GetField(LTiger.Deref(LTiger.Get('s1'), 'TStringRec'), 'RefCount')])
 
-       // Test 5: StrAssign with refcount
-       .Call('printf', [LTiger.Str(#10 + 'Test 5: StrAssign with refcount' + #10)])
-       .Local('s4', vtPointer)
-       .Assign('s4', LTiger.Null())
-       .Call('Tiger_StrAssign', [LTiger.AddrOf('s4'), LTiger.Get('s1')])
-       .Call('printf', [LTiger.Str('  After s4 := s1:' + #10)])
-       .Call('printf', [LTiger.Str('    s1 refcount: %lld (expected 2)' + #10),
-          LTiger.GetField(LTiger.Deref(LTiger.Get('s1'), 'TStringRec'), 'RefCount')])
-       .Assign('data', LTiger.Invoke('Tiger_StrData', [LTiger.Get('s4')]))
-       .Call('printf', [LTiger.Str('    s4 = "%s"' + #10), LTiger.Get('data')])
+      // Test 5: StrAssign with refcount
+      .Call('printf', [LTiger.Str(#10 + 'Test 5: StrAssign with refcount' + #10)])
+      .Local('s4', vtPointer)
+      .Assign('s4', LTiger.Null())
+      .Call('Tiger_StrAssign', [LTiger.AddrOf('s4'), LTiger.Get('s1')])
+      .Call('printf', [LTiger.Str('  After s4 := s1:' + #10)])
+      .Call('printf', [LTiger.Str('    s1 refcount: %lld (expected 2)' + #10),
+        LTiger.GetField(LTiger.Deref(LTiger.Get('s1'), 'TStringRec'), 'RefCount')])
+      .Assign('data', LTiger.Invoke('Tiger_StrData', [LTiger.Get('s4')]))
+      .Call('printf', [LTiger.Str('    s4 = "%s"' + #10), LTiger.Get('data')])
 
-       // Cleanup
-       .Call('printf', [LTiger.Str(#10 + 'Cleanup: Releasing all strings' + #10)])
-       .Call('Tiger_StrRelease', [LTiger.Get('s1')])
-       .Call('Tiger_StrRelease', [LTiger.Get('s2')])
-       .Call('Tiger_StrRelease', [LTiger.Get('s3')])
-       .Call('Tiger_StrRelease', [LTiger.Get('s4')])
-       .Call('printf', [LTiger.Str('  All strings released' + #10)])
+      // Cleanup
+      .Call('printf', [LTiger.Str(#10 + 'Cleanup: Releasing all strings' + #10)])
+      .Call('Tiger_StrRelease', [LTiger.Get('s1')])
+      .Call('Tiger_StrRelease', [LTiger.Get('s2')])
+      .Call('Tiger_StrRelease', [LTiger.Get('s3')])
+      .Call('Tiger_StrRelease', [LTiger.Get('s4')])
+      .Call('printf', [LTiger.Str('  All strings released' + #10)])
 
-       .Call('printf', [LTiger.Str(#10 + 'String tests complete!' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str(#10 + 'String tests complete!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test15.exe'), ssConsole);
@@ -1709,7 +1711,7 @@ end;
   (Tiger_Halt). Prints a string, an integer format, and exits. Serves as
   a baseline sanity check for CRT interop.
 ==============================================================================*)
-procedure Test16(const ADumpSSA: Boolean=False);
+procedure Test16(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -1728,14 +1730,14 @@ begin
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('dummy', vtInt32)
+      .Local('dummy', vtInt32)
 
-       .Call('printf', [LTiger.Str('=== Test16: msvcrt.dll printf ===' + #10)])
-       .Call('printf', [LTiger.Str('Hello from Test16!' + #10)])
-       .Call('printf', [LTiger.Str('Integer: %d' + #10), LTiger.Int32(42)])
-       .Call('printf', [LTiger.Str('Done!' + #10)])
+      .Call('printf', [LTiger.Str('=== Test16: msvcrt.dll printf ===' + #10)])
+      .Call('printf', [LTiger.Str('Hello from Test16!' + #10)])
+      .Call('printf', [LTiger.Str('Integer: %d' + #10), LTiger.Int32(42)])
+      .Call('printf', [LTiger.Str('Done!' + #10)])
 
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test16.exe'), ssConsole);
@@ -1755,7 +1757,7 @@ end;
   exception (integer division by zero caught). Verifies control flow
   resumes correctly after each block.
 ==============================================================================*)
-procedure Test17(const ADumpSSA: Boolean=False);
+procedure Test17(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -1772,61 +1774,61 @@ begin
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('dummy', vtInt32)
-       .Local('divisor', vtInt32)
-       .Local('result', vtInt32)
+      .Local('dummy', vtInt32)
+      .Local('divisor', vtInt32)
+      .Local('result', vtInt32)
 
-       .Call('printf', [LTiger.Str('=== Test17: Exception Handling ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test17: Exception Handling ===' + #10)])
 
-       // Test 1: try/finally
-       .Call('printf', [LTiger.Str('Test 1: try/finally' + #10)])
-       .&Try()
-          .Call('printf', [LTiger.Str('  Inside try block' + #10)])
-       .&Finally()
-          .Call('printf', [LTiger.Str('  Inside finally block' + #10)])
-       .EndTry()
-       .Call('printf', [LTiger.Str('  After try/finally' + #10)])
-       .Call('printf', [LTiger.Str('' + #10)])
+      // Test 1: try/finally
+      .Call('printf', [LTiger.Str('Test 1: try/finally' + #10)])
+      .&Try()
+        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
+      .&Finally()
+        .Call('printf', [LTiger.Str('  Inside finally block' + #10)])
+      .EndTry()
+      .Call('printf', [LTiger.Str('  After try/finally' + #10)])
+      .Call('printf', [LTiger.Str('' + #10)])
 
-       // Test 2: try/except without exception
-       .Call('printf', [LTiger.Str('Test 2: try/except (no exception)' + #10)])
-       .&Try()
-          .Call('printf', [LTiger.Str('  Inside try block' + #10)])
-       .&Except()
-          .Call('printf', [LTiger.Str('  ERROR: Should NOT reach except!' + #10)])
-       .EndTry()
-       .Call('printf', [LTiger.Str('  After try/except' + #10)])
-       .Call('printf', [LTiger.Str('' + #10)])
+      // Test 2: try/except without exception
+      .Call('printf', [LTiger.Str('Test 2: try/except (no exception)' + #10)])
+      .&Try()
+        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
+      .&Except()
+        .Call('printf', [LTiger.Str('  ERROR: Should NOT reach except!' + #10)])
+      .EndTry()
+      .Call('printf', [LTiger.Str('  After try/except' + #10)])
+      .Call('printf', [LTiger.Str('' + #10)])
 
-       // Test 3: try/except WITH exception
-       .Call('printf', [LTiger.Str('Test 3: try/except (with raise)' + #10)])
-       .&Try()
-          .Call('printf', [LTiger.Str('  Inside try block' + #10)])
-          .Call('printf', [LTiger.Str('  About to raise...' + #10)])
-          .&Raise(LTiger.Str('Test exception!'))
-          .Call('printf', [LTiger.Str('  ERROR: Should NOT print after raise!' + #10)])
-       .&Except()
-          .Call('printf', [LTiger.Str('  Inside except block (caught!)' + #10)])
-       .EndTry()
-       .Call('printf', [LTiger.Str('  After try/except' + #10)])
-       .Call('printf', [LTiger.Str('' + #10)])
+      // Test 3: try/except WITH exception
+      .Call('printf', [LTiger.Str('Test 3: try/except (with raise)' + #10)])
+      .&Try()
+        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
+        .Call('printf', [LTiger.Str('  About to raise...' + #10)])
+        .&Raise(LTiger.Str('Test exception!'))
+        .Call('printf', [LTiger.Str('  ERROR: Should NOT print after raise!' + #10)])
+      .&Except()
+        .Call('printf', [LTiger.Str('  Inside except block (caught!)' + #10)])
+      .EndTry()
+      .Call('printf', [LTiger.Str('  After try/except' + #10)])
+      .Call('printf', [LTiger.Str('' + #10)])
 
-       // Test 4: Hardware exception (div by zero)
-       .Call('printf', [LTiger.Str('Test 4: try/except (div by zero)' + #10)])
-       .Assign('divisor', LTiger.Int64(0))
-       .&Try()
-          .Call('printf', [LTiger.Str('  Inside try block' + #10)])
-          .Call('printf', [LTiger.Str('  About to divide by zero...' + #10)])
-          .Assign('result', LTiger.IDiv(LTiger.Int64(100), LTiger.Get('divisor')))
-          .Call('printf', [LTiger.Str('  ERROR: Should NOT print after div/0!' + #10)])
-       .&Except()
-          .Call('printf', [LTiger.Str('  Inside except block (caught div/0!)' + #10)])
-       .EndTry()
-       .Call('printf', [LTiger.Str('  After try/except' + #10)])
-       .Call('printf', [LTiger.Str('' + #10)])
+      // Test 4: Hardware exception (div by zero)
+      .Call('printf', [LTiger.Str('Test 4: try/except (div by zero)' + #10)])
+      .Assign('divisor', LTiger.Int64(0))
+      .&Try()
+        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
+        .Call('printf', [LTiger.Str('  About to divide by zero...' + #10)])
+        .Assign('result', LTiger.IDiv(LTiger.Int64(100), LTiger.Get('divisor')))
+        .Call('printf', [LTiger.Str('  ERROR: Should NOT print after div/0!' + #10)])
+      .&Except()
+        .Call('printf', [LTiger.Str('  Inside except block (caught div/0!)' + #10)])
+      .EndTry()
+      .Call('printf', [LTiger.Str('  After try/except' + #10)])
+      .Call('printf', [LTiger.Str('' + #10)])
 
-       .Call('printf', [LTiger.Str('All tests passed!' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str('All tests passed!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test17.exe'), ssConsole);
@@ -1845,7 +1847,7 @@ end;
   membership (SetIn), union (+), intersection ( * ), difference (-), and
   equality (=). Verifies correct boolean results for each operation.
 ==============================================================================*)
-procedure Test18(const ADumpSSA: Boolean=False);
+procedure Test18(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -1867,101 +1869,101 @@ begin
     LTiger.DefineSet('TOffsetSet', 100, 163);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('s1', 'TSmallSet')
-       .Local('s2', 'TSmallSet')
-       .Local('s3', 'TSmallSet')
-       .Local('result', vtInt32)
+      .Local('s1', 'TSmallSet')
+      .Local('s2', 'TSmallSet')
+      .Local('s3', 'TSmallSet')
+      .Local('result', vtInt32)
 
-       .Call('printf', [LTiger.Str('=== Test18: Sets ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test18: Sets ===' + #10)])
 
-       // Test 1: Set literal creation
-       .Call('printf', [LTiger.Str('Test 1: Set literals' + #10)])
-       .Assign('s1', LTiger.SetLit('TSmallSet', [1, 3, 5]))
-       .Call('printf', [LTiger.Str('  s1 = {1, 3, 5}' + #10)])
+      // Test 1: Set literal creation
+      .Call('printf', [LTiger.Str('Test 1: Set literals' + #10)])
+      .Assign('s1', LTiger.SetLit('TSmallSet', [1, 3, 5]))
+      .Call('printf', [LTiger.Str('  s1 = {1, 3, 5}' + #10)])
 
-       // Test 2: Empty set
-       .Assign('s2', LTiger.EmptySet('TSmallSet'))
-       .Call('printf', [LTiger.Str('  s2 = {} (empty)' + #10)])
+      // Test 2: Empty set
+      .Assign('s2', LTiger.EmptySet('TSmallSet'))
+      .Call('printf', [LTiger.Str('  s2 = {} (empty)' + #10)])
 
-       // Test 3: Membership test
-       .Call('printf', [LTiger.Str('Test 2: Membership (in)' + #10)])
-       .&If(LTiger.SetIn(LTiger.Int64(1), LTiger.Get('s1')))
-          .Call('printf', [LTiger.Str('  1 in s1: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  1 in s1: false' + #10)])
-       .EndIf()
-       .&If(LTiger.SetIn(LTiger.Int64(2), LTiger.Get('s1')))
-          .Call('printf', [LTiger.Str('  2 in s1: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  2 in s1: false' + #10)])
-       .EndIf()
+      // Test 3: Membership test
+      .Call('printf', [LTiger.Str('Test 2: Membership (in)' + #10)])
+      .&If(LTiger.SetIn(LTiger.Int64(1), LTiger.Get('s1')))
+        .Call('printf', [LTiger.Str('  1 in s1: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  1 in s1: false' + #10)])
+      .EndIf()
+      .&If(LTiger.SetIn(LTiger.Int64(2), LTiger.Get('s1')))
+        .Call('printf', [LTiger.Str('  2 in s1: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  2 in s1: false' + #10)])
+      .EndIf()
 
-       // Test 4: Set union
-       .Call('printf', [LTiger.Str('Test 3: Union (+)' + #10)])
-       .Assign('s2', LTiger.SetLit('TSmallSet', [2, 4]))
-       .Assign('s3', LTiger.SetUnion(LTiger.Get('s1'), LTiger.Get('s2')))
-       .Call('printf', [LTiger.Str('  {1,3,5} + {2,4} = s3' + #10)])
-       .&If(LTiger.SetIn(LTiger.Int64(1), LTiger.Get('s3')))
-          .Call('printf', [LTiger.Str('  1 in s3: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  1 in s3: false' + #10)])
-       .EndIf()
-       .&If(LTiger.SetIn(LTiger.Int64(2), LTiger.Get('s3')))
-          .Call('printf', [LTiger.Str('  2 in s3: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  2 in s3: false' + #10)])
-       .EndIf()
+      // Test 4: Set union
+      .Call('printf', [LTiger.Str('Test 3: Union (+)' + #10)])
+      .Assign('s2', LTiger.SetLit('TSmallSet', [2, 4]))
+      .Assign('s3', LTiger.SetUnion(LTiger.Get('s1'), LTiger.Get('s2')))
+      .Call('printf', [LTiger.Str('  {1,3,5} + {2,4} = s3' + #10)])
+      .&If(LTiger.SetIn(LTiger.Int64(1), LTiger.Get('s3')))
+        .Call('printf', [LTiger.Str('  1 in s3: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  1 in s3: false' + #10)])
+      .EndIf()
+      .&If(LTiger.SetIn(LTiger.Int64(2), LTiger.Get('s3')))
+        .Call('printf', [LTiger.Str('  2 in s3: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  2 in s3: false' + #10)])
+      .EndIf()
 
-       // Test 5: Set intersection
-       .Call('printf', [LTiger.Str('Test 4: Intersection (*)' + #10)])
-       .Assign('s1', LTiger.SetLit('TSmallSet', [1, 2, 3]))
-       .Assign('s2', LTiger.SetLit('TSmallSet', [2, 3, 4]))
-       .Assign('s3', LTiger.SetInter(LTiger.Get('s1'), LTiger.Get('s2')))
-       .Call('printf', [LTiger.Str('  {1,2,3} * {2,3,4} = s3' + #10)])
-       .&If(LTiger.SetIn(LTiger.Int64(1), LTiger.Get('s3')))
-          .Call('printf', [LTiger.Str('  1 in s3: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  1 in s3: false' + #10)])
-       .EndIf()
-       .&If(LTiger.SetIn(LTiger.Int64(2), LTiger.Get('s3')))
-          .Call('printf', [LTiger.Str('  2 in s3: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  2 in s3: false' + #10)])
-       .EndIf()
+      // Test 5: Set intersection
+      .Call('printf', [LTiger.Str('Test 4: Intersection (*)' + #10)])
+      .Assign('s1', LTiger.SetLit('TSmallSet', [1, 2, 3]))
+      .Assign('s2', LTiger.SetLit('TSmallSet', [2, 3, 4]))
+      .Assign('s3', LTiger.SetInter(LTiger.Get('s1'), LTiger.Get('s2')))
+      .Call('printf', [LTiger.Str('  {1,2,3} * {2,3,4} = s3' + #10)])
+      .&If(LTiger.SetIn(LTiger.Int64(1), LTiger.Get('s3')))
+        .Call('printf', [LTiger.Str('  1 in s3: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  1 in s3: false' + #10)])
+      .EndIf()
+      .&If(LTiger.SetIn(LTiger.Int64(2), LTiger.Get('s3')))
+        .Call('printf', [LTiger.Str('  2 in s3: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  2 in s3: false' + #10)])
+      .EndIf()
 
-       // Test 6: Set difference
-       .Call('printf', [LTiger.Str('Test 5: Difference (-)' + #10)])
-       .Assign('s3', LTiger.SetDiff(LTiger.Get('s1'), LTiger.Get('s2')))
-       .Call('printf', [LTiger.Str('  {1,2,3} - {2,3,4} = s3' + #10)])
-       .&If(LTiger.SetIn(LTiger.Int64(1), LTiger.Get('s3')))
-          .Call('printf', [LTiger.Str('  1 in s3: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  1 in s3: false' + #10)])
-       .EndIf()
-       .&If(LTiger.SetIn(LTiger.Int64(2), LTiger.Get('s3')))
-          .Call('printf', [LTiger.Str('  2 in s3: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  2 in s3: false' + #10)])
-       .EndIf()
+      // Test 6: Set difference
+      .Call('printf', [LTiger.Str('Test 5: Difference (-)' + #10)])
+      .Assign('s3', LTiger.SetDiff(LTiger.Get('s1'), LTiger.Get('s2')))
+      .Call('printf', [LTiger.Str('  {1,2,3} - {2,3,4} = s3' + #10)])
+      .&If(LTiger.SetIn(LTiger.Int64(1), LTiger.Get('s3')))
+        .Call('printf', [LTiger.Str('  1 in s3: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  1 in s3: false' + #10)])
+      .EndIf()
+      .&If(LTiger.SetIn(LTiger.Int64(2), LTiger.Get('s3')))
+        .Call('printf', [LTiger.Str('  2 in s3: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  2 in s3: false' + #10)])
+      .EndIf()
 
-       // Test 7: Set equality
-       .Call('printf', [LTiger.Str('Test 6: Equality (=)' + #10)])
-       .Assign('s1', LTiger.SetLit('TSmallSet', [1, 2, 3]))
-       .Assign('s2', LTiger.SetLit('TSmallSet', [1, 2, 3]))
-       .&If(LTiger.SetEq(LTiger.Get('s1'), LTiger.Get('s2')))
-          .Call('printf', [LTiger.Str('  {1,2,3} = {1,2,3}: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  {1,2,3} = {1,2,3}: false' + #10)])
-       .EndIf()
-       .Assign('s2', LTiger.SetLit('TSmallSet', [1, 2]))
-       .&If(LTiger.SetEq(LTiger.Get('s1'), LTiger.Get('s2')))
-          .Call('printf', [LTiger.Str('  {1,2,3} = {1,2}: true' + #10)])
-       .&Else()
-          .Call('printf', [LTiger.Str('  {1,2,3} = {1,2}: false' + #10)])
-       .EndIf()
+      // Test 7: Set equality
+      .Call('printf', [LTiger.Str('Test 6: Equality (=)' + #10)])
+      .Assign('s1', LTiger.SetLit('TSmallSet', [1, 2, 3]))
+      .Assign('s2', LTiger.SetLit('TSmallSet', [1, 2, 3]))
+      .&If(LTiger.SetEq(LTiger.Get('s1'), LTiger.Get('s2')))
+        .Call('printf', [LTiger.Str('  {1,2,3} = {1,2,3}: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  {1,2,3} = {1,2,3}: false' + #10)])
+      .EndIf()
+      .Assign('s2', LTiger.SetLit('TSmallSet', [1, 2]))
+      .&If(LTiger.SetEq(LTiger.Get('s1'), LTiger.Get('s2')))
+        .Call('printf', [LTiger.Str('  {1,2,3} = {1,2}: true' + #10)])
+      .&Else()
+        .Call('printf', [LTiger.Str('  {1,2,3} = {1,2}: false' + #10)])
+      .EndIf()
 
-       .Call('printf', [LTiger.Str(#10 + 'All tests passed!' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str(#10 + 'All tests passed!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test18.exe'), ssConsole);
@@ -1982,7 +1984,7 @@ end;
   increment/decrement with optional step). All values are verified
   against expected constants at runtime via printf.
 ==============================================================================*)
-procedure Test19(const ADumpSSA: Boolean=False);
+procedure Test19(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -2000,105 +2002,105 @@ begin
 
     // Define test types
     LTiger.DefineRecord('TPoint')
-         .Field('X', vtInt32)
-         .Field('Y', vtInt32)
-       .EndRecord();
+      .Field('X', vtInt32)
+      .Field('Y', vtInt32)
+    .EndRecord();
 
     LTiger.DefineRecord('TBigRecord')
-         .Field('A', vtInt32)
-         .Field('B', vtInt64)
-         .Field('C', vtInt32)
-       .EndRecord();
+      .Field('A', vtInt32)
+      .Field('B', vtInt64)
+      .Field('C', vtInt32)
+    .EndRecord();
 
     LTiger.DefineArray('TIntArray', vtInt32, 0, 9);
     LTiger.DefineArray('TOffsetArray', vtInt32, 5, 9);
 
     LTiger.DefineEnum('TColor')
-         .EnumValue('Red', 0)
-         .EnumValue('Green', 1)
-         .EnumValue('Blue', 2)
-       .EndEnum();
+      .EnumValue('Red', 0)
+      .EnumValue('Green', 1)
+      .EnumValue('Blue', 2)
+    .EndEnum();
 
     LTiger.DefineEnum('TPriority')
-         .EnumValue('Low', 10)
-         .EnumValue('Medium', 20)
-         .EnumValue('High', 30)
-       .EndEnum();
+      .EnumValue('Low', 10)
+      .EnumValue('Medium', 20)
+      .EnumValue('High', 30)
+    .EndEnum();
 
     LTiger.DefineSet('TSmallSet', 0, 7);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('result', vtInt64)
+      .Local('result', vtInt64)
 
-       .Call('printf', [LTiger.Str('=== Test19: Compile-Time Intrinsics ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test19: Compile-Time Intrinsics ===' + #10)])
 
-       // Test SizeOf
-       .Call('printf', [LTiger.Str(#10 + 'Test 1: SizeOf' + #10)])
-       .Call('printf', [LTiger.Str('  SizeOf(TPoint) = %d (expected: 8)' + #10), LTiger.&SizeOf('TPoint')])
-       .Call('printf', [LTiger.Str('  SizeOf(TBigRecord) = %d (expected: 24)' + #10), LTiger.&SizeOf('TBigRecord')])
-       .Call('printf', [LTiger.Str('  SizeOf(TIntArray) = %d (expected: 40)' + #10), LTiger.&SizeOf('TIntArray')])
+      // Test SizeOf
+      .Call('printf', [LTiger.Str(#10 + 'Test 1: SizeOf' + #10)])
+      .Call('printf', [LTiger.Str('  SizeOf(TPoint) = %d (expected: 8)' + #10), LTiger.&SizeOf('TPoint')])
+      .Call('printf', [LTiger.Str('  SizeOf(TBigRecord) = %d (expected: 24)' + #10), LTiger.&SizeOf('TBigRecord')])
+      .Call('printf', [LTiger.Str('  SizeOf(TIntArray) = %d (expected: 40)' + #10), LTiger.&SizeOf('TIntArray')])
 
-       // Test AlignOf
-       .Call('printf', [LTiger.Str(#10 + 'Test 2: AlignOf' + #10)])
-       .Call('printf', [LTiger.Str('  AlignOf(TPoint) = %d (expected: 4)' + #10), LTiger.AlignOf('TPoint')])
-       .Call('printf', [LTiger.Str('  AlignOf(TBigRecord) = %d (expected: 8)' + #10), LTiger.AlignOf('TBigRecord')])
+      // Test AlignOf
+      .Call('printf', [LTiger.Str(#10 + 'Test 2: AlignOf' + #10)])
+      .Call('printf', [LTiger.Str('  AlignOf(TPoint) = %d (expected: 4)' + #10), LTiger.AlignOf('TPoint')])
+      .Call('printf', [LTiger.Str('  AlignOf(TBigRecord) = %d (expected: 8)' + #10), LTiger.AlignOf('TBigRecord')])
 
-       // Test High/Low on arrays
-       .Call('printf', [LTiger.Str(#10 + 'Test 3: High/Low on arrays' + #10)])
-       .Call('printf', [LTiger.Str('  Low(TIntArray) = %d (expected: 0)' + #10), LTiger.Low('TIntArray')])
-       .Call('printf', [LTiger.Str('  High(TIntArray) = %d (expected: 9)' + #10), LTiger.High('TIntArray')])
-       .Call('printf', [LTiger.Str('  Low(TOffsetArray) = %d (expected: 5)' + #10), LTiger.Low('TOffsetArray')])
-       .Call('printf', [LTiger.Str('  High(TOffsetArray) = %d (expected: 9)' + #10), LTiger.High('TOffsetArray')])
+      // Test High/Low on arrays
+      .Call('printf', [LTiger.Str(#10 + 'Test 3: High/Low on arrays' + #10)])
+      .Call('printf', [LTiger.Str('  Low(TIntArray) = %d (expected: 0)' + #10), LTiger.Low('TIntArray')])
+      .Call('printf', [LTiger.Str('  High(TIntArray) = %d (expected: 9)' + #10), LTiger.High('TIntArray')])
+      .Call('printf', [LTiger.Str('  Low(TOffsetArray) = %d (expected: 5)' + #10), LTiger.Low('TOffsetArray')])
+      .Call('printf', [LTiger.Str('  High(TOffsetArray) = %d (expected: 9)' + #10), LTiger.High('TOffsetArray')])
 
-       // Test Len on arrays
-       .Call('printf', [LTiger.Str(#10 + 'Test 4: Len on arrays' + #10)])
-       .Call('printf', [LTiger.Str('  Len(TIntArray) = %d (expected: 10)' + #10), LTiger.Len('TIntArray')])
-       .Call('printf', [LTiger.Str('  Len(TOffsetArray) = %d (expected: 5)' + #10), LTiger.Len('TOffsetArray')])
+      // Test Len on arrays
+      .Call('printf', [LTiger.Str(#10 + 'Test 4: Len on arrays' + #10)])
+      .Call('printf', [LTiger.Str('  Len(TIntArray) = %d (expected: 10)' + #10), LTiger.Len('TIntArray')])
+      .Call('printf', [LTiger.Str('  Len(TOffsetArray) = %d (expected: 5)' + #10), LTiger.Len('TOffsetArray')])
 
-       // Test High/Low on enums
-       .Call('printf', [LTiger.Str(#10 + 'Test 5: High/Low on enums' + #10)])
-       .Call('printf', [LTiger.Str('  Low(TColor) = %d (expected: 0)' + #10), LTiger.Low('TColor')])
-       .Call('printf', [LTiger.Str('  High(TColor) = %d (expected: 2)' + #10), LTiger.High('TColor')])
-       .Call('printf', [LTiger.Str('  Low(TPriority) = %d (expected: 10)' + #10), LTiger.Low('TPriority')])
-       .Call('printf', [LTiger.Str('  High(TPriority) = %d (expected: 30)' + #10), LTiger.High('TPriority')])
+      // Test High/Low on enums
+      .Call('printf', [LTiger.Str(#10 + 'Test 5: High/Low on enums' + #10)])
+      .Call('printf', [LTiger.Str('  Low(TColor) = %d (expected: 0)' + #10), LTiger.Low('TColor')])
+      .Call('printf', [LTiger.Str('  High(TColor) = %d (expected: 2)' + #10), LTiger.High('TColor')])
+      .Call('printf', [LTiger.Str('  Low(TPriority) = %d (expected: 10)' + #10), LTiger.Low('TPriority')])
+      .Call('printf', [LTiger.Str('  High(TPriority) = %d (expected: 30)' + #10), LTiger.High('TPriority')])
 
-       // Test High/Low on sets
-       .Call('printf', [LTiger.Str(#10 + 'Test 6: High/Low on sets' + #10)])
-       .Call('printf', [LTiger.Str('  Low(TSmallSet) = %d (expected: 0)' + #10), LTiger.Low('TSmallSet')])
-       .Call('printf', [LTiger.Str('  High(TSmallSet) = %d (expected: 7)' + #10), LTiger.High('TSmallSet')])
+      // Test High/Low on sets
+      .Call('printf', [LTiger.Str(#10 + 'Test 6: High/Low on sets' + #10)])
+      .Call('printf', [LTiger.Str('  Low(TSmallSet) = %d (expected: 0)' + #10), LTiger.Low('TSmallSet')])
+      .Call('printf', [LTiger.Str('  High(TSmallSet) = %d (expected: 7)' + #10), LTiger.High('TSmallSet')])
 
-       // Test 7: Ord/Chr
-       .Call('printf', [LTiger.Str(#10 + 'Test 7: Ord/Chr' + #10)])
-       .Assign('result', LTiger.Ord(LTiger.Int64(65)))
-       .Call('printf', [LTiger.Str('  Ord(65) = %d (expected: 65)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Chr(LTiger.Int64(66)))
-       .Call('printf', [LTiger.Str('  Chr(66) = %d (expected: 66)' + #10), LTiger.Get('result')])
+      // Test 7: Ord/Chr
+      .Call('printf', [LTiger.Str(#10 + 'Test 7: Ord/Chr' + #10)])
+      .Assign('result', LTiger.Ord(LTiger.Int64(65)))
+      .Call('printf', [LTiger.Str('  Ord(65) = %d (expected: 65)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Chr(LTiger.Int64(66)))
+      .Call('printf', [LTiger.Str('  Chr(66) = %d (expected: 66)' + #10), LTiger.Get('result')])
 
-       // Test 8: Succ/Pred
-       .Call('printf', [LTiger.Str(#10 + 'Test 8: Succ/Pred' + #10)])
-       .Assign('result', LTiger.Succ(LTiger.Int64(10)))
-       .Call('printf', [LTiger.Str('  Succ(10) = %d (expected: 11)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Pred(LTiger.Int64(10)))
-       .Call('printf', [LTiger.Str('  Pred(10) = %d (expected: 9)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Succ(LTiger.Pred(LTiger.Int64(5))))
-       .Call('printf', [LTiger.Str('  Succ(Pred(5)) = %d (expected: 5)' + #10), LTiger.Get('result')])
+      // Test 8: Succ/Pred
+      .Call('printf', [LTiger.Str(#10 + 'Test 8: Succ/Pred' + #10)])
+      .Assign('result', LTiger.Succ(LTiger.Int64(10)))
+      .Call('printf', [LTiger.Str('  Succ(10) = %d (expected: 11)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Pred(LTiger.Int64(10)))
+      .Call('printf', [LTiger.Str('  Pred(10) = %d (expected: 9)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Succ(LTiger.Pred(LTiger.Int64(5))))
+      .Call('printf', [LTiger.Str('  Succ(Pred(5)) = %d (expected: 5)' + #10), LTiger.Get('result')])
 
-       // Test 9: Inc/Dec
-       .Call('printf', [LTiger.Str(#10 + 'Test 9: Inc/Dec' + #10)])
-       .Assign('result', LTiger.Int64(10))
-       .&Inc('result')
-       .Call('printf', [LTiger.Str('  Inc(10) = %d (expected: 11)' + #10), LTiger.Get('result')])
-       .&Dec('result')
-       .&Dec('result')
-       .Call('printf', [LTiger.Str('  Dec(Dec(11)) = %d (expected: 9)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Int64(5))
-       .&Inc('result', LTiger.Int64(10))
-       .Call('printf', [LTiger.Str('  Inc(5, 10) = %d (expected: 15)' + #10), LTiger.Get('result')])
-       .&Dec('result', LTiger.Int64(7))
-       .Call('printf', [LTiger.Str('  Dec(15, 7) = %d (expected: 8)' + #10), LTiger.Get('result')])
+      // Test 9: Inc/Dec
+      .Call('printf', [LTiger.Str(#10 + 'Test 9: Inc/Dec' + #10)])
+      .Assign('result', LTiger.Int64(10))
+      .&Inc('result')
+      .Call('printf', [LTiger.Str('  Inc(10) = %d (expected: 11)' + #10), LTiger.Get('result')])
+      .&Dec('result')
+      .&Dec('result')
+      .Call('printf', [LTiger.Str('  Dec(Dec(11)) = %d (expected: 9)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Int64(5))
+      .&Inc('result', LTiger.Int64(10))
+      .Call('printf', [LTiger.Str('  Inc(5, 10) = %d (expected: 15)' + #10), LTiger.Get('result')])
+      .&Dec('result', LTiger.Int64(7))
+      .Call('printf', [LTiger.Str('  Dec(15, 7) = %d (expected: 8)' + #10), LTiger.Get('result')])
 
-       .Call('printf', [LTiger.Str(#10 + 'All tests passed!' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str(#10 + 'All tests passed!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test19.exe'), ssConsole);
@@ -2118,7 +2120,7 @@ end;
   (returns VaCount_). Validates 0 to 7 variadic arguments, correct
   count reporting, and correct value retrieval by index.
 ==============================================================================*)
-procedure Test20(const ADumpSSA: Boolean=False);
+procedure Test20(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -2136,77 +2138,77 @@ begin
 
     // Test 1: Simple variadic - sum all args
     LTiger.VariadicFunc('SumAll', vtInt64)
-       .Local('sum', vtInt64)
-       .Local('i', vtInt64)
-       .Local('count', vtInt64)
-       .Assign('sum', LTiger.Int64(0))
-       .Assign('count', LTiger.VaCount())
-       .Assign('i', LTiger.Int64(0))
-       .&While(LTiger.Lt(LTiger.Get('i'), LTiger.Get('count')))
-          .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.VaArg(LTiger.Get('i'), vtInt64)))
-          .Assign('i', LTiger.Add(LTiger.Get('i'), LTiger.Int64(1)))
-       .EndWhile()
-       .Return(LTiger.Get('sum'))
+      .Local('sum', vtInt64)
+      .Local('i', vtInt64)
+      .Local('count', vtInt64)
+      .Assign('sum', LTiger.Int64(0))
+      .Assign('count', LTiger.VaCount())
+      .Assign('i', LTiger.Int64(0))
+      .&While(LTiger.Lt(LTiger.Get('i'), LTiger.Get('count')))
+        .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.VaArg(LTiger.Get('i'), vtInt64)))
+        .Assign('i', LTiger.Add(LTiger.Get('i'), LTiger.Int64(1)))
+      .EndWhile()
+      .Return(LTiger.Get('sum'))
     .EndFunc();
 
     // Test 2: Variadic with fixed param
     LTiger.VariadicFunc('SumWithMult', vtInt64)
-       .Param('multiplier', vtInt64)
-       .Local('sum', vtInt64)
-       .Local('i', vtInt64)
-       .Local('count', vtInt64)
-       .Assign('sum', LTiger.Int64(0))
-       .Assign('count', LTiger.VaCount())
-       .Assign('i', LTiger.Int64(0))
-       .&While(LTiger.Lt(LTiger.Get('i'), LTiger.Get('count')))
-          .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.VaArg(LTiger.Get('i'), vtInt64)))
-          .Assign('i', LTiger.Add(LTiger.Get('i'), LTiger.Int64(1)))
-       .EndWhile()
-       .Return(LTiger.Mul(LTiger.Get('sum'), LTiger.Get('multiplier')))
+      .Param('multiplier', vtInt64)
+      .Local('sum', vtInt64)
+      .Local('i', vtInt64)
+      .Local('count', vtInt64)
+      .Assign('sum', LTiger.Int64(0))
+      .Assign('count', LTiger.VaCount())
+      .Assign('i', LTiger.Int64(0))
+      .&While(LTiger.Lt(LTiger.Get('i'), LTiger.Get('count')))
+        .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.VaArg(LTiger.Get('i'), vtInt64)))
+        .Assign('i', LTiger.Add(LTiger.Get('i'), LTiger.Int64(1)))
+      .EndWhile()
+      .Return(LTiger.Mul(LTiger.Get('sum'), LTiger.Get('multiplier')))
     .EndFunc();
 
     // Test 3: Just returns count
     LTiger.VariadicFunc('CountArgs', vtInt64)
-       .Return(LTiger.VaCount())
+      .Return(LTiger.VaCount())
     .EndFunc();
 
     LTiger.Func('main', vtVoid, True)
-       .Local('result', vtInt64)
+      .Local('result', vtInt64)
 
-       .Call('printf', [LTiger.Str('=== Test20: Variadic Functions ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test20: Variadic Functions ===' + #10)])
 
-       .Call('printf', [LTiger.Str(#10 + 'Test 1: SumAll (sum all varargs)' + #10)])
-       .Assign('result', LTiger.Invoke('SumAll', []))
-       .Call('printf', [LTiger.Str('  SumAll() = %lld (expected: 0)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('SumAll', [LTiger.Int64(10)]))
-       .Call('printf', [LTiger.Str('  SumAll(10) = %lld (expected: 10)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('SumAll', [LTiger.Int64(1), LTiger.Int64(2), LTiger.Int64(3)]))
-       .Call('printf', [LTiger.Str('  SumAll(1, 2, 3) = %lld (expected: 6)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('SumAll', [LTiger.Int64(10), LTiger.Int64(20), LTiger.Int64(30), LTiger.Int64(40), LTiger.Int64(50)]))
-       .Call('printf', [LTiger.Str('  SumAll(10,20,30,40,50) = %lld (expected: 150)' + #10), LTiger.Get('result')])
+      .Call('printf', [LTiger.Str(#10 + 'Test 1: SumAll (sum all varargs)' + #10)])
+      .Assign('result', LTiger.Invoke('SumAll', []))
+      .Call('printf', [LTiger.Str('  SumAll() = %lld (expected: 0)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('SumAll', [LTiger.Int64(10)]))
+      .Call('printf', [LTiger.Str('  SumAll(10) = %lld (expected: 10)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('SumAll', [LTiger.Int64(1), LTiger.Int64(2), LTiger.Int64(3)]))
+      .Call('printf', [LTiger.Str('  SumAll(1, 2, 3) = %lld (expected: 6)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('SumAll', [LTiger.Int64(10), LTiger.Int64(20), LTiger.Int64(30), LTiger.Int64(40), LTiger.Int64(50)]))
+      .Call('printf', [LTiger.Str('  SumAll(10,20,30,40,50) = %lld (expected: 150)' + #10), LTiger.Get('result')])
 
-       .Call('printf', [LTiger.Str(#10 + 'Test 2: SumWithMult (fixed param + varargs)' + #10)])
-       .Assign('result', LTiger.Invoke('SumWithMult', [LTiger.Int64(2)]))
-       .Call('printf', [LTiger.Str('  SumWithMult(2) = %lld (expected: 0)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('SumWithMult', [LTiger.Int64(2), LTiger.Int64(5)]))
-       .Call('printf', [LTiger.Str('  SumWithMult(2, 5) = %lld (expected: 10)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('SumWithMult', [LTiger.Int64(3), LTiger.Int64(1), LTiger.Int64(2), LTiger.Int64(3)]))
-       .Call('printf', [LTiger.Str('  SumWithMult(3, 1,2,3) = %lld (expected: 18)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('SumWithMult', [LTiger.Int64(2), LTiger.Int64(10), LTiger.Int64(20), LTiger.Int64(30), LTiger.Int64(40)]))
-       .Call('printf', [LTiger.Str('  SumWithMult(2, 10,20,30,40) = %lld (expected: 200)' + #10), LTiger.Get('result')])
+      .Call('printf', [LTiger.Str(#10 + 'Test 2: SumWithMult (fixed param + varargs)' + #10)])
+      .Assign('result', LTiger.Invoke('SumWithMult', [LTiger.Int64(2)]))
+      .Call('printf', [LTiger.Str('  SumWithMult(2) = %lld (expected: 0)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('SumWithMult', [LTiger.Int64(2), LTiger.Int64(5)]))
+      .Call('printf', [LTiger.Str('  SumWithMult(2, 5) = %lld (expected: 10)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('SumWithMult', [LTiger.Int64(3), LTiger.Int64(1), LTiger.Int64(2), LTiger.Int64(3)]))
+      .Call('printf', [LTiger.Str('  SumWithMult(3, 1,2,3) = %lld (expected: 18)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('SumWithMult', [LTiger.Int64(2), LTiger.Int64(10), LTiger.Int64(20), LTiger.Int64(30), LTiger.Int64(40)]))
+      .Call('printf', [LTiger.Str('  SumWithMult(2, 10,20,30,40) = %lld (expected: 200)' + #10), LTiger.Get('result')])
 
-       .Call('printf', [LTiger.Str(#10 + 'Test 3: CountArgs (VaCount_ intrinsic)' + #10)])
-       .Assign('result', LTiger.Invoke('CountArgs', []))
-       .Call('printf', [LTiger.Str('  CountArgs() = %lld (expected: 0)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('CountArgs', [LTiger.Int64(1)]))
-       .Call('printf', [LTiger.Str('  CountArgs(1) = %lld (expected: 1)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('CountArgs', [LTiger.Int64(1), LTiger.Int64(2), LTiger.Int64(3), LTiger.Int64(4), LTiger.Int64(5)]))
-       .Call('printf', [LTiger.Str('  CountArgs(1,2,3,4,5) = %lld (expected: 5)' + #10), LTiger.Get('result')])
-       .Assign('result', LTiger.Invoke('CountArgs', [LTiger.Int64(1), LTiger.Int64(2), LTiger.Int64(3), LTiger.Int64(4), LTiger.Int64(5), LTiger.Int64(6), LTiger.Int64(7)]))
-       .Call('printf', [LTiger.Str('  CountArgs(1..7) = %lld (expected: 7)' + #10), LTiger.Get('result')])
+      .Call('printf', [LTiger.Str(#10 + 'Test 3: CountArgs (VaCount_ intrinsic)' + #10)])
+      .Assign('result', LTiger.Invoke('CountArgs', []))
+      .Call('printf', [LTiger.Str('  CountArgs() = %lld (expected: 0)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('CountArgs', [LTiger.Int64(1)]))
+      .Call('printf', [LTiger.Str('  CountArgs(1) = %lld (expected: 1)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('CountArgs', [LTiger.Int64(1), LTiger.Int64(2), LTiger.Int64(3), LTiger.Int64(4), LTiger.Int64(5)]))
+      .Call('printf', [LTiger.Str('  CountArgs(1,2,3,4,5) = %lld (expected: 5)' + #10), LTiger.Get('result')])
+      .Assign('result', LTiger.Invoke('CountArgs', [LTiger.Int64(1), LTiger.Int64(2), LTiger.Int64(3), LTiger.Int64(4), LTiger.Int64(5), LTiger.Int64(6), LTiger.Int64(7)]))
+      .Call('printf', [LTiger.Str('  CountArgs(1..7) = %lld (expected: 7)' + #10), LTiger.Get('result')])
 
-       .Call('printf', [LTiger.Str(#10 + 'All variadic tests complete!' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str(#10 + 'All variadic tests complete!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test20.exe'), ssConsole);
@@ -2224,7 +2226,7 @@ end;
   interop with HWND (uint64), string pointers, and UINT flags. The
   return value (button pressed) is printed to console.
 ==============================================================================*)
-procedure Test21(const ADumpSSA: Boolean=False);
+procedure Test21(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -2242,18 +2244,18 @@ begin
     LTiger.ImportDll('user32.dll', 'MessageBoxA', [vtUInt64, vtPointer, vtPointer, vtUInt32], vtInt32);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('result', vtInt32)
+      .Local('result', vtInt32)
 
-       .Call('printf', [LTiger.Str('Before MessageBoxA call...' + #10)])
-       .Assign('result', LTiger.Invoke('MessageBoxA', [
-          LTiger.Int64(0),
-          LTiger.Str('Hello!'),
-          LTiger.Str('Test'),
-          LTiger.Int64(0)
-       ]))
-       .Call('printf', [LTiger.Str('After MessageBoxA, result = %d' + #10), LTiger.Get('result')])
+      .Call('printf', [LTiger.Str('Before MessageBoxA call...' + #10)])
+      .Assign('result', LTiger.Invoke('MessageBoxA', [
+        LTiger.Int64(0),
+        LTiger.Str('Hello!'),
+        LTiger.Str('Test'),
+        LTiger.Int64(0)
+      ]))
+      .Call('printf', [LTiger.Str('After MessageBoxA, result = %d' + #10), LTiger.Get('result')])
 
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test21.exe'), ssConsole);
@@ -2271,7 +2273,7 @@ end;
   height (SM_CYSCREEN=1). Tests static linking to user32.dll alongside
   msvcrt.dll printf output.
 ==============================================================================*)
-procedure Test22(const ADumpSSA: Boolean=False);
+procedure Test22(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -2289,17 +2291,17 @@ begin
     LTiger.ImportDll('user32.dll', 'GetSystemMetrics', [vtInt32], vtInt32);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('screenWidth', vtInt32)
-       .Local('screenHeight', vtInt32)
+      .Local('screenWidth', vtInt32)
+      .Local('screenHeight', vtInt32)
 
-       .Call('printf', [LTiger.Str('Calling GetSystemMetrics...' + #10)])
-       .Assign('screenWidth', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(0)]))
-       .Call('printf', [LTiger.Str('Screen width = %d' + #10), LTiger.Get('screenWidth')])
-       .Assign('screenHeight', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(1)]))
-       .Call('printf', [LTiger.Str('Screen height = %d' + #10), LTiger.Get('screenHeight')])
+      .Call('printf', [LTiger.Str('Calling GetSystemMetrics...' + #10)])
+      .Assign('screenWidth', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(0)]))
+      .Call('printf', [LTiger.Str('Screen width = %d' + #10), LTiger.Get('screenWidth')])
+      .Assign('screenHeight', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(1)]))
+      .Call('printf', [LTiger.Str('Screen height = %d' + #10), LTiger.Get('screenHeight')])
 
-       .Call('printf', [LTiger.Str('Done!' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str('Done!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test22.exe'), ssConsole);
@@ -2319,7 +2321,7 @@ end;
   code. Tests that the PE import table handles multiple DLLs without
   any CRT or runtime dependency.
 ==============================================================================*)
-procedure Test23(const ADumpSSA: Boolean=False);
+procedure Test23(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -2338,9 +2340,9 @@ begin
     LTiger.ImportDll('user32.dll', 'GetSystemMetrics', [vtInt32], vtInt32);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('result', vtInt32)
-       .Assign('result', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(0)]))
-       .Call('Tiger_Halt', [LTiger.Get('result')])
+      .Local('result', vtInt32)
+      .Assign('result', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(0)]))
+      .Call('Tiger_Halt', [LTiger.Get('result')])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test23.exe'), ssConsole);
@@ -2359,7 +2361,7 @@ end;
   function address. Tests dynamic import resolution as an alternative
   to static PE import table entries.
 ==============================================================================*)
-procedure Test24(const ADumpSSA: Boolean=False);
+procedure Test24(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -2378,17 +2380,17 @@ begin
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('hUser32', vtPointer)
-       .Local('pFunc', vtPointer)
-       .Local('result', vtInt32)
+      .Local('hUser32', vtPointer)
+      .Local('pFunc', vtPointer)
+      .Local('result', vtInt32)
 
-       .Call('printf', [LTiger.Str('Loading user32.dll...' + #10)])
-       .Assign('hUser32', LTiger.Invoke('LoadLibraryA', [LTiger.Str('user32.dll')]))
-       .Call('printf', [LTiger.Str('hUser32 = %p' + #10), LTiger.Get('hUser32')])
-       .Assign('pFunc', LTiger.Invoke('GetProcAddress', [LTiger.Get('hUser32'), LTiger.Str('GetSystemMetrics')]))
-       .Call('printf', [LTiger.Str('GetSystemMetrics = %p' + #10), LTiger.Get('pFunc')])
-       .Call('printf', [LTiger.Str('Success! Exiting with 42' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(42)])
+      .Call('printf', [LTiger.Str('Loading user32.dll...' + #10)])
+      .Assign('hUser32', LTiger.Invoke('LoadLibraryA', [LTiger.Str('user32.dll')]))
+      .Call('printf', [LTiger.Str('hUser32 = %p' + #10), LTiger.Get('hUser32')])
+      .Assign('pFunc', LTiger.Invoke('GetProcAddress', [LTiger.Get('hUser32'), LTiger.Str('GetSystemMetrics')]))
+      .Call('printf', [LTiger.Str('GetSystemMetrics = %p' + #10), LTiger.Get('pFunc')])
+      .Call('printf', [LTiger.Str('Success! Exiting with 42' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(42)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test24.exe'), ssConsole);
@@ -2406,7 +2408,7 @@ end;
   Validates that import table generation handles three DLLs in a
   different declaration order without address resolution errors.
 ==============================================================================*)
-procedure Test25(const ADumpSSA: Boolean=False);
+procedure Test25(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -2424,13 +2426,13 @@ begin
     LTiger.ImportDll('user32.dll', 'GetSystemMetrics', [vtInt32], vtInt32);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('width', vtInt32)
+      .Local('width', vtInt32)
 
-       .Call('printf', [LTiger.Str('Calling GetSystemMetrics...' + #10)])
-       .Assign('width', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(0)]))
-       .Call('printf', [LTiger.Str('Screen width = %d' + #10), LTiger.Get('width')])
-       .Call('printf', [LTiger.Str('Success!' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str('Calling GetSystemMetrics...' + #10)])
+      .Assign('width', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(0)]))
+      .Call('printf', [LTiger.Str('Screen width = %d' + #10), LTiger.Get('width')])
+      .Call('printf', [LTiger.Str('Success!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test25.exe'), ssConsole);
@@ -2450,7 +2452,7 @@ end;
   AddLibPath, calling all three public functions. Validates the COFF .lib
   emitter, symbol resolution, and static linking pipeline.
 ==============================================================================*)
-procedure Test26(const ADumpSSA: Boolean=False);
+procedure Test26(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
@@ -2475,30 +2477,30 @@ begin
     SetExeResources(LTiger, 'Test26.lib');
 
     LTiger.Func('PrivateHelper', vtInt32, False, plC, False)
-       .Param('x', vtInt32)
-       .Param('y', vtInt32)
-       .Local('sum', vtInt32)
-       .Assign('sum', LTiger.Add(LTiger.Get('x'), LTiger.Get('y')))
-       .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.Int64(100)))
-       .Return(LTiger.Get('sum'))
+      .Param('x', vtInt32)
+      .Param('y', vtInt32)
+      .Local('sum', vtInt32)
+      .Assign('sum', LTiger.Add(LTiger.Get('x'), LTiger.Get('y')))
+      .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.Int64(100)))
+      .Return(LTiger.Get('sum'))
     .EndFunc();
 
     LTiger.Func('AddC', vtInt32, False, plC, True)
-       .Param('a', vtInt32)
-       .Param('b', vtInt32)
-       .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
     .EndFunc();
 
     LTiger.Func('MulC', vtInt32, False, plC, True)
-       .Param('a', vtInt32)
-       .Param('b', vtInt32)
-       .Return(LTiger.Mul(LTiger.Get('a'), LTiger.Get('b')))
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Mul(LTiger.Get('a'), LTiger.Get('b')))
     .EndFunc();
 
     LTiger.Func('AddCpp', vtInt32, False, plDefault, True)
-       .Param('a', vtInt32)
-       .Param('b', vtInt32)
-       .Return(LTiger.Invoke('PrivateHelper', [LTiger.Get('a'), LTiger.Get('b')]))
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Invoke('PrivateHelper', [LTiger.Get('a'), LTiger.Get('b')]))
     .EndFunc();
 
     LTiger.TargetLib(TPath.Combine(COutputPath, 'Test26.lib'));
@@ -2528,21 +2530,21 @@ begin
     LTiger.ImportLib('Test26', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('r1', vtInt32)
-       .Local('r2', vtInt32)
-       .Local('r3', vtInt32)
+      .Local('r1', vtInt32)
+      .Local('r2', vtInt32)
+      .Local('r3', vtInt32)
 
-       .Call('printf', [LTiger.Str('=== Test26: Static Linking ===' + #10)])
-       .Call('printf', [LTiger.Str(#10)])
-       .Assign('r1', LTiger.Invoke('AddC', [LTiger.Int64(3), LTiger.Int64(4)]))
-       .Call('printf', [LTiger.Str('AddC(3, 4) = %d (expect 7)' + #10), LTiger.Get('r1')])
-       .Assign('r2', LTiger.Invoke('MulC', [LTiger.Int64(5), LTiger.Int64(6)]))
-       .Call('printf', [LTiger.Str('MulC(5, 6) = %d (expect 30)' + #10), LTiger.Get('r2')])
-       .Assign('r3', LTiger.Invoke('AddCpp', [LTiger.Int64(10), LTiger.Int64(20)]))
-       .Call('printf', [LTiger.Str('AddCpp(10, 20) = %d (expect 130)' + #10), LTiger.Get('r3')])
+      .Call('printf', [LTiger.Str('=== Test26: Static Linking ===' + #10)])
+      .Call('printf', [LTiger.Str(#10)])
+      .Assign('r1', LTiger.Invoke('AddC', [LTiger.Int64(3), LTiger.Int64(4)]))
+      .Call('printf', [LTiger.Str('AddC(3, 4) = %d (expect 7)' + #10), LTiger.Get('r1')])
+      .Assign('r2', LTiger.Invoke('MulC', [LTiger.Int64(5), LTiger.Int64(6)]))
+      .Call('printf', [LTiger.Str('MulC(5, 6) = %d (expect 30)' + #10), LTiger.Get('r2')])
+      .Assign('r3', LTiger.Invoke('AddCpp', [LTiger.Int64(10), LTiger.Int64(20)]))
+      .Call('printf', [LTiger.Str('AddCpp(10, 20) = %d (expect 130)' + #10), LTiger.Get('r3')])
 
-       .Call('printf', [LTiger.Str(#10 + 'Success!' + #10)])
-       .Call('Tiger_Halt', [LTiger.Int64(0)])
+      .Call('printf', [LTiger.Str(#10 + 'Success!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     LTiger.TargetExe(TPath.Combine(COutputPath, 'Test26.exe'), ssConsole);
@@ -2560,36 +2562,36 @@ end;
   test procedure. If ADumpSSA is True, the SSA intermediate representation
   is printed after the build completes.
 ==============================================================================*)
-procedure RunTest(const ANum: Integer; const ADumpSSA: Boolean=False);
+procedure RunTest(const ANum: Integer; const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 begin
   case ANum of
-    01: Test01(ADumpSSA);
-    02: Test02(ADumpSSA);
-    03: Test03(ADumpSSA);
-    04: Test04(ADumpSSA);
-    05: Test05(ADumpSSA);
-    06: Test06(ADumpSSA);
-    07: Test07(ADumpSSA);
-    08: Test08(ADumpSSA);
-    09: Test09(ADumpSSA);
-    10: Test10(ADumpSSA);
-    11: Test11(ADumpSSA);
-    12: Test12(ADumpSSA);
-    13: Test13(ADumpSSA);
-    14: Test14(ADumpSSA);
-    15: Test15(ADumpSSA);
-    16: Test16(ADumpSSA);
-    17: Test17(ADumpSSA);
-    18: Test18(ADumpSSA);
-    19: Test19(ADumpSSA);
-    20: Test20(ADumpSSA);
-    21: Test21(ADumpSSA);
-    22: Test22(ADumpSSA);
-    23: Test23(ADumpSSA);
-    24: Test24(ADumpSSA);
-    25: Test25(ADumpSSA);
-    26: Test26(ADumpSSA);
-    27: Test03_2(ADumpSSA);
+    01: Test01(APlatform, ADumpSSA);
+    02: Test02(APlatform, ADumpSSA);
+    03: Test03(APlatform, ADumpSSA);
+    04: Test04(APlatform, ADumpSSA);
+    05: Test05(APlatform, ADumpSSA);
+    06: Test06(APlatform, ADumpSSA);
+    07: Test07(APlatform, ADumpSSA);
+    08: Test08(APlatform, ADumpSSA);
+    09: Test09(APlatform, ADumpSSA);
+    10: Test10(APlatform, ADumpSSA);
+    11: Test11(APlatform, ADumpSSA);
+    12: Test12(APlatform, ADumpSSA);
+    13: Test13(APlatform, ADumpSSA);
+    14: Test14(APlatform, ADumpSSA);
+    15: Test15(APlatform, ADumpSSA);
+    16: Test16(APlatform, ADumpSSA);
+    17: Test17(APlatform, ADumpSSA);
+    18: Test18(APlatform, ADumpSSA);
+    19: Test19(APlatform, ADumpSSA);
+    20: Test20(APlatform, ADumpSSA);
+    21: Test21(APlatform, ADumpSSA);
+    22: Test22(APlatform, ADumpSSA);
+    23: Test23(APlatform, ADumpSSA);
+    24: Test24(APlatform, ADumpSSA);
+    25: Test25(APlatform, ADumpSSA);
+    26: Test26(APlatform, ADumpSSA);
+    27: Test03_2(APlatform, ADumpSSA);
   end;
 end;
 
@@ -2601,7 +2603,8 @@ end;
 procedure RunTestbed();
 begin
   try
-    RunTest(1);
+    RunTest(1, tpLinux64);
+    //Linux_Test();
   except
     on E: Exception do
     begin

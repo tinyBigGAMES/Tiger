@@ -27,9 +27,11 @@ uses
   Tiger.Builders,
   Tiger.Backend,
   Tiger.Backend.Win64,
+  Tiger.Backend.Linux64,
   Tiger.IR,
   Tiger.Runtime,
-  Tiger.Runtime.Win64;
+  Tiger.Runtime.Win64,
+  Tiger.Runtime.Linux64;
 
 //==============================================================================
 // TYPE ALIASES
@@ -338,6 +340,23 @@ const
 
 type
   //============================================================================
+  // TTigerPlatform — Target Platform
+  //============================================================================
+
+  /// <summary>
+  ///   Target platform for code generation.
+  /// </summary>
+  /// <remarks>
+  ///   Selects the binary format, calling convention, and runtime stubs
+  ///   used during compilation. The default is <c>tpWin64</c> for backward
+  ///   compatibility.
+  /// </remarks>
+  TTigerPlatform = (
+    tpWin64,    // Windows x86-64 (PE/COFF, Microsoft x64 ABI)
+    tpLinux64   // Linux x86-64 (ELF, System V AMD64 ABI)
+  );
+
+  //============================================================================
   // TTiger — Unified Compiler Facade
   //============================================================================
 
@@ -453,6 +472,7 @@ type
   private
     FErrors: TErrors;
     FIR: TTigerIR;
+    FPlatform: TTigerPlatform;
     FBackend: TTigerBackend;
     FRuntime: TTigerRuntime;
     FStatus: TCallback<TStatusCallback>;
@@ -480,7 +500,7 @@ type
     ///   instance is ready to receive type definitions, imports, and
     ///   function declarations immediately after construction.
     /// </remarks>
-    constructor Create(); override;
+    constructor Create(const APlatform: TTigerPlatform = tpWin64); reintroduce;
 
     /// <summary>
     ///   Destroy the compiler instance and release all owned resources.
@@ -3118,6 +3138,25 @@ type
     function VaArg(const AIndex: TTigerExpr; const AType: TTigerValueType): TTigerExpr;
 
     //==========================================================================
+    // Syscall — Linux Syscall Intrinsics
+    //==========================================================================
+
+    /// <summary>
+    ///   Emit a Linux syscall instruction that returns a value.
+    /// </summary>
+    /// <param name="ANr">Syscall number (e.g., 60 for exit, 1 for write).</param>
+    /// <param name="AArgs">Up to 6 arguments loaded into RDI, RSI, RDX, R10, R8, R9.</param>
+    /// <returns>Expression handle for the syscall return value (RAX).</returns>
+    function Syscall(const ANr: Integer; const AArgs: array of TTigerExpr): TTigerExpr;
+
+    /// <summary>
+    ///   Emit a Linux syscall instruction as a statement (discard return value).
+    /// </summary>
+    /// <param name="ANr">Syscall number (e.g., 60 for exit, 1 for write).</param>
+    /// <param name="AArgs">Up to 6 arguments loaded into RDI, RSI, RDX, R10, R8, R9.</param>
+    function SyscallStmt(const ANr: Integer; const AArgs: array of TTigerExpr): TTiger;
+
+    //==========================================================================
     // Advanced — Direct Access to Internal Objects
     //==========================================================================
 
@@ -3151,6 +3190,14 @@ type
     /// </remarks>
     /// <seealso cref="GetIR"/>
     /// <seealso cref="GetErrors"/>
+    /// <summary>
+    ///   Get the target platform for this compiler instance.
+    /// </summary>
+    /// <returns>
+    ///   The <see cref="TTigerPlatform"/> value selected at construction.
+    /// </returns>
+    function GetPlatform(): TTigerPlatform;
+
     function GetBackend(): TTigerBackend;
 
     /// <summary>
@@ -3296,9 +3343,11 @@ implementation
 // TTiger
 //==============================================================================
 
-constructor TTiger.Create();
+constructor TTiger.Create(const APlatform: TTigerPlatform);
 begin
-  inherited;
+  inherited Create();
+
+  FPlatform := APlatform;
 
   FErrors := TErrors.Create();
   FErrors.SetMaxErrors(100);
@@ -3306,10 +3355,21 @@ begin
   FIR := TTigerIR.Create();
   FIR.SetErrors(FErrors);
 
-  FBackend := TTigerWin64Backend.Create();
-  FBackend.SetErrors(FErrors);
+  // Platform-specific backend and runtime
+  case FPlatform of
+    tpWin64:
+    begin
+      FBackend := TTigerWin64Backend.Create();
+      FRuntime := TTigerWin64Runtime.Create();
+    end;
+    tpLinux64:
+    begin
+      FBackend := TTigerLinux64Backend.Create();
+      FRuntime := TTigerLinux64Runtime.Create();
+    end;
+  end;
 
-  FRuntime := TTigerWin64Runtime.Create();
+  FBackend.SetErrors(FErrors);
 
   FStatus := Default(TCallback<TStatusCallback>);
 end;
@@ -3454,6 +3514,11 @@ function TTiger.Build(const AAutoRun: Boolean; AExitCode: PCardinal): Boolean;
 var
   LExitCode: Cardinal;
 begin
+  case FPlatform of
+    tpWin64:   FBackend.Status('Platform: Win64');
+    tpLinux64: FBackend.Status('Platform: Linux64');
+  end;
+
   // Strip any previously-injected runtime, then mark user code boundary
   FIR.RestoreSnapshot();
   FIR.SaveSnapshot();
@@ -4612,12 +4677,34 @@ begin
 end;
 
 //------------------------------------------------------------------------------
+// Syscall — Linux Syscall Intrinsics
+//------------------------------------------------------------------------------
+
+function TTiger.Syscall(const ANr: Integer;
+  const AArgs: array of TTigerExpr): TTigerExpr;
+begin
+  Result := FIR.Syscall(ANr, AArgs);
+end;
+
+function TTiger.SyscallStmt(const ANr: Integer;
+  const AArgs: array of TTigerExpr): TTiger;
+begin
+  FIR.SyscallStmt(ANr, AArgs);
+  Result := Self;
+end;
+
+//------------------------------------------------------------------------------
 // Advanced — Direct Access
 //------------------------------------------------------------------------------
 
 function TTiger.GetIR(): TTigerIR;
 begin
   Result := FIR;
+end;
+
+function TTiger.GetPlatform(): TTigerPlatform;
+begin
+  Result := FPlatform;
 end;
 
 function TTiger.GetBackend(): TTigerBackend;

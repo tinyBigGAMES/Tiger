@@ -110,8 +110,10 @@
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
         <DCCReference Include="UTestbed.pas"/>
+        <DCCReference Include="..\Tiger.ABI.Linux64.pas"/>
         <DCCReference Include="..\Tiger.ABI.pas"/>
         <DCCReference Include="..\Tiger.ABI.Win64.pas"/>
+        <DCCReference Include="..\Tiger.Backend.Linux64.pas"/>
         <DCCReference Include="..\Tiger.Backend.pas"/>
         <DCCReference Include="..\Tiger.Backend.Win64.pas"/>
         <DCCReference Include="..\Tiger.Backend.X64.pas"/>
@@ -123,6 +125,7 @@
         <DCCReference Include="..\Tiger.Linker.pas"/>
         <DCCReference Include="..\Tiger.pas"/>
         <DCCReference Include="..\Tiger.Resources.pas"/>
+        <DCCReference Include="..\Tiger.Runtime.Linux64.pas"/>
         <DCCReference Include="..\Tiger.Runtime.pas"/>
         <DCCReference Include="..\Tiger.Runtime.Win64.pas"/>
         <DCCReference Include="..\Tiger.SSA.pas"/>

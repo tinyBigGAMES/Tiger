@@ -129,7 +129,8 @@ type
       ekGetExceptionMsg,   // getexceptionmessage()
       ekSetLiteral,        // {1, 3, 5..10}
       ekVaCount,           // VaCount()
-      ekVaArgAt            // VaArg(index, type)
+      ekVaArgAt,           // VaArg(index, type)
+      ekSyscall            // Linux syscall(nr, args...)
     );
 
     //--------------------------------------------------------------------------
@@ -212,6 +213,8 @@ type
       // For ekVaArgAt
       VaArgIndex: Integer;       // Expression index for the arg index
       VaArgType: TTigerValueType;  // Type to read as
+      // For ekSyscall
+      SyscallNr: Integer;          // Linux syscall number (e.g., 60 = exit)
     end;
 
     //--------------------------------------------------------------------------
@@ -241,7 +244,8 @@ type
       skFinallyBegin,
       skTryEnd,
       skRaise,
-      skRaiseCode
+      skRaiseCode,
+      skSyscall            // Linux syscall as statement (discard result)
     );
 
     //--------------------------------------------------------------------------
@@ -262,6 +266,7 @@ type
       IndirectTarget: Integer;        // Expression index for indirect calls
       RaiseMsg: Integer;              // Expression index for raise message
       RaiseCode: Integer;             // Expression index for raise code (skRaiseCode only)
+      SyscallNr: Integer;             // Linux syscall number (for skSyscall)
     end;
 
     //--------------------------------------------------------------------------
@@ -815,6 +820,12 @@ type
     //--------------------------------------------------------------------------
     function VaCount(): TTigerIRExpr;
     function VaArg(const AIndex: TTigerIRExpr; const AType: TTigerValueType): TTigerIRExpr;
+
+    //--------------------------------------------------------------------------
+    // Expressions - Syscall Intrinsics (Linux)
+    //--------------------------------------------------------------------------
+    function Syscall(const ANr: Integer; const AArgs: array of TTigerIRExpr): TTigerIRExpr;
+    function SyscallStmt(const ANr: Integer; const AArgs: array of TTigerIRExpr): TTigerIR;
 
     //--------------------------------------------------------------------------
     // Emit to Backend
@@ -4266,6 +4277,50 @@ begin
   LNode.VaArgIndex := AIndex.Index;
   LNode.VaArgType := AType;
   Result := AddExpr(LNode);
+end;
+
+//==============================================================================
+// TTigerIR - Expressions: Syscall Intrinsics (Linux)
+//==============================================================================
+
+function TTigerIR.Syscall(const ANr: Integer;
+  const AArgs: array of TTigerIRExpr): TTigerIRExpr;
+var
+  LNode: TIRExprNode;
+  LI: Integer;
+begin
+  LNode := Default(TIRExprNode);
+  LNode.Kind := ekSyscall;
+  LNode.ResultType := TTigerTypeRef.FromPrimitive(vtInt64);
+  LNode.SyscallNr := ANr;
+
+  SetLength(LNode.CallArgs, Length(AArgs));
+  for LI := 0 to System.High(AArgs) do
+    LNode.CallArgs[LI] := AArgs[LI].Index;
+
+  Result := AddExpr(LNode);
+end;
+
+function TTigerIR.SyscallStmt(const ANr: Integer;
+  const AArgs: array of TTigerIRExpr): TTigerIR;
+var
+  LStmt: TIRStmt;
+  LFunc: TIRFunc;
+  LI: Integer;
+begin
+  LFunc := GetCurrentFunc();
+
+  LStmt := Default(TIRStmt);
+  LStmt.Kind := skSyscall;
+  LStmt.SyscallNr := ANr;
+
+  SetLength(LStmt.CallArgs, Length(AArgs));
+  for LI := 0 to System.High(AArgs) do
+    LStmt.CallArgs[LI] := AArgs[LI].Index;
+
+  LFunc.Stmts.Add(LStmt);
+  FFunctions[FCurrentFunc] := LFunc;
+  Result := Self;
 end;
 
 //==============================================================================
