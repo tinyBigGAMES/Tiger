@@ -18,9 +18,9 @@ try
   LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
   LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
-  LTiger.BeginFunc('main', vtVoid, True)
+  LTiger.Func('main', vtVoid, True)
     .Call('printf', [LTiger.Str('Hello, World!'#10)])
-    .Call('ExitProcess', [LTiger.Int(0)])
+    .Call('ExitProcess', [LTiger.Int64(0)])
   .EndFunc();
 
   LTiger.TargetExe('output\hello.exe', ssConsole);
@@ -36,7 +36,6 @@ Tiger is designed for Delphi developers who need to generate native machine code
 
 - **Custom language compilers** — Build your own programming language and target real Windows executables. Tiger handles the backend so you can focus on parsing and semantics.
 - **Scripting engines with native compilation** — Compile user scripts or DSLs down to machine code instead of interpreting them, getting native performance with no runtime overhead.
-- **JIT compilation** — Generate and execute native code on the fly for performance-critical paths in your application (run-from-memory support coming in v0.2.0).
 - **Game scripting systems** — Let modders or designers write game logic in a custom language that compiles to native code through Tiger.
 - **Rule engines and formula evaluators** — Compile business rules, mathematical formulas, or filter expressions into native functions that execute at full CPU speed.
 - **Plugin and extension systems** — Generate native DLLs programmatically so your application can produce its own loadable plugins.
@@ -59,7 +58,7 @@ Tiger requires only a single `uses Tiger;` clause. There are no external depende
 - 🔢 **Set types** — Pascal-style sets with membership, union, intersection, and difference operations
 - 🧠 **SSA optimizer** — Constant folding, copy propagation, common subexpression elimination, dead code elimination
 - ⚠️ **Exception handling** — try/except/finally with Windows SEH and hardware exception support
-- 🔌 **Variadic functions** — Native Tiger varargs with `VaCount_` and `VaArgAt_` intrinsics
+- 🔌 **Variadic functions** — Native Tiger varargs with `VaCount` and `VaArg` intrinsics
 - 🔄 **Function overloading** — Multiple functions with the same name resolved by parameter signature
 - 🏷️ **Version info** — Embed metadata and icons in executables
 - 📝 **Managed strings** — Reference-counted string types with concatenation and lifecycle management
@@ -98,14 +97,14 @@ begin
        .EndRecord();
 
     // 4. Write functions using the fluent API
-    LTiger.BeginFunc('main', vtVoid, True)
+    LTiger.Func('main', vtVoid, True)
        .Local('pt', 'TPoint')
-       .AssignField('pt', 'X', LTiger.Int(10))
-       .AssignField('pt', 'Y', LTiger.Int(20))
+       .AssignField('pt', 'X', LTiger.Int64(10))
+       .AssignField('pt', 'Y', LTiger.Int64(20))
        .Call('printf', [LTiger.Str('Point: (%d, %d)'#10),
-         LTiger.FieldExpr(LTiger.Var_('pt'), 'X'),
-         LTiger.FieldExpr(LTiger.Var_('pt'), 'Y')])
-       .Call('ExitProcess', [LTiger.Int(0)])
+         LTiger.GetField(LTiger.Get('pt'), 'X'),
+         LTiger.GetField(LTiger.Get('pt'), 'Y')])
+       .Call('ExitProcess', [LTiger.Int64(0)])
     .EndFunc();
 
     // 5. Set the target and build
@@ -184,13 +183,13 @@ For functions that may not be available on all systems, or when you need to choo
 LTiger.ImportDll('kernel32.dll', 'LoadLibraryA', [vtPointer], vtPointer);
 LTiger.ImportDll('kernel32.dll', 'GetProcAddress', [vtPointer, vtPointer], vtPointer);
 
-LTiger.BeginFunc('main', vtVoid, True)
+LTiger.Func('main', vtVoid, True)
    .Local('hUser32', vtPointer)
    .Local('pFunc', vtPointer)
-   .Assign('hUser32', LTiger.CallExpr('LoadLibraryA', [LTiger.Str('user32.dll')]))
-   .Assign('pFunc', LTiger.CallExpr('GetProcAddress',
-     [LTiger.Var_('hUser32'), LTiger.Str('GetSystemMetrics')]))
-   .Call('ExitProcess', [LTiger.Int(42)])
+   .Assign('hUser32', LTiger.Invoke('LoadLibraryA', [LTiger.Str('user32.dll')]))
+   .Assign('pFunc', LTiger.Invoke('GetProcAddress',
+     [LTiger.Get('hUser32'), LTiger.Str('GetSystemMetrics')]))
+   .Call('ExitProcess', [LTiger.Int64(42)])
 .EndFunc();
 ```
 
@@ -204,16 +203,16 @@ Compile functions into a `.lib` file by setting the target to `TargetLib`. Funct
 
 ```delphi
 // Build a .lib with exported functions
-LTiger.BeginFunc('AddC', vtInt32, False, plC, True)
+LTiger.Func('AddC', vtInt32, False, plC, True)
    .Param('a', vtInt32)
    .Param('b', vtInt32)
-   .Return(LTiger.Add(LTiger.Var_('a'), LTiger.Var_('b')))
+   .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
 .EndFunc();
 
-LTiger.BeginFunc('MulC', vtInt32, False, plC, True)
+LTiger.Func('MulC', vtInt32, False, plC, True)
    .Param('a', vtInt32)
    .Param('b', vtInt32)
-   .Return(LTiger.Mul(LTiger.Var_('a'), LTiger.Var_('b')))
+   .Return(LTiger.Mul(LTiger.Get('a'), LTiger.Get('b')))
 .EndFunc();
 
 LTiger.TargetLib('output\MyLib.lib');
@@ -229,11 +228,11 @@ LTiger.ImportLib('MyLib', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
 LTiger.ImportLib('MyLib', 'MulC', [vtInt32, vtInt32], vtInt32, False, plC);
 LTiger.AddLibPath('output');
 
-LTiger.BeginFunc('main', vtVoid, True)
+LTiger.Func('main', vtVoid, True)
    .Local('r1', vtInt32)
-   .Assign('r1', LTiger.CallExpr('AddC', [LTiger.Int(3), LTiger.Int(4)]))
-   .Call('printf', [LTiger.Str('AddC(3, 4) = %d'#10), LTiger.Var_('r1')])
-   .Call('ExitProcess', [LTiger.Int(0)])
+   .Assign('r1', LTiger.Invoke('AddC', [LTiger.Int64(3), LTiger.Int64(4)]))
+   .Call('printf', [LTiger.Str('AddC(3, 4) = %d'#10), LTiger.Get('r1')])
+   .Call('ExitProcess', [LTiger.Int64(0)])
 .EndFunc();
 ```
 
@@ -244,10 +243,10 @@ Tiger programs typically use `printf` from `msvcrt.dll` for formatted output. Im
 ```delphi
 LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
-LTiger.BeginFunc('main', vtVoid, True)
+LTiger.Func('main', vtVoid, True)
    .Call('printf', [LTiger.Str('Hello from Tiger!'#10)])
    .Call('printf', [LTiger.Str('Integer: %d'#10), LTiger.Int32(42)])
-   .Call('Tiger_Halt', [LTiger.Int(0)])
+   .Call('Tiger_Halt', [LTiger.Int64(0)])
 .EndFunc();
 ```
 
@@ -261,35 +260,34 @@ All computation in Tiger is expressed through typed expression handles (`TTigerE
 |--------|-------------|
 | `Str(value)` | ANSI string literal |
 | `WStr(value)` | Wide string literal |
-| `Int(value)` | 64-bit integer |
+| `Int64(value)` | 64-bit integer |
 | `Int32(value)` | 32-bit integer |
-| `Int64_(value)` | 64-bit integer (explicit) |
-| `Flt(value)` | 64-bit float |
+| `Float64(value)` | 64-bit float |
 | `Bool(value)` | Boolean |
-| `Nil_()` | Null pointer |
+| `Null()` | Null pointer |
 
 ### Arithmetic and Comparison
 
-All arithmetic operates on 64-bit values. Integer operations produce `Int64` results; floating-point operations produce `Float64`. Comparison operators return an integer value of 1 (true) or 0 (false), suitable for use with `IfBegin`, `WhileBegin`, and other control flow constructs.
+All arithmetic operates on 64-bit values. Integer operations produce `Int64` results; floating-point operations produce `Float64`. Comparison operators return an integer value of 1 (true) or 0 (false), suitable for use with `&If`, `&While`, and other control flow constructs.
 
 | Method | Description |
 |--------|-------------|
 | `Add(a, b)` | Addition |
 | `Sub(a, b)` | Subtraction |
 | `Mul(a, b)` | Multiplication |
-| `Div_(a, b)` | Integer division |
-| `Mod_(a, b)` | Modulo |
+| `IDiv(a, b)` | Integer division |
+| `IMod(a, b)` | Modulo |
 | `Neg(a)` | Negation |
-| `CmpEq(a, b)` | Equal |
-| `CmpNe(a, b)` | Not equal |
-| `CmpLt(a, b)` | Less than |
-| `CmpLe(a, b)` | Less or equal |
-| `CmpGt(a, b)` | Greater than |
-| `CmpGe(a, b)` | Greater or equal |
+| `Eq(a, b)` | Equal |
+| `Ne(a, b)` | Not equal |
+| `Lt(a, b)` | Less than |
+| `Le(a, b)` | Less or equal |
+| `Gt(a, b)` | Greater than |
+| `Ge(a, b)` | Greater or equal |
 
 ### Bitwise and Logical
 
-Bitwise operations work on the raw bit patterns of integer values. Logical operators (`And_`, `Or_`, `Not_`) implement short-circuit evaluation — the second operand is not evaluated if the first operand determines the result.
+Bitwise operations work on the raw bit patterns of integer values. Logical operators (`LogAnd`, `LogOr`, `LogNot`) implement short-circuit evaluation — the second operand is not evaluated if the first operand determines the result.
 
 | Method | Description |
 |--------|-------------|
@@ -297,15 +295,15 @@ Bitwise operations work on the raw bit patterns of integer values. Logical opera
 | `BitOr(a, b)` | Bitwise OR |
 | `BitXor(a, b)` | Bitwise XOR |
 | `BitNot(a)` | Bitwise NOT |
-| `Shl_(a, b)` | Shift left |
-| `Shr_(a, b)` | Shift right |
-| `And_(a, b)` | Logical AND (short-circuit) |
-| `Or_(a, b)` | Logical OR (short-circuit) |
-| `Not_(a)` | Logical NOT |
+| `&Shl(a, b)` | Shift left |
+| `&Shr(a, b)` | Shift right |
+| `LogAnd(a, b)` | Logical AND (short-circuit) |
+| `LogOr(a, b)` | Logical OR (short-circuit) |
+| `LogNot(a)` | Logical NOT |
 
 ## 📦 Type Definitions
 
-Tiger includes a complete type system for structured data: records with C ABI layout, unions, enumerations, arrays, sets, and pointers. Types are defined before any functions that use them, and their memory layout is computed at definition time so that `SizeOf_`, `AlignOf_`, and field offsets are available as compile-time constants.
+Tiger includes a complete type system for structured data: records with C ABI layout, unions, enumerations, arrays, sets, and pointers. Types are defined before any functions that use them, and their memory layout is computed at definition time so that `&SizeOf`, `AlignOf`, and field offsets are available as compile-time constants.
 
 ### Records
 
@@ -428,7 +426,7 @@ LTiger.DefineRecord('TFlags')
 
 ### Enumerations
 
-Enumerations define named integer constants. Values can auto-increment from zero or be set explicitly. Enum values can be used anywhere an integer expression is expected, and the intrinsics `Ord_`, `Succ_`, `Pred_`, `Low_`, and `High_` all work with enum types.
+Enumerations define named integer constants. Values can auto-increment from zero or be set explicitly. Enum values can be used anywhere an integer expression is expected, and the intrinsics `Ord`, `Succ`, `Pred`, `Low`, and `High` all work with enum types.
 
 ```delphi
 // Auto-increment: Red=0, Green=1, Blue=2
@@ -473,15 +471,15 @@ LTiger.DefineDynArray('TDynInts', vtInt32);
 
 ### Array Access
 
-Use `IndexExpr` to read or write individual elements. For fixed arrays with non-zero lower bounds, Tiger automatically adjusts the index calculation.
+Use `GetIndex` to read or write individual elements. For fixed arrays with non-zero lower bounds, Tiger automatically adjusts the index calculation.
 
 ```delphi
 // Write to array element
-.AssignToExpr(LTiger.IndexExpr(LTiger.Var_('arr'), LTiger.Int(0)), LTiger.Int(100))
+.AssignTo(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(0)), LTiger.Int64(100))
 
 // Read from array element
 .Call('printf', [LTiger.Str('arr[0] = %d'#10),
-  LTiger.IndexExpr(LTiger.Var_('arr'), LTiger.Int(0))])
+  LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(0))])
 ```
 
 ## 🔢 Sets
@@ -494,7 +492,7 @@ LTiger.DefineSet('TMediumSet', 0, 31);
 LTiger.DefineSet('TLargeSet', 0, 63);
 LTiger.DefineSet('TOffsetSet', 100, 163);
 
-LTiger.BeginFunc('main', vtVoid, True)
+LTiger.Func('main', vtVoid, True)
    .Local('s1', 'TSmallSet')
    .Local('s2', 'TSmallSet')
    .Local('s3', 'TSmallSet')
@@ -506,28 +504,28 @@ LTiger.BeginFunc('main', vtVoid, True)
    .Assign('s2', LTiger.EmptySet('TSmallSet'))
 
    // Membership test
-   .IfBegin(LTiger.SetIn(LTiger.Int(1), LTiger.Var_('s1')))
+   .&If(LTiger.SetIn(LTiger.Int64(1), LTiger.Get('s1')))
       .Call('printf', [LTiger.Str('1 in s1: true'#10)])
-   .ElseBegin()
+   .&Else()
       .Call('printf', [LTiger.Str('1 in s1: false'#10)])
-   .IfEnd()
+   .EndIf()
 
    // Union
    .Assign('s2', LTiger.SetLit('TSmallSet', [2, 4]))
-   .Assign('s3', LTiger.SetUnion(LTiger.Var_('s1'), LTiger.Var_('s2')))
+   .Assign('s3', LTiger.SetUnion(LTiger.Get('s1'), LTiger.Get('s2')))
 
    // Intersection
-   .Assign('s3', LTiger.SetInter(LTiger.Var_('s1'), LTiger.Var_('s2')))
+   .Assign('s3', LTiger.SetInter(LTiger.Get('s1'), LTiger.Get('s2')))
 
    // Difference
-   .Assign('s3', LTiger.SetDiff(LTiger.Var_('s1'), LTiger.Var_('s2')))
+   .Assign('s3', LTiger.SetDiff(LTiger.Get('s1'), LTiger.Get('s2')))
 
    // Equality
-   .IfBegin(LTiger.SetEq(LTiger.Var_('s1'), LTiger.Var_('s2')))
+   .&If(LTiger.SetEq(LTiger.Get('s1'), LTiger.Get('s2')))
       .Call('printf', [LTiger.Str('s1 = s2'#10)])
-   .IfEnd()
+   .EndIf()
 
-   .Call('Tiger_Halt', [LTiger.Int(0)])
+   .Call('Tiger_Halt', [LTiger.Int64(0)])
 .EndFunc();
 ```
 
@@ -553,29 +551,29 @@ Tiger supports the standard structured control flow constructs: `if/else`, `whil
 
 ```delphi
 // If/Else
-.IfBegin(LTiger.CmpGt(LTiger.Var_('x'), LTiger.Int(0)))
+.&If(LTiger.Gt(LTiger.Get('x'), LTiger.Int64(0)))
    .Call('printf', [LTiger.Str('positive'#10)])
-.ElseBegin()
+.&Else()
    .Call('printf', [LTiger.Str('non-positive'#10)])
-.IfEnd()
+.EndIf()
 
 // While loop
-.Assign('n', LTiger.Int(5))
-.Assign('result', LTiger.Int(1))
-.WhileBegin(LTiger.CmpGt(LTiger.Var_('n'), LTiger.Int(1)))
-   .Assign('result', LTiger.Mul(LTiger.Var_('result'), LTiger.Var_('n')))
-   .Assign('n', LTiger.Sub(LTiger.Var_('n'), LTiger.Int(1)))
-.WhileEnd()
+.Assign('n', LTiger.Int64(5))
+.Assign('result', LTiger.Int64(1))
+.&While(LTiger.Gt(LTiger.Get('n'), LTiger.Int64(1)))
+   .Assign('result', LTiger.Mul(LTiger.Get('result'), LTiger.Get('n')))
+   .Assign('n', LTiger.Sub(LTiger.Get('n'), LTiger.Int64(1)))
+.EndWhile()
 
 // For loop (ascending)
-.ForBegin('i', LTiger.Int(0), LTiger.Int(9))
-   .Call('printf', [LTiger.Str('%d '#0), LTiger.Var_('i')])
-.ForEnd()
+.&For('i', LTiger.Int64(0), LTiger.Int64(9))
+   .Call('printf', [LTiger.Str('%d '#0), LTiger.Get('i')])
+.EndFor()
 
 // Repeat/Until (post-test loop)
-.RepeatBegin()
-   .Assign('x', LTiger.Sub(LTiger.Var_('x'), LTiger.Int(1)))
-.RepeatEnd(LTiger.CmpEq(LTiger.Var_('x'), LTiger.Int(0)))
+.&Repeat()
+   .Assign('x', LTiger.Sub(LTiger.Get('x'), LTiger.Int64(1)))
+.Until(LTiger.Eq(LTiger.Get('x'), LTiger.Int64(0)))
 ```
 
 ### Case Statement
@@ -584,53 +582,53 @@ Case statements dispatch on an integer expression, branching to the first matchi
 
 ```delphi
 .Local('day', vtInt64)
-.Assign('day', LTiger.Int(1))
-.CaseBegin(LTiger.Var_('day'))
+.Assign('day', LTiger.Int64(1))
+.&Case(LTiger.Get('day'))
    .CaseOf([1, 2, 3, 4, 5])
       .Call('printf', [LTiger.Str('Weekday'#10)])
    .CaseOf([6, 7])
       .Call('printf', [LTiger.Str('Weekend'#10)])
    .CaseElse()
       .Call('printf', [LTiger.Str('Unknown'#10)])
-.CaseEnd()
+.EndCase()
 ```
 
 ## ⚠️ Exception Handling
 
-Tiger implements structured exception handling using Windows SEH (Structured Exception Handling). Both software exceptions raised by your code via `Raise_` and hardware exceptions generated by the CPU (such as division by zero or access violations) are caught by `try/except` blocks. The `try/finally` construct guarantees cleanup code runs regardless of whether an exception occurred.
+Tiger implements structured exception handling using Windows SEH (Structured Exception Handling). Both software exceptions raised by your code via `&Raise` and hardware exceptions generated by the CPU (such as division by zero or access violations) are caught by `try/except` blocks. The `try/finally` construct guarantees cleanup code runs regardless of whether an exception occurred.
 
 Under the hood, Tiger generates `RUNTIME_FUNCTION` entries, `UNWIND_INFO` structures, and `SCOPE_TABLE` arrays that integrate with the Windows exception dispatcher. The `__C_specific_handler` from `vcruntime140.dll` is imported automatically when any function uses exception scopes.
 
 ```delphi
 // try/finally — finally block always executes
-.TryBegin()
+.&Try()
    .Call('printf', [LTiger.Str('Inside try block'#10)])
-.FinallyBegin()
+.&Finally()
    .Call('printf', [LTiger.Str('Inside finally block'#10)])
-.TryEnd()
+.EndTry()
 
 // try/except — catch software exception
-.TryBegin()
+.&Try()
    .Call('printf', [LTiger.Str('About to raise...'#10)])
-   .Raise_(LTiger.Str('Test exception!'))
-.ExceptBegin()
+   .&Raise(LTiger.Str('Test exception!'))
+.Except()
    .Call('printf', [LTiger.Str('Caught exception!'#10)])
-.TryEnd()
+.EndTry()
 
 // try/except — catch hardware exception (div by zero)
-.Assign('divisor', LTiger.Int(0))
-.TryBegin()
-   .Assign('result', LTiger.Div_(LTiger.Int(100), LTiger.Var_('divisor')))
-.ExceptBegin()
+.Assign('divisor', LTiger.Int64(0))
+.&Try()
+   .Assign('result', LTiger.IDiv(LTiger.Int64(100), LTiger.Get('divisor')))
+.Except()
    .Call('printf', [LTiger.Str('Caught division by zero!'#10)])
-.TryEnd()
+.EndTry()
 ```
 
 ### Raising Exceptions
 
 | Method | Description |
 |--------|-------------|
-| `Raise_(msg)` | Raise with message |
+| `&Raise(msg)` | Raise with message |
 | `RaiseCode(code, msg)` | Raise with error code and message |
 
 ### Exception Intrinsics
@@ -639,8 +637,8 @@ Use these inside an `except` block to retrieve information about the caught exce
 
 | Method | Description |
 |--------|-------------|
-| `GetExceptionCode()` | Current exception code |
-| `GetExceptionMessage()` | Current exception message |
+| `ExcCode()` | Current exception code |
+| `ExcMsg()` | Current exception message |
 
 ## 🔌 Variadic Functions
 
@@ -654,49 +652,49 @@ LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
 ### Native Tiger Varargs
 
-Define Tiger-native variadic functions using `BeginVariadicFunc`. Unlike C varargs which are untyped, Tiger varargs carry a hidden count so the callee always knows how many arguments were passed. Access arguments with `VaCount_` (argument count) and `VaArgAt_` (indexed access with explicit type).
+Define Tiger-native variadic functions using `VariadicFunc`. Unlike C varargs which are untyped, Tiger varargs carry a hidden count so the callee always knows how many arguments were passed. Access arguments with `VaCount` (argument count) and `VaArg` (indexed access with explicit type).
 
 ```delphi
 // Sum all variadic arguments
-LTiger.BeginVariadicFunc('SumAll', vtInt64)
+LTiger.VariadicFunc('SumAll', vtInt64)
    .Local('sum', vtInt64)
    .Local('i', vtInt64)
    .Local('count', vtInt64)
-   .Assign('sum', LTiger.Int(0))
-   .Assign('count', LTiger.VaCount_())
-   .Assign('i', LTiger.Int(0))
-   .WhileBegin(LTiger.CmpLt(LTiger.Var_('i'), LTiger.Var_('count')))
-      .Assign('sum', LTiger.Add(LTiger.Var_('sum'),
-        LTiger.VaArgAt_(LTiger.Var_('i'), vtInt64)))
-      .Assign('i', LTiger.Add(LTiger.Var_('i'), LTiger.Int(1)))
-   .WhileEnd()
-   .Return(LTiger.Var_('sum'))
+   .Assign('sum', LTiger.Int64(0))
+   .Assign('count', LTiger.VaCount())
+   .Assign('i', LTiger.Int64(0))
+   .&While(LTiger.Lt(LTiger.Get('i'), LTiger.Get('count')))
+      .Assign('sum', LTiger.Add(LTiger.Get('sum'),
+        LTiger.VaArg(LTiger.Get('i'), vtInt64)))
+      .Assign('i', LTiger.Add(LTiger.Get('i'), LTiger.Int64(1)))
+   .EndWhile()
+   .Return(LTiger.Get('sum'))
 .EndFunc();
 
 // Call with any number of arguments
-.Assign('result', LTiger.CallExpr('SumAll', [LTiger.Int(1), LTiger.Int(2), LTiger.Int(3)]))
+.Assign('result', LTiger.Invoke('SumAll', [LTiger.Int64(1), LTiger.Int64(2), LTiger.Int64(3)]))
 // result = 6
 ```
 
 ### Variadic with Fixed Parameters
 
-Variadic functions can also declare fixed (named) parameters before the variadic portion. The fixed parameters are accessed by name as usual; `VaCount_` and `VaArgAt_` operate only on the extra arguments beyond the declared parameters.
+Variadic functions can also declare fixed (named) parameters before the variadic portion. The fixed parameters are accessed by name as usual; `VaCount` and `VaArg` operate only on the extra arguments beyond the declared parameters.
 
 ```delphi
-LTiger.BeginVariadicFunc('SumWithMult', vtInt64)
+LTiger.VariadicFunc('SumWithMult', vtInt64)
    .Param('multiplier', vtInt64)
    .Local('sum', vtInt64)
    .Local('i', vtInt64)
    .Local('count', vtInt64)
-   .Assign('sum', LTiger.Int(0))
-   .Assign('count', LTiger.VaCount_())
-   .Assign('i', LTiger.Int(0))
-   .WhileBegin(LTiger.CmpLt(LTiger.Var_('i'), LTiger.Var_('count')))
-      .Assign('sum', LTiger.Add(LTiger.Var_('sum'),
-        LTiger.VaArgAt_(LTiger.Var_('i'), vtInt64)))
-      .Assign('i', LTiger.Add(LTiger.Var_('i'), LTiger.Int(1)))
-   .WhileEnd()
-   .Return(LTiger.Mul(LTiger.Var_('sum'), LTiger.Var_('multiplier')))
+   .Assign('sum', LTiger.Int64(0))
+   .Assign('count', LTiger.VaCount())
+   .Assign('i', LTiger.Int64(0))
+   .&While(LTiger.Lt(LTiger.Get('i'), LTiger.Get('count')))
+      .Assign('sum', LTiger.Add(LTiger.Get('sum'),
+        LTiger.VaArg(LTiger.Get('i'), vtInt64)))
+      .Assign('i', LTiger.Add(LTiger.Get('i'), LTiger.Int64(1)))
+   .EndWhile()
+   .Return(LTiger.Mul(LTiger.Get('sum'), LTiger.Get('multiplier')))
 .EndFunc();
 
 // SumWithMult(3, 1, 2, 3) = (1+2+3) * 3 = 18
@@ -706,8 +704,8 @@ LTiger.BeginVariadicFunc('SumWithMult', vtInt64)
 
 | Method | Description |
 |--------|-------------|
-| `VaCount_()` | Number of variadic arguments |
-| `VaArgAt_(index, type)` | Get argument at index as given type |
+| `VaCount()` | Number of variadic arguments |
+| `VaArg(index, type)` | Get argument at index as given type |
 
 ## 🧠 SSA Optimizer
 
@@ -769,57 +767,57 @@ LTiger.DefinePointer('PConstInt', vtInt32, True); // ^const int32
 
 ### Pointer Operations
 
-Pointers support address-of (`AddrOf`), dereference (`Deref`), and write-through-pointer (`AssignToExpr` with `Deref`). You can take the address of local variables, record fields, and array elements.
+Pointers support address-of (`AddrOf`), dereference (`Deref`), and write-through-pointer (`AssignTo` with `Deref`). You can take the address of local variables, record fields, and array elements.
 
 ```delphi
 // Address-of and dereference
-.Assign('x', LTiger.Int(42))
+.Assign('x', LTiger.Int64(42))
 .Assign('p', LTiger.AddrOf('x'))           // p := @x
-.Assign('y', LTiger.Deref(LTiger.Var_('p'))) // y := p^  (y = 42)
+.Assign('y', LTiger.Deref(LTiger.Get('p'))) // y := p^  (y = 42)
 
 // Write through pointer
-.AssignToExpr(LTiger.Deref(LTiger.Var_('p')), LTiger.Int(100))  // p^ := 100
+.AssignTo(LTiger.Deref(LTiger.Get('p')), LTiger.Int64(100))  // p^ := 100
 
 // Address of record field
-.Assign('px', LTiger.AddrOfExpr(LTiger.FieldExpr(LTiger.Var_('pt'), 'X')))
-.AssignToExpr(LTiger.Deref(LTiger.Var_('px')), LTiger.Int(55))  // pt.X = 55
+.Assign('px', LTiger.AddrOfVal(LTiger.GetField(LTiger.Get('pt'), 'X')))
+.AssignTo(LTiger.Deref(LTiger.Get('px')), LTiger.Int64(55))  // pt.X = 55
 
 // Address of array element
-.Assign('pa', LTiger.AddrOfExpr(LTiger.IndexExpr(LTiger.Var_('arr'), LTiger.Int(1))))
-.AssignToExpr(LTiger.Deref(LTiger.Var_('pa')), LTiger.Int(999))  // arr[1] = 999
+.Assign('pa', LTiger.AddrOfVal(LTiger.GetIndex(LTiger.Get('arr'), LTiger.Int64(1))))
+.AssignTo(LTiger.Deref(LTiger.Get('pa')), LTiger.Int64(999))  // arr[1] = 999
 ```
 
 ## 🎯 Function Pointers
 
-Obtain a function's address with `FuncAddr` and invoke it indirectly with `IndirectCallExpr`. This enables callback patterns, dispatch tables, and runtime function selection. The function pointer is a standard 64-bit address that can be stored in any `vtPointer` variable.
+Obtain a function's address with `FuncAddr` and invoke it indirectly with `InvokeIndirect`. This enables callback patterns, dispatch tables, and runtime function selection. The function pointer is a standard 64-bit address that can be stored in any `vtPointer` variable.
 
 ```delphi
-LTiger.BeginFunc('add_func', vtInt32, False)
+LTiger.Func('add_func', vtInt32, False)
    .Param('a', vtInt32)
    .Param('b', vtInt32)
-   .Return(LTiger.Add(LTiger.Var_('a'), LTiger.Var_('b')))
+   .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
 .EndFunc();
 
-LTiger.BeginFunc('mul_func', vtInt32, False)
+LTiger.Func('mul_func', vtInt32, False)
    .Param('x', vtInt32)
    .Param('y', vtInt32)
-   .Return(LTiger.Mul(LTiger.Var_('x'), LTiger.Var_('y')))
+   .Return(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')))
 .EndFunc();
 
-LTiger.BeginFunc('main', vtVoid, True)
+LTiger.Func('main', vtVoid, True)
    .Local('pFunc', vtPointer)
    .Local('result', vtInt32)
 
    // Call through function pointer
    .Assign('pFunc', LTiger.FuncAddr('add_func'))
-   .Assign('result', LTiger.IndirectCallExpr(LTiger.Var_('pFunc'),
-     [LTiger.Int(10), LTiger.Int(20)]))
+   .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'),
+     [LTiger.Int64(10), LTiger.Int64(20)]))
    // result = 30
 
    // Switch to different function
    .Assign('pFunc', LTiger.FuncAddr('mul_func'))
-   .Assign('result', LTiger.IndirectCallExpr(LTiger.Var_('pFunc'),
-     [LTiger.Int(6), LTiger.Int(7)]))
+   .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pFunc'),
+     [LTiger.Int64(6), LTiger.Int64(7)]))
    // result = 42
 .EndFunc();
 ```
@@ -836,74 +834,74 @@ Use `plC` for unmangled names suitable for C interop and DLL exports. The functi
 
 ```delphi
 // C linkage, exported
-LTiger.BeginFunc('MyAdd', vtInt32, False, plC, True)
+LTiger.Func('MyAdd', vtInt32, False, plC, True)
    .Param('a', vtInt32)
    .Param('b', vtInt32)
-   .Return(LTiger.Add(LTiger.Var_('a'), LTiger.Var_('b')))
+   .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
 .EndFunc();
 
 // Default (C++) linkage, exported
-LTiger.BeginFunc('MySquare', vtInt32, False, plDefault, True)
+LTiger.Func('MySquare', vtInt32, False, plDefault, True)
    .Param('n', vtInt32)
-   .Return(LTiger.Mul(LTiger.Var_('n'), LTiger.Var_('n')))
+   .Return(LTiger.Mul(LTiger.Get('n'), LTiger.Get('n')))
 .EndFunc();
 
 // Private (not exported)
-LTiger.BeginFunc('PrivateHelper', vtInt32, False, plC, False)
+LTiger.Func('PrivateHelper', vtInt32, False, plC, False)
    .Param('v', vtInt32)
-   .Return(LTiger.Add(LTiger.Var_('v'), LTiger.Int(100)))
+   .Return(LTiger.Add(LTiger.Get('v'), LTiger.Int64(100)))
 .EndFunc();
 ```
 
 ## 🔀 Function Overloading
 
-Use `BeginOverloadFunc` to define multiple functions with the same name but different parameter signatures. Tiger uses C++ Itanium name mangling to give each overload a unique linker symbol, so you can call `Add` with `(Int32, Int32)` or `(Int64, Int64)` and Tiger routes to the correct function based on the argument types at the call site.
+Use `OverloadFunc` to define multiple functions with the same name but different parameter signatures. Tiger uses C++ Itanium name mangling to give each overload a unique linker symbol, so you can call `Add` with `(Int32, Int32)` or `(Int64, Int64)` and Tiger routes to the correct function based on the argument types at the call site.
 
 ```delphi
 // Add(int32, int32) -> int32
-LTiger.BeginOverloadFunc('Add', vtInt32, False, True)
+LTiger.OverloadFunc('Add', vtInt32, False, True)
    .Param('a', vtInt32)
    .Param('b', vtInt32)
-   .Return(LTiger.Add(LTiger.Var_('a'), LTiger.Var_('b')))
+   .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
 .EndFunc();
 
 // Add(int64, int64) -> int64
-LTiger.BeginOverloadFunc('Add', vtInt64, False, True)
+LTiger.OverloadFunc('Add', vtInt64, False, True)
    .Param('a', vtInt64)
    .Param('b', vtInt64)
-   .Return(LTiger.Add(LTiger.Var_('a'), LTiger.Var_('b')))
+   .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
 .EndFunc();
 
 // Multiply(int32, int32) -> int32
-LTiger.BeginOverloadFunc('Multiply', vtInt32, False, True)
+LTiger.OverloadFunc('Multiply', vtInt32, False, True)
    .Param('x', vtInt32)
    .Param('y', vtInt32)
-   .Return(LTiger.Mul(LTiger.Var_('x'), LTiger.Var_('y')))
+   .Return(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')))
 .EndFunc();
 
 // Multiply(int32, int32, int32) -> int32
-LTiger.BeginOverloadFunc('Multiply', vtInt32, False, True)
+LTiger.OverloadFunc('Multiply', vtInt32, False, True)
    .Param('x', vtInt32)
    .Param('y', vtInt32)
    .Param('z', vtInt32)
-   .Return(LTiger.Mul(LTiger.Mul(LTiger.Var_('x'), LTiger.Var_('y')), LTiger.Var_('z')))
+   .Return(LTiger.Mul(LTiger.Mul(LTiger.Get('x'), LTiger.Get('y')), LTiger.Get('z')))
 .EndFunc();
 ```
 
 ## 🏗️ DLL Generation
 
-Build DLLs with exported functions and a `DllMain` entry point. Exported functions appear in the PE export table and can be imported by other executables or DLLs at load time. The `BeginDllMain` method creates the standard `DllMain(hinstDLL, fdwReason, lpReserved)` entry point that Windows calls when the DLL is loaded, unloaded, or when threads attach/detach.
+Build DLLs with exported functions and a `DllMain` entry point. Exported functions appear in the PE export table and can be imported by other executables or DLLs at load time. The `DllMain` method creates the standard `DllMain(hinstDLL, fdwReason, lpReserved)` entry point that Windows calls when the DLL is loaded, unloaded, or when threads attach/detach.
 
 ```delphi
 // Build the DLL
-LTiger.BeginFunc('AddC', vtInt32, False, plC, True)
+LTiger.Func('AddC', vtInt32, False, plC, True)
    .Param('a', vtInt32)
    .Param('b', vtInt32)
-   .Return(LTiger.Add(LTiger.Var_('a'), LTiger.Var_('b')))
+   .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
 .EndFunc();
 
-LTiger.BeginDllMain()
-   .Return(LTiger.Int(1))
+LTiger.DllMain()
+   .Return(LTiger.Int64(1))
 .EndFunc();
 
 LTiger.TargetDll('output\MyDll.dll');
@@ -942,10 +940,10 @@ Tiger includes built-in heap management through the runtime. `Tiger_GetMem` allo
 | `Tiger_ReportLeaks()` | Print heap allocation summary (debug builds only) |
 
 ```delphi
-.Assign('ptr', LTiger.CallExpr('Tiger_GetMem', [LTiger.Int(8)]))
-.AssignToExpr(LTiger.Deref(LTiger.Var_('ptr')), LTiger.Int(12345))
-.Assign('val', LTiger.Deref(LTiger.Var_('ptr')))
-.Call('Tiger_FreeMem', [LTiger.Var_('ptr')])
+.Assign('ptr', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(8)]))
+.AssignTo(LTiger.Deref(LTiger.Get('ptr')), LTiger.Int64(12345))
+.Assign('val', LTiger.Deref(LTiger.Get('ptr')))
+.Call('Tiger_FreeMem', [LTiger.Get('ptr')])
 ```
 
 ### Heap Leak Detection
@@ -965,12 +963,12 @@ You can also call `Tiger_ReportLeaks` manually at any point during execution to 
 ```delphi
 LTiger.SetOptimizationLevel(0);  // Enable debug heap tracking
 
-LTiger.BeginFunc('main', vtVoid, True)
-   .Assign('p1', LTiger.CallExpr('Tiger_GetMem', [LTiger.Int(64)]))
-   .Assign('p2', LTiger.CallExpr('Tiger_GetMem', [LTiger.Int(128)]))
+LTiger.Func('main', vtVoid, True)
+   .Assign('p1', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(64)]))
+   .Assign('p2', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(128)]))
    .Call('Tiger_ReportLeaks', [])       // Snapshot: Allocs: 2, Frees: 0, Leaked: 2
-   .Call('Tiger_FreeMem', [LTiger.Var_('p1')])
-   .Call('Tiger_Halt', [LTiger.Int(0)]) // Final:    Allocs: 2, Frees: 1, Leaked: 1
+   .Call('Tiger_FreeMem', [LTiger.Get('p1')])
+   .Call('Tiger_Halt', [LTiger.Int64(0)]) // Final:    Allocs: 2, Frees: 1, Leaked: 1
 .EndFunc();
 ```
 
@@ -982,14 +980,14 @@ Global variables persist for the lifetime of the process and are accessible from
 LTiger.Global('gCounter', vtInt64);
 LTiger.Global('gMultiplier', vtInt64);
 
-LTiger.BeginFunc('main', vtVoid, True)
+LTiger.Func('main', vtVoid, True)
    // Globals start at 0
-   .Call('printf', [LTiger.Str('counter=%d'#10), LTiger.Var_('gCounter')])
+   .Call('printf', [LTiger.Str('counter=%d'#10), LTiger.Get('gCounter')])
 
    // Assign and use
-   .Assign('gCounter', LTiger.Int(10))
-   .Assign('gMultiplier', LTiger.Int(5))
-   .Assign('gCounter', LTiger.Mul(LTiger.Var_('gCounter'), LTiger.Var_('gMultiplier')))
+   .Assign('gCounter', LTiger.Int64(10))
+   .Assign('gMultiplier', LTiger.Int64(5))
+   .Assign('gCounter', LTiger.Mul(LTiger.Get('gCounter'), LTiger.Get('gMultiplier')))
    // gCounter = 50
 .EndFunc();
 ```
@@ -1000,15 +998,15 @@ These intrinsics are evaluated at compile time and produce immediate constants i
 
 | Method | Description |
 |--------|-------------|
-| `SizeOf_(typeName)` | Size of type in bytes |
-| `AlignOf_(typeName)` | Alignment of type in bytes |
-| `High_(typeName)` | Upper bound (arrays, enums, sets) |
-| `Low_(typeName)` | Lower bound (arrays, enums, sets) |
-| `Len_(typeName)` | Element count (arrays) |
-| `Ord_(value)` | Ordinal value |
-| `Chr_(value)` | Character from ordinal |
-| `Succ_(value)` | Successor |
-| `Pred_(value)` | Predecessor |
+| `&SizeOf(typeName)` | Size of type in bytes |
+| `AlignOf(typeName)` | Alignment of type in bytes |
+| `High(typeName)` | Upper bound (arrays, enums, sets) |
+| `Low(typeName)` | Lower bound (arrays, enums, sets) |
+| `Len(typeName)` | Element count (arrays) |
+| `Ord(value)` | Ordinal value |
+| `Chr(value)` | Character from ordinal |
+| `Succ(value)` | Successor |
+| `Pred(value)` | Predecessor |
 
 ### Increment and Decrement
 
@@ -1016,17 +1014,17 @@ In-place arithmetic on variables. These generate a load, add/subtract, and store
 
 | Method | Description |
 |--------|-------------|
-| `Inc_(varName)` | Increment by 1 |
-| `Inc_(varName, amount)` | Increment by amount |
-| `Dec_(varName)` | Decrement by 1 |
-| `Dec_(varName, amount)` | Decrement by amount |
+| `&Inc(varName)` | Increment by 1 |
+| `&Inc(varName, amount)` | Increment by amount |
+| `&Dec(varName)` | Decrement by 1 |
+| `&Dec(varName, amount)` | Decrement by amount |
 
 ```delphi
-.Assign('result', LTiger.Int(10))
-.Inc_('result')           // result = 11
-.Dec_('result')           // result = 10
-.Inc_('result', LTiger.Int(5))  // result = 15
-.Dec_('result', LTiger.Int(7))  // result = 8
+.Assign('result', LTiger.Int64(10))
+.&Inc('result')           // result = 11
+.&Dec('result')           // result = 10
+.&Inc('result', LTiger.Int64(5))  // result = 15
+.&Dec('result', LTiger.Int64(7))  // result = 8
 ```
 
 ## 🔨 Build Directives
@@ -1098,7 +1096,7 @@ Tiger is functional and produces working executables, DLLs, static libraries, an
 - C and C++ linkage modes
 - DLL imports (static and dynamic)
 - Static library imports with `ImportLib`
-- Variadic functions with `VaCount_`/`VaArgAt_` intrinsics
+- Variadic functions with `VaCount`/`VaArg` intrinsics
 - Structured exception handling (try/except/finally)
 - Hardware exception support (SEH)
 - Managed reference-counted strings
