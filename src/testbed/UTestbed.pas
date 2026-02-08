@@ -134,11 +134,16 @@ procedure Test02(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolea
 var
   LTiger: TTiger;
 begin
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test02.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if APlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test02.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
        .Local('n', vtInt64)
@@ -156,7 +161,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test02.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test02'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -176,10 +181,13 @@ procedure Test03(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolea
 var
   LTiger: TTiger;
 begin
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if APlatform = tpWin64 then
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
        .Local('a', vtInt64)
@@ -203,9 +211,10 @@ begin
     .EndFunc();
 
     TWin64Utils.PrintLn('--- Optimization Level 0 ---');
-    SetExeResources(LTiger, 'Test03_O0.exe');
+    if APlatform = tpWin64 then
+      SetExeResources(LTiger, 'Test03_O0.exe');
     LTiger.SetOptimizationLevel(0);
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O0.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O0'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -214,8 +223,9 @@ begin
     TWin64Utils.PrintLn('--- Optimization Level 1 ---');
     LTiger.ResetBuild();
     LTiger.SetOptimizationLevel(1);
-    SetExeResources(LTiger, 'Test03_O1.exe');
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O1.exe'), ssConsole);
+    if APlatform = tpWin64 then
+      SetExeResources(LTiger, 'Test03_O1.exe');
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O1'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -223,9 +233,10 @@ begin
     TWin64Utils.PrintLn('');
     TWin64Utils.PrintLn('--- Optimization Level 2 ---');
     LTiger.ResetBuild();
-    SetExeResources(LTiger, 'Test03_O2.exe');
+    if APlatform = tpWin64 then
+      SetExeResources(LTiger, 'Test03_O2.exe');
     LTiger.SetOptimizationLevel(2);
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O2.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O2'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -245,10 +256,13 @@ procedure Test03_2(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Bool
   var
     LTiger: TTiger;
   begin
-    LTiger := TTiger.Create();
+    LTiger := TTiger.Create(APlatform);
     try
       LTiger.SetStatusCallback(StatusCallback);
-      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+      if APlatform = tpWin64 then
+        LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
+      else
+        LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
       LTiger.Func('main', vtVoid, True)
          .Local('a', vtInt64)
@@ -271,7 +285,8 @@ procedure Test03_2(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Bool
          .Call('Tiger_Halt', [LTiger.Int64(0)])
       .EndFunc();
 
-      SetExeResources(LTiger, AOutputName);
+      if APlatform = tpWin64 then
+        SetExeResources(LTiger, AOutputName);
       LTiger.SetOptimizationLevel(AOptLevel);
       LTiger.TargetExe(TPath.Combine(COutputPath, AOutputName), ssConsole);
 
@@ -287,15 +302,15 @@ begin
   TWin64Utils.PrintLn('');
 
   TWin64Utils.PrintLn('--- Optimization Level 0 ---');
-  BuildAndRun(0, 'Test03_2_O0.exe');
+  BuildAndRun(0, 'Test03_2_O0');
 
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('--- Optimization Level 1 ---');
-  BuildAndRun(1, 'Test03_2_O1.exe');
+  BuildAndRun(1, 'Test03_2_O1');
 
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('--- Optimization Level 2 ---');
-  BuildAndRun(2, 'Test03_2_O2.exe');
+  BuildAndRun(2, 'Test03_2_O2');
 end;
 
 (*==============================================================================
@@ -308,11 +323,16 @@ procedure Test04(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolea
 var
   LTiger: TTiger;
 begin
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test04.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if APlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test04.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
        .Local('n', vtInt64)
@@ -332,7 +352,7 @@ begin
 
     TWin64Utils.PrintLn('--- Loop Test: Optimization Level 2 ---');
     LTiger.SetOptimizationLevel(2);
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test04.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test04'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -354,11 +374,16 @@ var
 begin
   TWin64Utils.PrintLn('=== Test05: Case Statement ===');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test05.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if APlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test05.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     // Test case statement with day of week
     // Expected output:
@@ -407,7 +432,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test05.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test05'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -429,11 +454,16 @@ var
 begin
   TWin64Utils.PrintLn('=== Test06: Global Variables ===');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test06.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if APlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test06.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     // Declare global variables
     LTiger.Global('gCounter', vtInt64);
@@ -470,7 +500,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test06.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test06'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
