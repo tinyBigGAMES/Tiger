@@ -2787,8 +2787,9 @@ end;
 procedure RunTestbed();
 begin
   try
-    //RunTest(27, tpWin64, True);
-    RunTest(27, tpLinux64, True);
+    //RunTest(27, tpWin64, False);
+
+    RunTest(27, tpLinux64, False);
     //Linux_Test();
   except
     on E: Exception do

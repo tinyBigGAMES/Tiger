@@ -63,10 +63,13 @@ begin
   //----------------------------------------------------------------------------
   // Tiger_Halt(AExitCode: Int32)
   // Terminates the process via Linux exit syscall (nr 60).
+  // At opt level 0, calls Tiger_ReportLeaks before exit for heap leak detection.
   // No DLL imports needed — syscalls go direct to kernel.
   //----------------------------------------------------------------------------
   AIR.Func('Tiger_Halt', vtVoid, False, plC, False)
      .Param('AExitCode', vtInt32);
+  if AOptLevel = 0 then
+    AIR.Call('Tiger_ReportLeaks', []);
   AIR.SyscallStmt(60, [AIR.Get('AExitCode')])
   .EndFunc();
 end;
@@ -114,7 +117,104 @@ end;
 
 procedure TTigerLinux64Runtime.AddMemory(const AIR: TTigerIR; const AOptLevel: Integer);
 begin
-  // Phase 2: mmap/munmap via syscalls or libc malloc/free
+  //----------------------------------------------------------------------------
+  // Import libc heap functions
+  //----------------------------------------------------------------------------
+  AIR.Import('libc.so.6', 'malloc', [vtUInt64], vtPointer, False);
+  AIR.Import('libc.so.6', 'free', [vtPointer], vtVoid, False);
+  AIR.Import('libc.so.6', 'realloc', [vtPointer, vtUInt64], vtPointer, False);
+  AIR.Import('libc.so.6', 'calloc', [vtUInt64, vtUInt64], vtPointer, False);
+  AIR.Import('libc.so.6', 'malloc_usable_size', [vtPointer], vtUInt64, False);
+
+  //----------------------------------------------------------------------------
+  // Debug heap tracking (only when optimization level = 0)
+  //----------------------------------------------------------------------------
+  if AOptLevel = 0 then
+  begin
+    AIR.Global('Tiger_AllocCount', vtUInt64);
+    AIR.Global('Tiger_FreeCount', vtUInt64);
+  end;
+
+  //----------------------------------------------------------------------------
+  // Tiger_GetMem(ASize: UInt64): Pointer
+  // Allocates ASize bytes using malloc
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_GetMem', vtPointer, False, plC, False)
+     .Param('ASize', vtUInt64)
+     .Local('LResult', vtPointer);
+
+  AIR.Assign('LResult', AIR.Invoke('malloc', [AIR.Get('ASize')]));
+
+  if AOptLevel = 0 then
+    AIR.Assign('Tiger_AllocCount', AIR.Add(AIR.Get('Tiger_AllocCount'), AIR.Int64(1)));
+
+  AIR.Return(AIR.Get('LResult'));
+  AIR.EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_FreeMem(APtr: Pointer)
+  // Frees memory previously allocated by Tiger_GetMem
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_FreeMem', vtVoid, False, plC, False)
+     .Param('APtr', vtPointer);
+
+  AIR.Call('free', [AIR.Get('APtr')]);
+
+  if AOptLevel = 0 then
+    AIR.Assign('Tiger_FreeCount', AIR.Add(AIR.Get('Tiger_FreeCount'), AIR.Int64(1)));
+
+  AIR.Return();
+  AIR.EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_ReAllocMem(APtr: Pointer; ANewSize: UInt64): Pointer
+  // Reallocates memory block to new size
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_ReAllocMem', vtPointer, False, plC, False)
+     .Param('APtr', vtPointer)
+     .Param('ANewSize', vtUInt64)
+     .Return(AIR.Invoke('realloc', [AIR.Get('APtr'), AIR.Get('ANewSize')]))
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_AllocMem(ASize: UInt64): Pointer
+  // Allocates and zero-initializes memory using calloc
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_AllocMem', vtPointer, False, plC, False)
+     .Param('ASize', vtUInt64)
+     .Local('LResult', vtPointer);
+
+  AIR.Assign('LResult', AIR.Invoke('calloc', [AIR.Int64(1), AIR.Get('ASize')]));
+
+  if AOptLevel = 0 then
+    AIR.Assign('Tiger_AllocCount', AIR.Add(AIR.Get('Tiger_AllocCount'), AIR.Int64(1)));
+
+  AIR.Return(AIR.Get('LResult'));
+  AIR.EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_MemSize(APtr: Pointer): UInt64
+  // Returns the usable size of an allocated memory block (GNU extension)
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_MemSize', vtUInt64, False, plC, False)
+     .Param('APtr', vtPointer)
+     .Return(AIR.Invoke('malloc_usable_size', [AIR.Get('APtr')]))
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_ReportLeaks() - Debug only
+  // Prints allocation summary to console
+  //----------------------------------------------------------------------------
+  if AOptLevel = 0 then
+  begin
+    AIR.Func('Tiger_ReportLeaks', vtVoid, False, plC, False);
+    AIR.Call('printf', [AIR.Str('[Heap] Allocs: %llu, Frees: %llu, Leaked: %lld' + #10),
+                        AIR.Get('Tiger_AllocCount'),
+                        AIR.Get('Tiger_FreeCount'),
+                        AIR.Sub(AIR.Get('Tiger_AllocCount'), AIR.Get('Tiger_FreeCount'))]);
+    AIR.Return();
+    AIR.EndFunc();
+  end;
 end;
 
 procedure TTigerLinux64Runtime.AddStrings(const AIR: TTigerIR);
