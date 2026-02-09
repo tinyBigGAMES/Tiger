@@ -1770,7 +1770,54 @@ type
     /// <seealso cref="Func"/>
     /// <seealso cref="Local"/>
     /// <seealso cref="Get"/>
-    function Param(const AName: string; const AType: TTigerValueType): TTiger;
+    function Param(const AName: string; const AType: TTigerValueType): TTiger; overload;
+
+    /// <summary>
+    ///   Declare a parameter with a composite type (record/struct) in the
+    ///   current function.
+    /// </summary>
+    /// <param name="AName">
+    ///   Parameter name, unique within the function scope.
+    /// </param>
+    /// <param name="ATypeName">
+    ///   Name of a previously defined composite type (record).
+    /// </param>
+    /// <returns>
+    ///   Self for fluent chaining.
+    /// </returns>
+    /// <remarks>
+    ///   The parameter passing mechanism is ABI-dependent:
+    ///   - Win64: Structs ≤8 bytes pass in register, larger by pointer
+    ///   - Linux64: Structs ≤16 bytes pass in up to 2 registers, larger by pointer
+    /// </remarks>
+    /// <seealso cref="Local"/>
+    /// <seealso cref="DefineRecord"/>
+    function Param(const AName: string; const ATypeName: string): TTiger; overload;
+
+    /// <summary>
+    ///   Set the return type of the current function to a composite type.
+    /// </summary>
+    /// <param name="ATypeName">
+    ///   Name of a previously defined composite type (record).
+    /// </param>
+    /// <returns>
+    ///   Self for fluent chaining.
+    /// </returns>
+    /// <remarks>
+    ///   <para>
+    ///     For large structs, the return is handled via a hidden pointer
+    ///     parameter per ABI conventions:
+    ///   </para>
+    ///   <para>
+    ///     - Win64: Structs >8 bytes use hidden RCX pointer
+    ///   </para>
+    ///   <para>
+    ///     - Linux64: Structs >16 bytes use hidden RDI pointer
+    ///   </para>
+    /// </remarks>
+    /// <seealso cref="Func"/>
+    /// <seealso cref="DefineRecord"/>
+    function Returns(const ATypeName: string): TTiger;
 
     /// <summary>
     ///   Declare a local variable with a primitive type in the current
@@ -4004,6 +4051,18 @@ end;
 function TTiger.Param(const AName: string; const AType: TTigerValueType): TTiger;
 begin
   FIR.Param(AName, AType);
+  Result := Self;
+end;
+
+function TTiger.Param(const AName: string; const ATypeName: string): TTiger;
+begin
+  FIR.Param(AName, ATypeName);
+  Result := Self;
+end;
+
+function TTiger.Returns(const ATypeName: string): TTiger;
+begin
+  FIR.Returns(ATypeName);
   Result := Self;
 end;
 

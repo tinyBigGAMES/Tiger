@@ -2598,6 +2598,149 @@ begin
 end;
 
 (*==============================================================================
+  Test27: Struct parameter passing
+  Tests passing large structs (>8 bytes) to functions:
+  - Defines a 24-byte record (TPoint3D) - large enough to trigger hidden
+    pointer handling on both Win64 (>8 bytes) and Linux64 (>16 bytes)
+  - Creates a function that takes the struct by value as a parameter
+  - Verifies struct fields are correctly accessible in the callee
+==============================================================================*)
+procedure Test27(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+var
+  LTiger: TTiger;
+begin
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test27: Struct Parameter Passing');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
+
+  LTiger := TTiger.Create(APlatform);
+  try
+    LTiger.SetStatusCallback(StatusCallback);
+    if APlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test27.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+
+    //------------------------------------------------------------------------
+    // Define a 24-byte record (3 x Int64 = 24 bytes)
+    // This is > 8 bytes (Win64 threshold) and > 16 bytes (Linux64 threshold)
+    //------------------------------------------------------------------------
+    LTiger.DefineRecord('TPoint3D')
+      .Field('X', vtInt64)
+      .Field('Y', vtInt64)
+      .Field('Z', vtInt64)
+    .EndRecord();
+
+    //------------------------------------------------------------------------
+    // Function: SumPoint - takes struct param, returns scalar sum
+    // Tests: receiving large struct via pointer (callee side)
+    //------------------------------------------------------------------------
+    LTiger.Func('SumPoint', vtInt64)
+      .Param('pt', 'TPoint3D')
+      .Local('result', vtInt64)
+      .Assign('result', LTiger.Add(
+        LTiger.Add(
+          LTiger.GetField(LTiger.Get('pt'), 'X'),
+          LTiger.GetField(LTiger.Get('pt'), 'Y')
+        ),
+        LTiger.GetField(LTiger.Get('pt'), 'Z')
+      ))
+      .Return(LTiger.Get('result'))
+    .EndFunc();
+
+    //------------------------------------------------------------------------
+    // Function: PrintPoint - takes struct param, prints fields
+    // Tests: receiving large struct and accessing individual fields
+    //------------------------------------------------------------------------
+    LTiger.Func('PrintPoint', vtVoid)
+      .Param('pt', 'TPoint3D')
+      .Call('printf', [LTiger.Str('  X = %lld' + #10), LTiger.GetField(LTiger.Get('pt'), 'X')])
+      .Call('printf', [LTiger.Str('  Y = %lld' + #10), LTiger.GetField(LTiger.Get('pt'), 'Y')])
+      .Call('printf', [LTiger.Str('  Z = %lld' + #10), LTiger.GetField(LTiger.Get('pt'), 'Z')])
+    .EndFunc();
+
+    //------------------------------------------------------------------------
+    // Function: SumTwoPoints - takes TWO struct params
+    // Tests: multiple struct params with shifted registers
+    //------------------------------------------------------------------------
+    LTiger.Func('SumTwoPoints', vtInt64)
+      .Param('pt1', 'TPoint3D')
+      .Param('pt2', 'TPoint3D')
+      .Local('result', vtInt64)
+      .Assign('result', LTiger.Add(
+        LTiger.Add(
+          LTiger.GetField(LTiger.Get('pt1'), 'X'),
+          LTiger.GetField(LTiger.Get('pt2'), 'X')
+        ),
+        LTiger.Add(
+          LTiger.GetField(LTiger.Get('pt1'), 'Y'),
+          LTiger.GetField(LTiger.Get('pt2'), 'Y')
+        )
+      ))
+      .Assign('result', LTiger.Add(
+        LTiger.Get('result'),
+        LTiger.Add(
+          LTiger.GetField(LTiger.Get('pt1'), 'Z'),
+          LTiger.GetField(LTiger.Get('pt2'), 'Z')
+        )
+      ))
+      .Return(LTiger.Get('result'))
+    .EndFunc();
+
+    //------------------------------------------------------------------------
+    // Main entry point - test struct param passing
+    //------------------------------------------------------------------------
+    LTiger.Func('main', vtVoid, True)
+      .Local('pt1', 'TPoint3D')
+      .Local('pt2', 'TPoint3D')
+      .Local('sum', vtInt64)
+
+      .Call('printf', [LTiger.Str('=== Test27: Struct Parameter Passing ===' + #10)])
+      .Call('printf', [LTiger.Str(#10)])
+
+      // Test 1: Initialize struct locally and pass to function
+      .Call('printf', [LTiger.Str('Test 1: Pass struct to function' + #10)])
+      .AssignTo(LTiger.GetField(LTiger.Get('pt1'), 'X'), LTiger.Int64(10))
+      .AssignTo(LTiger.GetField(LTiger.Get('pt1'), 'Y'), LTiger.Int64(20))
+      .AssignTo(LTiger.GetField(LTiger.Get('pt1'), 'Z'), LTiger.Int64(30))
+      .Call('printf', [LTiger.Str('  pt1 = (10, 20, 30)' + #10)])
+      .Call('PrintPoint', [LTiger.Get('pt1')])
+      .Assign('sum', LTiger.Invoke('SumPoint', [LTiger.Get('pt1')]))
+      .Call('printf', [LTiger.Str('  SumPoint(pt1) = %lld (expected: 60)' + #10), LTiger.Get('sum')])
+
+      // Test 2: Pass different struct
+      .Call('printf', [LTiger.Str(#10 + 'Test 2: Pass second struct' + #10)])
+      .AssignTo(LTiger.GetField(LTiger.Get('pt2'), 'X'), LTiger.Int64(100))
+      .AssignTo(LTiger.GetField(LTiger.Get('pt2'), 'Y'), LTiger.Int64(200))
+      .AssignTo(LTiger.GetField(LTiger.Get('pt2'), 'Z'), LTiger.Int64(300))
+      .Call('printf', [LTiger.Str('  pt2 = (100, 200, 300)' + #10)])
+      .Call('PrintPoint', [LTiger.Get('pt2')])
+      .Assign('sum', LTiger.Invoke('SumPoint', [LTiger.Get('pt2')]))
+      .Call('printf', [LTiger.Str('  SumPoint(pt2) = %lld (expected: 600)' + #10), LTiger.Get('sum')])
+
+      // Test 3: Pass two structs to same function
+      .Call('printf', [LTiger.Str(#10 + 'Test 3: Pass two structs' + #10)])
+      .Assign('sum', LTiger.Invoke('SumTwoPoints', [LTiger.Get('pt1'), LTiger.Get('pt2')]))
+      .Call('printf', [LTiger.Str('  SumTwoPoints(pt1, pt2) = %lld (expected: 660)' + #10), LTiger.Get('sum')])
+
+      .Call('printf', [LTiger.Str(#10 + 'All struct tests passed!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
+    .EndFunc();
+
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test27.exe'), ssConsole);
+
+    ProcessBuild(LTiger, ADumpSSA);
+    ShowErrors(LTiger);
+  finally
+    LTiger.Free();
+  end;
+end;
+
+(*==============================================================================
   RunTest: Executes a single test by number, dispatching to the corresponding
   test procedure. If ADumpSSA is True, the SSA intermediate representation
   is printed after the build completes.
@@ -2631,7 +2774,8 @@ begin
     24: Test24(APlatform, ADumpSSA);
     25: Test25(APlatform, ADumpSSA);
     26: Test26(APlatform, ADumpSSA);
-    27: Test03_2(APlatform, ADumpSSA);
+    27: Test27(APlatform, ADumpSSA);
+    28: Test03_2(APlatform, ADumpSSA);
   end;
 end;
 
@@ -2643,7 +2787,8 @@ end;
 procedure RunTestbed();
 begin
   try
-    RunTest(7, tpLinux64, True);
+    //RunTest(27, tpWin64, True);
+    RunTest(27, tpLinux64, True);
     //Linux_Test();
   except
     on E: Exception do

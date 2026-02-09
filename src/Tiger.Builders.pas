@@ -139,14 +139,16 @@ type
       const AIsPublic: Boolean = False;
       const ALinkage: TTigerLinkage = plDefault
     ): TTigerCodeBuilder;
-    function SetReturnType(const AType: TTigerValueType): TTigerCodeBuilder;
+    function SetReturnType(const AType: TTigerValueType): TTigerCodeBuilder; overload;
+    function SetReturnType(const AType: TTigerValueType; const ASize: Integer; const AAlignment: Integer): TTigerCodeBuilder; overload;
     function SetIsVariadic(const AValue: Boolean): TTigerCodeBuilder;
     function EndProc(): TTigerCodeBuilder;
 
     //--------------------------------------------------------------------------
     // Parameters and Locals
     //--------------------------------------------------------------------------
-    function AddParam(const AName: string; const AType: TTigerValueType): TTigerLocalHandle;
+    function AddParam(const AName: string; const AType: TTigerValueType): TTigerLocalHandle; overload;
+    function AddParam(const AName: string; const ASize: Integer; const AAlignment: Integer): TTigerLocalHandle; overload;
     function AddLocal(const AName: string; const AType: TTigerValueType): TTigerLocalHandle; overload;
     function AddLocal(const AName: string; const ASize: Integer): TTigerLocalHandle; overload;
     function AddLocal(const AName: string; const ASize: Integer; const AAlignment: Integer): TTigerLocalHandle; overload;
@@ -823,6 +825,21 @@ var
 begin
   LFunc := GetCurrentFunc();
   LFunc.ReturnType := AType;
+  LFunc.ReturnSize := 0;
+  LFunc.ReturnAlignment := 0;
+  SetCurrentFunc(LFunc);
+  Result := Self;
+end;
+
+function TTigerCodeBuilder.SetReturnType(const AType: TTigerValueType;
+  const ASize: Integer; const AAlignment: Integer): TTigerCodeBuilder;
+var
+  LFunc: TTigerFuncInfo;
+begin
+  LFunc := GetCurrentFunc();
+  LFunc.ReturnType := AType;
+  LFunc.ReturnSize := ASize;
+  LFunc.ReturnAlignment := AAlignment;
   SetCurrentFunc(LFunc);
   Result := Self;
 end;
@@ -871,6 +888,29 @@ begin
 
   LParam.ParamName := AName;
   LParam.ParamType := AType;
+
+  LLen := Length(LFunc.Params);
+  SetLength(LFunc.Params, LLen + 1);
+  LFunc.Params[LLen] := LParam;
+
+  SetCurrentFunc(LFunc);
+
+  Result.Index := LLen;
+  Result.IsParam := True;
+end;
+
+function TTigerCodeBuilder.AddParam(const AName: string; const ASize: Integer; const AAlignment: Integer): TTigerLocalHandle;
+var
+  LFunc: TTigerFuncInfo;
+  LParam: TTigerParamInfo;
+  LLen: Integer;
+begin
+  LFunc := GetCurrentFunc();
+
+  LParam.ParamName := AName;
+  LParam.ParamType := vtVoid;  // Composite type - no primitive type
+  LParam.ParamSize := ASize;
+  LParam.ParamAlignment := AAlignment;
 
   LLen := Length(LFunc.Params);
   SetLength(LFunc.Params, LLen + 1);

@@ -319,6 +319,8 @@ type
   private
     FFuncName: string;
     FReturnType: TTigerValueType;
+    FReturnSize: Integer;
+    FReturnAlignment: Integer;
     FIsEntryPoint: Boolean;
     FIsDllEntry: Boolean;
     FIsPublic: Boolean;
@@ -335,7 +337,8 @@ type
     destructor Destroy(); override;
     
     // Setup
-    procedure SetReturnType(const AType: TTigerValueType);
+    procedure SetReturnType(const AType: TTigerValueType); overload;
+    procedure SetReturnType(const AType: TTigerValueType; const ASize: Integer; const AAlignment: Integer); overload;
     procedure SetIsEntryPoint(const AValue: Boolean);
     procedure SetIsDllEntry(const AValue: Boolean);
     procedure SetIsPublic(const AValue: Boolean);
@@ -360,6 +363,8 @@ type
     // Getters
     function GetFuncName(): string;
     function GetReturnType(): TTigerValueType;
+    function GetReturnSize(): Integer;
+    function GetReturnAlignment(): Integer;
     function GetIsEntryPoint(): Boolean;
     function GetIsDllEntry(): Boolean;
     function GetIsPublic(): Boolean;
@@ -935,6 +940,16 @@ end;
 procedure TTigerSSAFunc.SetReturnType(const AType: TTigerValueType);
 begin
   FReturnType := AType;
+  FReturnSize := 0;
+  FReturnAlignment := 0;
+end;
+
+procedure TTigerSSAFunc.SetReturnType(const AType: TTigerValueType;
+  const ASize: Integer; const AAlignment: Integer);
+begin
+  FReturnType := AType;
+  FReturnSize := ASize;
+  FReturnAlignment := AAlignment;
 end;
 
 procedure TTigerSSAFunc.SetIsEntryPoint(const AValue: Boolean);
@@ -1034,6 +1049,16 @@ end;
 function TTigerSSAFunc.GetReturnType(): TTigerValueType;
 begin
   Result := FReturnType;
+end;
+
+function TTigerSSAFunc.GetReturnSize(): Integer;
+begin
+  Result := FReturnSize;
+end;
+
+function TTigerSSAFunc.GetReturnAlignment(): Integer;
+begin
+  Result := FReturnAlignment;
 end;
 
 function TTigerSSAFunc.GetIsEntryPoint(): Boolean;
@@ -1915,7 +1940,7 @@ begin
     
     // Create SSA function
     LSSAFunc := TTigerSSAFunc.Create(LFunc.FuncName);
-    LSSAFunc.SetReturnType(LFunc.ReturnType);
+    LSSAFunc.SetReturnType(LFunc.ReturnType, LFunc.ReturnSize, LFunc.ReturnAlignment);
     LSSAFunc.SetIsEntryPoint(LFunc.IsEntryPoint);
     LSSAFunc.SetIsDllEntry(LFunc.IsDllEntry);
     LSSAFunc.SetIsPublic(LFunc.IsPublic);
@@ -2026,6 +2051,11 @@ var
   LVarArgCount: Integer;
   LJ: Integer;
   LImportIdx: Integer;
+  // For by-reference parameter detection in field access
+  LIsParam: Boolean;
+  LLocalSize: Integer;
+  LLocalIdx: Integer;
+  LLocalInfo: TTigerSSALocalInfo;
 begin
   LFunc := AIR.GetFunction(AFuncIndex);
   LBlockStack := TStack<Integer>.Create();
@@ -2056,7 +2086,22 @@ begin
                 if (LObjectExpr.Kind = TTigerIR.TIRExprKind.ekVariable) and 
                    (not LObjectExpr.ResultType.IsPrimitive) then
                 begin
-                  // Emit AddressOf instruction to get local's stack address
+                  // Check if this is a parameter passed by reference (composite > 8 bytes)
+                  // Win64 ABI: Large structs are passed by pointer, so param value IS the address
+                  LIsParam := False;
+                  LLocalSize := 0;
+                  for LLocalIdx := 0 to ASSAFunc.GetLocalCount() - 1 do
+                  begin
+                    LLocalInfo := ASSAFunc.GetLocal(LLocalIdx);
+                    if LLocalInfo.LocalName = LObjectExpr.VarName then
+                    begin
+                      LIsParam := LLocalInfo.IsParam;
+                      LLocalSize := LLocalInfo.LocalSize;
+                      Break;
+                    end;
+                  end;
+                  
+                  // Emit AddressOf instruction to get local's/param's stack address
                   LLeftVar := ASSAFunc.NewVersion('_t');
                   LInstr := Default(TTigerSSAInstr);
                   LInstr.Kind := sikAddressOf;
@@ -2064,6 +2109,19 @@ begin
                   LInstr.Op1 := TTigerSSAOperand.FromVar(ASSAFunc.CurrentVersion(LObjectExpr.VarName));
                   LInstr.Op1.Var_.BaseName := LObjectExpr.VarName;
                   ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+                  
+                  if LIsParam and (LLocalSize > 8) then
+                  begin
+                    // By-reference parameter: param slot contains pointer to struct
+                    // Load the pointer value from the param slot
+                    LTempVar := LLeftVar;
+                    LLeftVar := ASSAFunc.NewVersion('_t');
+                    LInstr := Default(TTigerSSAInstr);
+                    LInstr.Kind := sikLoad;
+                    LInstr.Dest := LLeftVar;
+                    LInstr.Op1 := TTigerSSAOperand.FromVar(LTempVar);
+                    ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+                  end;
                 end
                 else if (LObjectExpr.Kind = TTigerIR.TIRExprKind.ekUnary) and
                         (LObjectExpr.Op = TTigerIR.TIROpKind.opDeref) then
@@ -3070,6 +3128,12 @@ var
   LVarArgCount: Integer;
   LJ: Integer;
   LImportIdx: Integer;
+  // For by-reference parameter detection in field access
+  LIsParam: Boolean;
+  LLocalSize: Integer;
+  LLocalIdx: Integer;
+  LLocalInfo: TTigerSSALocalInfo;
+  LTempVar: TTigerSSAVar;
 begin
   if AExprIndex < 0 then
   begin
@@ -3470,7 +3534,22 @@ begin
         if (LObjectExpr.Kind = TTigerIR.TIRExprKind.ekVariable) and 
            (not LObjectExpr.ResultType.IsPrimitive) then
         begin
-          // Emit AddressOf instruction to get local's stack address
+          // Check if this is a parameter passed by reference (composite > 8 bytes)
+          // Win64 ABI: Large structs are passed by pointer, so param value IS the address
+          LIsParam := False;
+          LLocalSize := 0;
+          for LLocalIdx := 0 to ASSAFunc.GetLocalCount() - 1 do
+          begin
+            LLocalInfo := ASSAFunc.GetLocal(LLocalIdx);
+            if LLocalInfo.LocalName = LObjectExpr.VarName then
+            begin
+              LIsParam := LLocalInfo.IsParam;
+              LLocalSize := LLocalInfo.LocalSize;
+              Break;
+            end;
+          end;
+          
+          // Emit AddressOf instruction to get local's/param's stack address
           LLeftVar := ASSAFunc.NewVersion('_t');
           LInstr := Default(TTigerSSAInstr);
           LInstr.Kind := sikAddressOf;
@@ -3478,6 +3557,19 @@ begin
           LInstr.Op1 := TTigerSSAOperand.FromVar(ASSAFunc.CurrentVersion(LObjectExpr.VarName));
           LInstr.Op1.Var_.BaseName := LObjectExpr.VarName;  // Store base name for local lookup
           ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+          
+          if LIsParam and (LLocalSize > 8) then
+          begin
+            // By-reference parameter: param slot contains pointer to struct
+            // Load the pointer value from the param slot
+            LTempVar := LLeftVar;
+            LLeftVar := ASSAFunc.NewVersion('_t');
+            LInstr := Default(TTigerSSAInstr);
+            LInstr.Kind := sikLoad;
+            LInstr.Dest := LLeftVar;
+            LInstr.Op1 := TTigerSSAOperand.FromVar(LTempVar);
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+          end;
         end
         else if (LObjectExpr.Kind = TTigerIR.TIRExprKind.ekUnary) and
                 (LObjectExpr.Op = TTigerIR.TIROpKind.opDeref) then
@@ -4778,7 +4870,7 @@ begin
         LFunc.GetIsPublic(),
         LFunc.GetLinkage()
       );
-      ABackend.GetCode.SetReturnType(LFunc.GetReturnType());
+      ABackend.GetCode.SetReturnType(LFunc.GetReturnType(), LFunc.GetReturnSize(), LFunc.GetReturnAlignment());
       ABackend.GetCode.SetIsVariadic(LFunc.GetIsVariadic());
       
       //------------------------------------------------------------------------
@@ -4792,7 +4884,7 @@ begin
           if LLocal.LocalTypeRef.IsPrimitive then
             LLocalHandle := ABackend.GetCode.AddParam(LLocal.LocalName, LLocal.LocalTypeRef.Primitive)
           else
-            LLocalHandle := ABackend.GetCode.AddParam(LLocal.LocalName, vtPointer);
+            LLocalHandle := ABackend.GetCode.AddParam(LLocal.LocalName, LLocal.LocalSize, LLocal.LocalAlignment);
           LLocalHandles.Add(LLocal.LocalName, LLocalHandle);
         end;
       end;
@@ -5376,11 +5468,33 @@ var
   LArgs: TArray<TTigerOperand>;
   LFuncHandle: TTigerFuncHandle;
   LI: Integer;
+  LArg: TTigerSSAOperand;
+  LLocalHandle: TTigerLocalHandle;
+  LLocalInfo: TTigerLocalInfo;
+  LFuncInfo: TTigerFuncInfo;
 begin
-  // Resolve arguments
+  // Resolve arguments, with special handling for large struct locals
   SetLength(LArgs, Length(AInstr.CallArgs));
+  LFuncInfo := ABackend.GetCode.GetFunc(ABackend.GetCode.GetCurrentFuncHandle().Index);
   for LI := 0 to High(AInstr.CallArgs) do
-    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, ABackend);
+  begin
+    LArg := AInstr.CallArgs[LI];
+    // Check for large struct local that needs address passed (Win64 ABI: >8 bytes)
+    if (LArg.Kind = sokVar) and
+       (not AVarTemps.ContainsKey(LArg.Var_.ToString())) and
+       ALocalHandles.TryGetValue(LArg.Var_.BaseName, LLocalHandle) and
+       (not LLocalHandle.IsParam) then
+    begin
+      LLocalInfo := LFuncInfo.Locals[LLocalHandle.Index];
+      if (LLocalInfo.LocalType = vtVoid) and (LLocalInfo.LocalSize > 8) then
+      begin
+        // Large struct local - return local operand for LEA in backend
+        LArgs[LI] := TTigerOperand.FromLocal(LLocalHandle);
+        Continue;
+      end;
+    end;
+    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, ABackend);
+  end;
   
   // Call based on target type
   if AInstr.CallTarget.Kind = sokImport then
@@ -5411,11 +5525,33 @@ var
   LArgs: TArray<TTigerOperand>;
   LFuncHandle: TTigerFuncHandle;
   LI: Integer;
+  LArg: TTigerSSAOperand;
+  LLocalHandle: TTigerLocalHandle;
+  LLocalInfo: TTigerLocalInfo;
+  LFuncInfo: TTigerFuncInfo;
 begin
-  // Resolve arguments
+  // Resolve arguments, with special handling for large struct locals
   SetLength(LArgs, Length(AInstr.CallArgs));
+  LFuncInfo := ABackend.GetCode.GetFunc(ABackend.GetCode.GetCurrentFuncHandle().Index);
   for LI := 0 to High(AInstr.CallArgs) do
-    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, ABackend);
+  begin
+    LArg := AInstr.CallArgs[LI];
+    // Check for large struct local that needs address passed (Win64 ABI: >8 bytes)
+    if (LArg.Kind = sokVar) and
+       (not AVarTemps.ContainsKey(LArg.Var_.ToString())) and
+       ALocalHandles.TryGetValue(LArg.Var_.BaseName, LLocalHandle) and
+       (not LLocalHandle.IsParam) then
+    begin
+      LLocalInfo := LFuncInfo.Locals[LLocalHandle.Index];
+      if (LLocalInfo.LocalType = vtVoid) and (LLocalInfo.LocalSize > 8) then
+      begin
+        // Large struct local - return local operand for LEA in backend
+        LArgs[LI] := TTigerOperand.FromLocal(LLocalHandle);
+        Continue;
+      end;
+    end;
+    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, ABackend);
+  end;
   
   // Call based on target type
   if AInstr.CallTarget.Kind = sokImport then

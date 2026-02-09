@@ -201,6 +201,8 @@ type
   TTigerParamInfo = record
     ParamName: string;
     ParamType: TTigerValueType;
+    ParamSize: Integer;       // Size in bytes (for composite types)
+    ParamAlignment: Integer;  // Alignment in bytes (for ABI classification)
   end;
 
   { TTigerLocalInfo }
@@ -290,6 +292,8 @@ type
     Linkage: TTigerLinkage;
     ExportName: string;           // Name to use in export table (computed from linkage)
     ReturnType: TTigerValueType;
+    ReturnSize: Integer;          // Size in bytes (for composite return types)
+    ReturnAlignment: Integer;     // Alignment in bytes (for ABI classification)
     Params: TArray<TTigerParamInfo>;
     Locals: TArray<TTigerLocalInfo>;
     Labels: TArray<TTigerLabelInfo>;

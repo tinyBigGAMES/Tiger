@@ -850,6 +850,15 @@ var
   end;
 
   //----------------------------------------------------------------------------
+  // Helper: REP MOVSB - copy RCX bytes from [RSI] to [RDI]
+  //----------------------------------------------------------------------------
+  procedure EmitRepMovsb();
+  begin
+    EmitByte($F3);  // REP prefix
+    EmitByte($A4);  // MOVSB
+  end;
+
+  //----------------------------------------------------------------------------
   // Helper: CMP reg64, reg64
   //----------------------------------------------------------------------------
   procedure EmitCmpRegReg(const AReg1, AReg2: Byte);
@@ -1137,6 +1146,38 @@ var
   end;
 
   //----------------------------------------------------------------------------
+  // Helper: Load call argument to register, handling large struct params
+  // Win64 ABI: Large structs (>8 bytes) are passed by pointer
+  //----------------------------------------------------------------------------
+  procedure LoadCallArgToReg(const AOp: TTigerOperand; const AReg: Byte;
+    const ATargetFuncIndex: Integer; const AArgIndex: Integer);
+  var
+    LNeedsAddress: Boolean;
+    LLocalInfo: TTigerLocalInfo;
+  begin
+    LNeedsAddress := False;
+    
+    // Check if source is a local struct that needs its address passed
+    // Win64 ABI: structs >8 bytes are passed by pointer
+    if (AOp.Kind = okLocal) and (not AOp.LocalHandle.IsParam) then
+    begin
+      // Get the local's size info
+      LLocalInfo := LFunc.Locals[AOp.LocalHandle.Index];
+      // If local is composite (vtVoid) and > 8 bytes, pass address
+      if (LLocalInfo.LocalType = vtVoid) and (LLocalInfo.LocalSize > 8) then
+        LNeedsAddress := True;
+    end;
+    
+    if LNeedsAddress then
+    begin
+      // LEA reg, [RBP-offset] to get address of local struct
+      EmitLeaRegRbpDisp(AReg, GetLocalOffset(AOp.LocalHandle.Index));
+    end
+    else
+      LoadOperandToReg(AOp, AReg);
+  end;
+
+  //----------------------------------------------------------------------------
   // Helper: Store operand to stack argument slot (for args 5+)
   // Win64 ABI: stack args go to [RSP+32], [RSP+40], etc.
   //----------------------------------------------------------------------------
@@ -1195,6 +1236,46 @@ var
       EmitXorRegReg(REG_RAX);
       EmitMovRspDispReg(LStackOffset, REG_RAX);
     end;
+  end;
+
+  //----------------------------------------------------------------------------
+  // Helper: Store call argument to stack slot, handling large struct params
+  // Win64 ABI: Large structs (>8 bytes) are passed by pointer
+  //----------------------------------------------------------------------------
+  procedure StoreCallArgToStack(const AOp: TTigerOperand; const AArgIndex: Integer;
+    const ATargetFuncIndex: Integer);
+  var
+    LStackOffset: Int32;
+    LTargetFunc: TTigerFuncInfo;
+    LNeedsAddress: Boolean;
+  begin
+    LStackOffset := 32 + (AArgIndex - 4) * 8;
+    LNeedsAddress := False;
+    
+    // Check if target param expects a large struct (passed by pointer)
+    if ATargetFuncIndex >= 0 then
+    begin
+      LTargetFunc := FCode.GetFunc(ATargetFuncIndex);
+      if (AArgIndex >= 0) and (AArgIndex < Length(LTargetFunc.Params)) then
+      begin
+        // Large struct param (>8 bytes): callee expects a pointer
+        if LTargetFunc.Params[AArgIndex].ParamSize > 8 then
+        begin
+          // Source is a local variable (not a param): pass its address
+          if (AOp.Kind = okLocal) and (not AOp.LocalHandle.IsParam) then
+            LNeedsAddress := True;
+        end;
+      end;
+    end;
+    
+    if LNeedsAddress then
+    begin
+      // LEA RAX, [RBP-offset] to get address of local struct, then store to stack
+      EmitLeaRegRbpDisp(REG_RAX, GetLocalOffset(AOp.LocalHandle.Index));
+      EmitMovRspDispReg(LStackOffset, REG_RAX);
+    end
+    else
+      StoreOperandToStackArg(AOp, AArgIndex);
   end;
 
 begin
@@ -1499,6 +1580,7 @@ begin
 
       // Save incoming parameters to stack (Win64: RCX, RDX, R8, R9)
       // For variadic functions: RCX = hidden count, then declared params
+      // For large struct returns (>8 bytes): RCX = hidden return ptr, params shift
       if LFunc.IsVariadic then
       begin
         // Save ALL 4 registers for variadic functions
@@ -1509,6 +1591,20 @@ begin
         EmitMovRbpDispReg(-56, REG_R8);    // Position 2 (param 1 or vararg 1)
         EmitMovRbpDispReg(-64, REG_R9);    // Position 3 (param 2 or vararg 2)
         // Note: position 4+ come from caller's stack, no register save needed
+      end
+      else if LFunc.ReturnSize > 8 then
+      begin
+        // Large struct return: RCX = hidden return pointer (shifts all params)
+        // Save hidden return pointer to [RBP-32]
+        EmitMovRbpDispReg(-32, REG_RCX);
+        // Params are shifted: RDX=param0, R8=param1, R9=param2, stack=param3+
+        if Length(LFunc.Params) > 0 then
+          EmitMovRbpDispReg(GetParamOffset(0), REG_RDX);
+        if Length(LFunc.Params) > 1 then
+          EmitMovRbpDispReg(GetParamOffset(1), REG_R8);
+        if Length(LFunc.Params) > 2 then
+          EmitMovRbpDispReg(GetParamOffset(2), REG_R9);
+        // Param 3+ come from caller's stack, no register save needed
       end
       else
       begin
@@ -1585,17 +1681,17 @@ begin
               // Win64 ABI: First 4 args in RCX, RDX, R8, R9; rest on stack
               // Store stack arguments FIRST (args 5+) using RAX as scratch
               for LK := 4 to High(LInstr.Args) do
-                StoreOperandToStackArg(LInstr.Args[LK], LK);
+                StoreCallArgToStack(LInstr.Args[LK], LK, LInstr.FuncTarget.Index);
               
-              // Then load register arguments
+              // Then load register arguments (with struct handling)
               if Length(LInstr.Args) > 0 then
-                LoadOperandToReg(LInstr.Args[0], REG_RCX);
+                LoadCallArgToReg(LInstr.Args[0], REG_RCX, LInstr.FuncTarget.Index, 0);
               if Length(LInstr.Args) > 1 then
-                LoadOperandToReg(LInstr.Args[1], REG_RDX);
+                LoadCallArgToReg(LInstr.Args[1], REG_RDX, LInstr.FuncTarget.Index, 1);
               if Length(LInstr.Args) > 2 then
-                LoadOperandToReg(LInstr.Args[2], REG_R8);
+                LoadCallArgToReg(LInstr.Args[2], REG_R8, LInstr.FuncTarget.Index, 2);
               if Length(LInstr.Args) > 3 then
-                LoadOperandToReg(LInstr.Args[3], REG_R9);
+                LoadCallArgToReg(LInstr.Args[3], REG_R9, LInstr.FuncTarget.Index, 3);
 
               // CALL rel32 - Record fixup
               // CALL rel32 is 5 bytes, displacement is at offset 1
@@ -1657,8 +1753,10 @@ begin
 
           ikAddressOf:
             begin
-              // Dest = address of local/param
+              // Dest = address of local/param slot (always LEA)
               // Op1 = local handle
+              // Note: For by-ref params (structs >8 bytes), the caller should emit
+              // a subsequent load instruction to get the actual struct pointer.
               if LInstr.Op1.LocalHandle.IsParam then
                 EmitLeaRegRbpDisp(REG_RAX, GetParamOffset(LInstr.Op1.LocalHandle.Index))
               else
@@ -1945,8 +2043,33 @@ begin
 
           ikReturnValue:
             begin
-              // Load return value into RAX
-              LoadOperandToReg(LInstr.Op1, REG_RAX);
+              if LFunc.ReturnSize > 8 then
+              begin
+                // Large struct return: copy to hidden return pointer
+                // RSI = source address (the local struct)
+                if LInstr.Op1.Kind = okLocal then
+                begin
+                  if LInstr.Op1.LocalHandle.IsParam then
+                    EmitLeaRegRbpDisp(REG_RSI, GetParamOffset(LInstr.Op1.LocalHandle.Index))
+                  else
+                    EmitLeaRegRbpDisp(REG_RSI, GetLocalOffset(LInstr.Op1.LocalHandle.Index));
+                end
+                else
+                  LoadOperandToReg(LInstr.Op1, REG_RSI);  // Fallback: assume it's a pointer
+                // RDI = hidden return pointer from [RBP-32]
+                EmitMovRegRbpDisp(REG_RDI, -32);
+                // RCX = byte count
+                EmitMovRegImm32(REG_RCX, Cardinal(LFunc.ReturnSize));
+                // Copy bytes
+                EmitRepMovsb();
+                // Return the hidden pointer in RAX
+                EmitMovRegRbpDisp(REG_RAX, -32);
+              end
+              else
+              begin
+                // Small return value: load directly into RAX
+                LoadOperandToReg(LInstr.Op1, REG_RAX);
+              end;
               // Epilogue: MOV RSP, RBP; POP RBP; RET
               EmitMovRegReg(REG_RSP, REG_RBP);
               EmitPopReg(REG_RBP);
@@ -1958,7 +2081,24 @@ begin
       end;
 
       // Ensure function ends properly (for functions without explicit return)
-      // Add padding
+      // Check if we need to add an implicit epilogue
+      if Length(LFunc.Instructions) > 0 then
+      begin
+        if not (LFunc.Instructions[High(LFunc.Instructions)].Kind in [ikReturn, ikReturnValue]) then
+        begin
+          // Function doesn't end with explicit return - add epilogue
+          EmitMovRegReg(REG_RSP, REG_RBP);
+          EmitPopReg(REG_RBP);
+          EmitRet();
+        end;
+      end
+      else
+      begin
+        // Empty function - add epilogue
+        EmitMovRegReg(REG_RSP, REG_RBP);
+        EmitPopReg(REG_RBP);
+        EmitRet();
+      end;
 
       // Backpatch jump targets within this function
       for LK := 0 to LJumpFixups.Count - 1 do
@@ -3564,6 +3704,12 @@ var
     EmitModRM(3, 5, AReg and 7);
   end;
 
+  procedure EmitRepMovsb();
+  begin
+    EmitByte($F3);  // REP prefix
+    EmitByte($A4);  // MOVSB
+  end;
+
   procedure EmitCmpRegReg(const AReg1, AReg2: Byte);
   begin
     EmitRex(True, AReg2 >= 8, False, AReg1 >= 8);
@@ -3778,6 +3924,38 @@ var
   end;
 
   //----------------------------------------------------------------------------
+  // Helper: Load call argument to register, handling large struct params
+  // Win64 ABI: Large structs (>8 bytes) are passed by pointer
+  //----------------------------------------------------------------------------
+  procedure LoadCallArgToReg(const AOp: TTigerOperand; const AReg: Byte;
+    const ATargetFuncIndex: Integer; const AArgIndex: Integer);
+  var
+    LNeedsAddress: Boolean;
+    LLocalInfo: TTigerLocalInfo;
+  begin
+    LNeedsAddress := False;
+    
+    // Check if source is a local struct that needs its address passed
+    // Win64 ABI: structs >8 bytes are passed by pointer
+    if (AOp.Kind = okLocal) and (not AOp.LocalHandle.IsParam) then
+    begin
+      // Get the local's size info
+      LLocalInfo := LFunc.Locals[AOp.LocalHandle.Index];
+      // If local is composite (vtVoid) and > 8 bytes, pass address
+      if (LLocalInfo.LocalType = vtVoid) and (LLocalInfo.LocalSize > 8) then
+        LNeedsAddress := True;
+    end;
+    
+    if LNeedsAddress then
+    begin
+      // LEA reg, [RBP-offset] to get address of local struct
+      EmitLeaRegRbpDisp(AReg, GetLocalOffset(AOp.LocalHandle.Index));
+    end
+    else
+      LoadOperandToReg(AOp, AReg);
+  end;
+
+  //----------------------------------------------------------------------------
   // Store operand to stack argument slot (for args 5+, Win64 ABI)
   //----------------------------------------------------------------------------
   procedure StoreOperandToStackArg(const AOp: TTigerOperand; const AArgIndex: Integer);
@@ -3841,6 +4019,46 @@ var
       EmitXorRegReg(REG_RAX);
       EmitMovRspDispReg(LStackOffset, REG_RAX);
     end;
+  end;
+
+  //----------------------------------------------------------------------------
+  // Helper: Store call argument to stack slot, handling large struct params
+  // Win64 ABI: Large structs (>8 bytes) are passed by pointer
+  //----------------------------------------------------------------------------
+  procedure StoreCallArgToStack(const AOp: TTigerOperand; const AArgIndex: Integer;
+    const ATargetFuncIndex: Integer);
+  var
+    LStackOffset: Int32;
+    LTargetFunc: TTigerFuncInfo;
+    LNeedsAddress: Boolean;
+  begin
+    LStackOffset := 32 + (AArgIndex - 4) * 8;
+    LNeedsAddress := False;
+    
+    // Check if target param expects a large struct (passed by pointer)
+    if ATargetFuncIndex >= 0 then
+    begin
+      LTargetFunc := FCode.GetFunc(ATargetFuncIndex);
+      if (AArgIndex >= 0) and (AArgIndex < Length(LTargetFunc.Params)) then
+      begin
+        // Large struct param (>8 bytes): callee expects a pointer
+        if LTargetFunc.Params[AArgIndex].ParamSize > 8 then
+        begin
+          // Source is a local variable (not a param): pass its address
+          if (AOp.Kind = okLocal) and (not AOp.LocalHandle.IsParam) then
+            LNeedsAddress := True;
+        end;
+      end;
+    end;
+    
+    if LNeedsAddress then
+    begin
+      // LEA RAX, [RBP-offset] to get address of local struct, then store to stack
+      EmitLeaRegRbpDisp(REG_RAX, GetLocalOffset(AOp.LocalHandle.Index));
+      EmitMovRspDispReg(LStackOffset, REG_RAX);
+    end
+    else
+      StoreOperandToStackArg(AOp, AArgIndex);
   end;
 
   //----------------------------------------------------------------------------
@@ -4077,12 +4295,27 @@ begin
         EmitSubRspImm32(LStackFrameSize);
 
       // Save incoming parameters to stack (Win64: RCX, RDX, R8, R9)
+      // For large struct returns (>8 bytes): RCX = hidden return ptr, params shift
       if LFunc.IsVariadic then
       begin
         EmitMovRbpDispReg(-40, REG_RCX);
         EmitMovRbpDispReg(-48, REG_RDX);
         EmitMovRbpDispReg(-56, REG_R8);
         EmitMovRbpDispReg(-64, REG_R9);
+      end
+      else if LFunc.ReturnSize > 8 then
+      begin
+        // Large struct return: RCX = hidden return pointer (shifts all params)
+        // Save hidden return pointer to [RBP-32]
+        EmitMovRbpDispReg(-32, REG_RCX);
+        // Params are shifted: RDX=param0, R8=param1, R9=param2, stack=param3+
+        if Length(LFunc.Params) > 0 then
+          EmitMovRbpDispReg(GetParamOffset(0), REG_RDX);
+        if Length(LFunc.Params) > 1 then
+          EmitMovRbpDispReg(GetParamOffset(1), REG_R8);
+        if Length(LFunc.Params) > 2 then
+          EmitMovRbpDispReg(GetParamOffset(2), REG_R9);
+        // Param 3+ come from caller's stack, no register save needed
       end
       else
       begin
@@ -4154,16 +4387,17 @@ begin
             begin
               // Call local function — resolved via backpatch (same .text section)
               for LK := 4 to High(LInstr.Args) do
-                StoreOperandToStackArg(LInstr.Args[LK], LK);
+                StoreCallArgToStack(LInstr.Args[LK], LK, LInstr.FuncTarget.Index);
 
+              // Load register arguments (with struct handling)
               if Length(LInstr.Args) > 0 then
-                LoadOperandToReg(LInstr.Args[0], REG_RCX);
+                LoadCallArgToReg(LInstr.Args[0], REG_RCX, LInstr.FuncTarget.Index, 0);
               if Length(LInstr.Args) > 1 then
-                LoadOperandToReg(LInstr.Args[1], REG_RDX);
+                LoadCallArgToReg(LInstr.Args[1], REG_RDX, LInstr.FuncTarget.Index, 1);
               if Length(LInstr.Args) > 2 then
-                LoadOperandToReg(LInstr.Args[2], REG_R8);
+                LoadCallArgToReg(LInstr.Args[2], REG_R8, LInstr.FuncTarget.Index, 2);
               if Length(LInstr.Args) > 3 then
-                LoadOperandToReg(LInstr.Args[3], REG_R9);
+                LoadCallArgToReg(LInstr.Args[3], REG_R9, LInstr.FuncTarget.Index, 3);
 
               // CALL rel32 — displacement patched after all code generated
               LCallFixups.Add(TPair<Cardinal, Integer>.Create(LTextSection.Size + 1, LInstr.FuncTarget.Index));
@@ -4212,6 +4446,10 @@ begin
 
           ikAddressOf:
             begin
+              // Dest = address of local/param slot (always LEA)
+              // Op1 = local handle
+              // Note: For by-ref params (structs >8 bytes), the caller should emit
+              // a subsequent load instruction to get the actual struct pointer.
               if LInstr.Op1.LocalHandle.IsParam then
                 EmitLeaRegRbpDisp(REG_RAX, GetParamOffset(LInstr.Op1.LocalHandle.Index))
               else
@@ -4440,12 +4678,58 @@ begin
 
           ikReturnValue:
             begin
-              LoadOperandToReg(LInstr.Op1, REG_RAX);
+              if LFunc.ReturnSize > 8 then
+              begin
+                // Large struct return: copy to hidden return pointer
+                // RSI = source address (the local struct)
+                if LInstr.Op1.Kind = okLocal then
+                begin
+                  if LInstr.Op1.LocalHandle.IsParam then
+                    EmitLeaRegRbpDisp(REG_RSI, GetParamOffset(LInstr.Op1.LocalHandle.Index))
+                  else
+                    EmitLeaRegRbpDisp(REG_RSI, GetLocalOffset(LInstr.Op1.LocalHandle.Index));
+                end
+                else
+                  LoadOperandToReg(LInstr.Op1, REG_RSI);  // Fallback: assume it's a pointer
+                // RDI = hidden return pointer from [RBP-32]
+                EmitMovRegRbpDisp(REG_RDI, -32);
+                // RCX = byte count
+                EmitMovRegImm32(REG_RCX, Cardinal(LFunc.ReturnSize));
+                // Copy bytes
+                EmitRepMovsb();
+                // Return the hidden pointer in RAX
+                EmitMovRegRbpDisp(REG_RAX, -32);
+              end
+              else
+              begin
+                // Small return value: load directly into RAX
+                LoadOperandToReg(LInstr.Op1, REG_RAX);
+              end;
               EmitMovRegReg(REG_RSP, REG_RBP);
               EmitPopReg(REG_RBP);
               EmitRet();
             end;
         end;
+      end;
+
+      // Ensure function ends properly (for functions without explicit return)
+      // Check if we need to add an implicit epilogue
+      if Length(LFunc.Instructions) > 0 then
+      begin
+        if not (LFunc.Instructions[High(LFunc.Instructions)].Kind in [ikReturn, ikReturnValue]) then
+        begin
+          // Function doesn't end with explicit return - add epilogue
+          EmitMovRegReg(REG_RSP, REG_RBP);
+          EmitPopReg(REG_RBP);
+          EmitRet();
+        end;
+      end
+      else
+      begin
+        // Empty function - add epilogue
+        EmitMovRegReg(REG_RSP, REG_RBP);
+        EmitPopReg(REG_RBP);
+        EmitRet();
       end;
 
       // Record end of function code (before alignment padding)

@@ -275,6 +275,8 @@ type
     TIRFunc = record
       FuncName: string;
       ReturnType: TTigerValueType;
+      ReturnSize: Integer;          // Size in bytes (for composite return types)
+      ReturnAlignment: Integer;     // Alignment in bytes (for ABI classification)
       IsEntryPoint: Boolean;
       IsDllEntry: Boolean;        // If True, this is the DllMain entry point
       IsPublic: Boolean;          // If True, export this function
@@ -629,7 +631,9 @@ type
       const AIsPublic: Boolean = False
     ): TTigerIR;
     function DllMain(): TTigerIR;
-    function Param(const AName: string; const AType: TTigerValueType): TTigerIR;
+    function Param(const AName: string; const AType: TTigerValueType): TTigerIR; overload;
+    function Param(const AName: string; const ATypeName: string): TTigerIR; overload;
+    function Returns(const ATypeName: string): TTigerIR;
     function Local(const AName: string; const AType: TTigerValueType): TTigerIR; overload;
     function Local(const AName: string; const ATypeName: string): TTigerIR; overload;
     function EndFunc(): TTigerIR;
@@ -2836,6 +2840,55 @@ begin
 
   FFunctions[FCurrentFunc] := LFunc;
   Result := Self;
+end;
+
+function TTigerIR.Param(const AName: string; const ATypeName: string): TTigerIR;
+var
+  LVar: TIRVar;
+  LFunc: TIRFunc;
+  LTypeIndex: Integer;
+begin
+  Result := Self;
+  LFunc := GetCurrentFunc();
+
+  LTypeIndex := FindType(ATypeName);
+  if LTypeIndex < 0 then
+  begin
+    if Assigned(FErrors) then
+      FErrors.Add(esError, ERR_IR_UNKNOWN_TYPE, 'Unknown type: %s', [ATypeName]);
+    Exit;
+  end;
+
+  LVar := Default(TIRVar);
+  LVar.VarName := AName;
+  LVar.VarTypeRef := TTigerTypeRef.FromComposite(LTypeIndex);
+  LVar.IsParam := True;
+
+  LFunc.Vars.Add(LVar);
+  FFunctions[FCurrentFunc] := LFunc;
+end;
+
+function TTigerIR.Returns(const ATypeName: string): TTigerIR;
+var
+  LFunc: TIRFunc;
+  LTypeIndex: Integer;
+begin
+  Result := Self;
+  LFunc := GetCurrentFunc();
+
+  LTypeIndex := FindType(ATypeName);
+  if LTypeIndex < 0 then
+  begin
+    if Assigned(FErrors) then
+      FErrors.Add(esError, ERR_IR_UNKNOWN_TYPE, 'Unknown type: %s', [ATypeName]);
+    Exit;
+  end;
+
+  // Set return type to pointer (large structs are returned via hidden pointer)
+  LFunc.ReturnType := vtPointer;
+  LFunc.ReturnSize := GetTypeSize(TTigerTypeRef.FromComposite(LTypeIndex));
+  LFunc.ReturnAlignment := GetTypeAlignment(TTigerTypeRef.FromComposite(LTypeIndex));
+  FFunctions[FCurrentFunc] := LFunc;
 end;
 
 function TTigerIR.Local(const AName: string; const AType: TTigerValueType): TTigerIR;
