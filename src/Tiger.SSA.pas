@@ -296,6 +296,7 @@ type
     LocalName: string;
     LocalTypeRef: TTigerTypeRef;  // Supports primitive and composite types
     LocalSize: Integer;         // Size in bytes (for composite types)
+    LocalAlignment: Integer;    // Alignment in bytes (for ABI classification)
     IsParam: Boolean;
     IsManaged: Boolean;         // True for string types that need cleanup
   end;
@@ -340,7 +341,7 @@ type
     procedure SetIsPublic(const AValue: Boolean);
     procedure SetLinkage(const AValue: TTigerLinkage);
     procedure SetIsVariadic(const AValue: Boolean);
-    procedure AddLocal(const AName: string; const ATypeRef: TTigerTypeRef; const ASize: Integer; const AIsParam: Boolean; const AIsManaged: Boolean = False);
+    procedure AddLocal(const AName: string; const ATypeRef: TTigerTypeRef; const ASize: Integer; const AAlignment: Integer; const AIsParam: Boolean; const AIsManaged: Boolean = False);
     
     // Block management
     function CreateBlock(const AName: string): Integer;
@@ -961,13 +962,14 @@ begin
   FIsVariadic := AValue;
 end;
 
-procedure TTigerSSAFunc.AddLocal(const AName: string; const ATypeRef: TTigerTypeRef; const ASize: Integer; const AIsParam: Boolean; const AIsManaged: Boolean);
+procedure TTigerSSAFunc.AddLocal(const AName: string; const ATypeRef: TTigerTypeRef; const ASize: Integer; const AAlignment: Integer; const AIsParam: Boolean; const AIsManaged: Boolean);
 var
   LInfo: TTigerSSALocalInfo;
 begin
   LInfo.LocalName := AName;
   LInfo.LocalTypeRef := ATypeRef;
   LInfo.LocalSize := ASize;
+  LInfo.LocalAlignment := AAlignment;
   LInfo.IsParam := AIsParam;
   LInfo.IsManaged := AIsManaged;
   FLocals.Add(LInfo);
@@ -1872,6 +1874,7 @@ var
   LSSAFunc: TTigerSSAFunc;
   LVar: TTigerIR.TIRVar;
   LVarSize: Integer;
+  LVarAlign: Integer;
   LImport: TTigerIR.TIRImport;
   LStr: TTigerIR.TIRString;
   LStrCleanup: TTigerSSAStringCleanup;
@@ -1923,12 +1926,18 @@ begin
     for LJ := 0 to LFunc.Vars.Count - 1 do
     begin
       LVar := LFunc.Vars[LJ];
-      // Calculate size for this variable
+      // Calculate size and alignment for this variable
       if LVar.VarTypeRef.IsPrimitive then
-        LVarSize := 8  // All primitives use 8 bytes on stack (aligned)
+      begin
+        LVarSize := 8;   // All primitives use 8 bytes on stack (aligned)
+        LVarAlign := 8;  // Primitives align to 8 bytes
+      end
       else
-        LVarSize := AIR.GetTypeSize(LVar.VarTypeRef);  // Get composite type size
-      LSSAFunc.AddLocal(LVar.VarName, LVar.VarTypeRef, LVarSize, LVar.IsParam, AIR.IsStringType(LVar.VarTypeRef));
+      begin
+        LVarSize := AIR.GetTypeSize(LVar.VarTypeRef);       // Get composite type size
+        LVarAlign := AIR.GetTypeAlignment(LVar.VarTypeRef); // Get composite type alignment
+      end;
+      LSSAFunc.AddLocal(LVar.VarName, LVar.VarTypeRef, LVarSize, LVarAlign, LVar.IsParam, AIR.IsStringType(LVar.VarTypeRef));
     end;
     
     // Create entry block
@@ -4799,7 +4808,7 @@ begin
           if LLocal.LocalTypeRef.IsPrimitive then
             LLocalHandle := ABackend.GetCode.AddLocal(LLocal.LocalName, LLocal.LocalTypeRef.Primitive)
           else
-            LLocalHandle := ABackend.GetCode.AddLocal(LLocal.LocalName, LLocal.LocalSize);
+            LLocalHandle := ABackend.GetCode.AddLocal(LLocal.LocalName, LLocal.LocalSize, LLocal.LocalAlignment);
           LLocalHandles.Add(LLocal.LocalName, LLocalHandle);
         end;
       end;

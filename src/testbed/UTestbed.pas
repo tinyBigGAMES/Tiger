@@ -527,11 +527,16 @@ var
 begin
   TWin64Utils.PrintLn('=== Test07: Type System ===');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test07.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if APlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test07.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     //------------------------------------------------------------------------
     // Define types
@@ -682,7 +687,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test07.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test07'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -714,11 +719,16 @@ begin
   TWin64Utils.PrintLn('=== Test08: Phase 4 - Full C Struct ABI ===');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test08.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if APlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test08.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     //------------------------------------------------------------------------
     // Phase 4a: Explicit Alignment
@@ -1051,7 +1061,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test08.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test08'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2633,7 +2643,7 @@ end;
 procedure RunTestbed();
 begin
   try
-    RunTest(1, tpLinux64);
+    RunTest(7, tpLinux64, True);
     //Linux_Test();
   except
     on E: Exception do

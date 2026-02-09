@@ -149,6 +149,7 @@ type
     function AddParam(const AName: string; const AType: TTigerValueType): TTigerLocalHandle;
     function AddLocal(const AName: string; const AType: TTigerValueType): TTigerLocalHandle; overload;
     function AddLocal(const AName: string; const ASize: Integer): TTigerLocalHandle; overload;
+    function AddLocal(const AName: string; const ASize: Integer; const AAlignment: Integer): TTigerLocalHandle; overload;
 
     //--------------------------------------------------------------------------
     // Labels
@@ -906,6 +907,7 @@ begin
   LLocal.LocalName := AName;
   LLocal.LocalType := AType;
   LLocal.LocalSize := LSize;
+  LLocal.LocalAlignment := 8;  // All primitives align to 8 bytes
   LLocal.StackOffset := 0;  // Will be calculated during code generation
 
   LLen := Length(LFunc.Locals);
@@ -933,6 +935,35 @@ begin
   LLocal.LocalName := AName;
   LLocal.LocalType := vtVoid;  // Composite type
   LLocal.LocalSize := LAlignedSize;
+  LLocal.LocalAlignment := 8;  // Default alignment for composite types
+  LLocal.StackOffset := 0;  // Will be calculated during code generation
+
+  LLen := Length(LFunc.Locals);
+  SetLength(LFunc.Locals, LLen + 1);
+  LFunc.Locals[LLen] := LLocal;
+
+  SetCurrentFunc(LFunc);
+
+  Result.Index := LLen;
+  Result.IsParam := False;
+end;
+
+function TTigerCodeBuilder.AddLocal(const AName: string; const ASize: Integer; const AAlignment: Integer): TTigerLocalHandle;
+var
+  LFunc: TTigerFuncInfo;
+  LLocal: TTigerLocalInfo;
+  LLen: Integer;
+  LAlignedSize: Integer;
+begin
+  LFunc := GetCurrentFunc();
+
+  // Align size to 8 bytes for stack alignment
+  LAlignedSize := ((ASize + 7) div 8) * 8;
+
+  LLocal.LocalName := AName;
+  LLocal.LocalType := vtVoid;  // Composite type
+  LLocal.LocalSize := LAlignedSize;
+  LLocal.LocalAlignment := AAlignment;
   LLocal.StackOffset := 0;  // Will be calculated during code generation
 
   LLen := Length(LFunc.Locals);

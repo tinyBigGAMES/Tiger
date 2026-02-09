@@ -208,6 +208,7 @@ type
     LocalName: string;
     LocalType: TTigerValueType;
     LocalSize: Integer;      // Size in bytes (for composite types)
+    LocalAlignment: Integer;  // Alignment in bytes (for ABI classification)
     StackOffset: Integer;
   end;
 
