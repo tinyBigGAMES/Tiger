@@ -1336,6 +1336,7 @@ Tiger is a labor of love, built in the open. If it saves you time or sparks an i
 - ⭐ **Star the repo** to help others find it
 - 🗣️ **Spread the word** on social media or your blog
 - 💬 **Join us on Discord** to share what you're building
+- 💖 **Become a sponsor** — Support ongoing development via [GitHub Sponsors](https://github.com/sponsors/tinyBigGAMES)
 
 Your support keeps the project alive!
 
