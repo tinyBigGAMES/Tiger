@@ -4,23 +4,22 @@
 
 [![Discord](https://img.shields.io/discord/1457450179254026250?style=for-the-badge&logo=discord&label=Discord)](https://discord.gg/Wb6z8Wam7p) [![Follow on Bluesky](https://img.shields.io/badge/Bluesky-tinyBigGAMES-blue?style=for-the-badge&logo=bluesky)](https://bsky.app/profile/tinybiggames.com)
 
-A programmatic compiler infrastructure for building native x86-64 Windows binaries from Delphi.
+**A compiler infrastructure for generating cross-platform native binaries.**
 
 </div>
 
 ## What is Tiger?
 
-**Tiger** is a Delphi-hosted compiler infrastructure that lets you programmatically generate native x86-64 Windows binaries — executables, DLLs, static libraries, and COFF object files — entirely from code. There is no source language to parse. Instead, you construct programs using a fluent Delphi API: define types, declare functions, emit statements and expressions, and call `Build`. Tiger handles SSA-based IR generation, optimization, machine code emission, PE linking, and resource embedding.
+**Tiger** is a Delphi-hosted compiler infrastructure that lets you programmatically generate native x86-64 binaries for Windows and Linux — executables, shared libraries, static libraries, and object files — entirely from code. There is no source language to parse. Instead, you construct programs using a fluent Delphi API: define types, declare functions, emit statements and expressions, and call `Build`. Tiger handles SSA-based IR generation, optimization, machine code emission, PE/ELF linking, and resource embedding.
 
 ```delphi
-LTiger := TTiger.Create();
+LTiger := TTiger.Create(tpWin64);
 try
   LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-  LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
   LTiger.Func('main', vtVoid, True)
     .Call('printf', [LTiger.Str('Hello, World!'#10)])
-    .Call('ExitProcess', [LTiger.Int64(0)])
+    .Call('Tiger_Halt', [LTiger.Int64(0)])
   .EndFunc();
 
   LTiger.TargetExe('output\hello.exe', ssConsole);
@@ -32,35 +31,36 @@ end;
 
 ## 🎯 Who is Tiger For?
 
-Tiger is designed for Delphi developers who need to generate native machine code at build time or runtime. If you're building any of the following, Tiger gives you a pure-Delphi path to native x86-64 binaries without external compilers, linkers, or toolchains:
+Tiger is designed for Delphi developers who need to generate native machine code at build time or runtime. If you're building any of the following, Tiger gives you a pure-Delphi path to native x86-64 binaries for Windows and Linux without external compilers, linkers, or toolchains:
 
-- **Custom language compilers** — Build your own programming language and target real Windows executables. Tiger handles the backend so you can focus on parsing and semantics.
+- **Custom language compilers** — Build your own programming language and target real native executables. Tiger handles the backend so you can focus on parsing and semantics.
 - **Scripting engines with native compilation** — Compile user scripts or DSLs down to machine code instead of interpreting them, getting native performance with no runtime overhead.
 - **Game scripting systems** — Let modders or designers write game logic in a custom language that compiles to native code through Tiger.
 - **Rule engines and formula evaluators** — Compile business rules, mathematical formulas, or filter expressions into native functions that execute at full CPU speed.
-- **Plugin and extension systems** — Generate native DLLs programmatically so your application can produce its own loadable plugins.
+- **Plugin and extension systems** — Generate native DLLs or shared objects programmatically so your application can produce its own loadable plugins.
 - **Compiler education** — Learn how compilers work in a language you already know. Tiger's source is pure Object Pascal — no C++ template metaprogramming or LLVM API to wrestle with.
 
-Tiger requires only a single `uses Tiger;` clause. There are no external dependencies, no C/C++ toolchain, and no LLVM installation. Everything from IR construction through PE linking happens inside your Delphi process.
+Tiger requires only a single `uses Tiger;` clause. There are no external dependencies, no C/C++ toolchain, and no LLVM installation. Everything from IR construction through PE/ELF linking happens inside your Delphi process.
 
 ## ✨ Key Features
 
 - 🔧 **Programmatic API** — Build native binaries entirely from Delphi code, no parser needed
 - ⚡ **Fluent interface** — Chainable method calls for clean, readable program construction
-- 🎯 **Native x86-64** — Generates real machine code, not bytecode or interpreted output
-- 🔗 **DLL imports** — Call any Windows API or third-party DLL function directly
-- 📦 **Static linking** — Produce and consume `.lib` and `.obj` COFF files
-- 🎛️ **Multiple outputs** — Build executables, DLLs, static libraries, or object files
+- 🎯 **Native binaries** — Generates real x86-64 machine code for Windows and Linux, not bytecode or interpreted output
+- 🌐 **Cross-platform** — Target Windows (PE/COFF) or Linux (ELF) from the same Delphi codebase
+- 🔗 **External imports** — Call Windows APIs, Linux libc, or any shared library function directly
+- 📦 **Static linking** — Produce and consume `.lib`/`.obj` (Windows) or `.a`/`.o` (Linux) files
+- 🎛️ **Multiple outputs** — Build executables, DLLs/shared objects, static libraries, or object files
 - 🧬 **Rich type system** — Records, unions, arrays, enums, sets, pointers, and function pointer types
 - 🔀 **Record inheritance** — Extend records with base type fields and correct ABI layout
 - 🔀 **Union types** — C-compatible unions with anonymous nesting inside records
 - 📊 **Fixed and dynamic arrays** — Compile-time sized arrays and runtime-managed dynamic arrays
 - 🔢 **Set types** — Pascal-style sets with membership, union, intersection, and difference operations
 - 🧠 **SSA optimizer** — Constant folding, copy propagation, common subexpression elimination, dead code elimination
-- ⚠️ **Exception handling** — try/except/finally with Windows SEH and hardware exception support
+- ⚠️ **Exception handling** — try/except/finally with platform-native mechanisms (Windows SEH, Linux signals)
 - 🔌 **Variadic functions** — Native Tiger varargs with `VaCount` and `VaArg` intrinsics
 - 🔄 **Function overloading** — Multiple functions with the same name resolved by parameter signature
-- 🏷️ **Version info** — Embed metadata and icons in executables
+- 🏷️ **Version info** — Embed metadata and icons in Windows executables
 - 📝 **Managed strings** — Reference-counted string types with concatenation and lifecycle management
 - 💾 **Runtime memory** — Built-in `Tiger_GetMem`/`Tiger_FreeMem` heap management
 
@@ -76,7 +76,7 @@ procedure BuildMyProgram();
 var
   LTiger: TTiger;
 begin
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(tpWin64);
   try
     // 1. Configure: set optimization level and status output
     LTiger.SetOptimizationLevel(2);
@@ -88,7 +88,6 @@ begin
 
     // 2. Import external functions your program needs
     LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('kernel32.dll', 'ExitProcess', [vtUInt32], vtVoid);
 
     // 3. Define types (optional — only if you need records, arrays, etc.)
     LTiger.DefineRecord('TPoint')
@@ -104,7 +103,7 @@ begin
        .Call('printf', [LTiger.Str('Point: (%d, %d)'#10),
          LTiger.GetField(LTiger.Get('pt'), 'X'),
          LTiger.GetField(LTiger.Get('pt'), 'Y')])
-       .Call('ExitProcess', [LTiger.Int64(0)])
+       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
     // 5. Set the target and build
@@ -121,6 +120,108 @@ end;
 The `src\testbed` project contains extensive working examples covering every feature documented below. It is the best reference for learning the API.
 
 > **IDE Documentation:** The `TTiger` class in `Tiger.pas` includes comprehensive XML documentation on every public method. In the Delphi IDE, hover over any method or press Ctrl+Shift+D to see detailed parameter descriptions, usage notes, and cross-references.
+
+## 🐧 Cross-Platform Development
+
+Tiger supports both Windows (Win64) and Linux (Linux64) targets from a single Delphi codebase. The API is identical across platforms — only the external library names differ.
+
+### Platform Selection
+
+Select the target platform when creating the Tiger instance:
+
+```delphi
+// Target Windows (default)
+LTiger := TTiger.Create(tpWin64);
+
+// Target Linux
+LTiger := TTiger.Create(tpLinux64);
+```
+
+### Platform-Specific Imports
+
+Use `GetPlatform` to conditionally import from the correct system library:
+
+```delphi
+LTiger := TTiger.Create(tpLinux64);
+try
+  // Platform-specific setup: Windows uses msvcrt.dll, Linux uses libc.so.6
+  if LTiger.GetPlatform = tpWin64 then
+    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
+  else
+    LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+
+  // The rest of the program is identical across platforms
+  LTiger.Func('main', vtVoid, True)
+    .Call('printf', [LTiger.Str('Hello from Tiger!'#10)])
+    .Call('Tiger_Halt', [LTiger.Int64(0)])
+  .EndFunc();
+
+  LTiger.TargetExe(TPath.Combine(COutputPath, 'hello'), ssConsole);
+  LTiger.Build(True, nil);
+finally
+  LTiger.Free();
+end;
+```
+
+### Setting Up WSL for Linux Development
+
+Tiger leverages Windows Subsystem for Linux (WSL) to provide a seamless cross-platform development experience. You write and compile Tiger programs in Delphi on Windows, and Tiger automatically executes Linux binaries through WSL integration.
+
+#### One-Time WSL Setup
+
+1. **Install WSL2 with Ubuntu:**
+   ```powershell
+   wsl --install -d Ubuntu
+   ```
+
+2. **Complete Ubuntu setup** — follow the prompts to create a username and password.
+
+3. **Install required packages:**
+   ```bash
+   sudo apt update
+   sudo apt install build-essential
+   ```
+
+That's it. No additional configuration is required.
+
+#### How It Works
+
+When you call `Build(True, ...)` with `AAutoRun = True` on a Linux64 target, Tiger:
+
+1. Generates an ELF executable to your specified output path (on the Windows filesystem)
+2. Automatically converts the Windows path to a WSL path (e.g., `C:\output\myapp` → `/mnt/c/output/myapp`)
+3. Runs `wsl.exe chmod +x` to make the binary executable
+4. Executes the binary via `wsl.exe` and captures the exit code
+
+From your perspective, building and running a Linux program is identical to building a Windows program — just pass `tpLinux64` to `TTiger.Create()`.
+
+#### Manual Execution
+
+You can also run Tiger-generated Linux binaries manually from any Windows command prompt or PowerShell:
+
+```powershell
+wsl.exe ./output/hello
+```
+
+Or navigate to the output directory first:
+
+```powershell
+cd output
+wsl.exe ./hello
+```
+
+### Platform Feature Matrix
+
+| Feature | Windows (Win64) | Linux (Linux64) |
+|---------|-----------------|-----------------|
+| Executable generation | ✅ PE `.exe` | ✅ ELF |
+| Shared library | ✅ `.dll` | ✅ `.so` |
+| Static library | ✅ COFF `.lib` | ✅ ar `.a` |
+| Object files | ✅ COFF `.obj` | ✅ ELF `.o` |
+| System library imports | ✅ kernel32, msvcrt, etc. | ✅ libc.so.6 |
+| Heap management | ✅ HeapAlloc/HeapFree | ✅ malloc/free |
+| Exception handling | ✅ Windows SEH | ✅ Signal-based |
+| Version info/icons | ✅ PE resources | — |
 
 ## 📘 API Overview
 
@@ -140,12 +241,12 @@ Tiger uses explicit, fixed-size types with no implicit conversions. Every type h
 
 Every Tiger program targets one output format. The target method determines what the backend produces.
 
-| Method | Description |
-|--------|-------------|
-| `TargetExe(path, subsystem)` | PE executable (console or GUI) |
-| `TargetDll(path)` | Dynamic link library |
-| `TargetLib(path)` | Static library (COFF `.lib`) |
-| `TargetObj(path)` | Relocatable object file (COFF `.obj`) |
+| Method | Windows | Linux |
+|--------|---------|-------|
+| `TargetExe(path, subsystem)` | PE executable (`.exe`) | ELF executable |
+| `TargetDll(path)` | Dynamic link library (`.dll`) | Shared object (`.so`) |
+| `TargetLib(path)` | Static library (COFF `.lib`) | Archive (`.a`) |
+| `TargetObj(path)` | Object file (COFF `.obj`) | Object file (ELF `.o`) |
 
 ### Linkage Modes
 
@@ -156,9 +257,11 @@ Tiger supports two calling convention / name-mangling modes for interoperability
 | `plDefault` | C++ Itanium mangling (default) |
 | `plC` | C linkage, no name mangling |
 
-## 🔗 DLL Imports
+## 🔗 External Library Imports
 
-Any function exported from a Windows DLL can be imported into a Tiger program using `ImportDll`. Tiger writes the import into the PE import table, and the Windows loader resolves it at startup. This is how Tiger programs access the Windows API, the C runtime, and any third-party DLL.
+Import functions from system libraries using `ImportDll`. Tiger writes the import into the PE import table (Windows) or dynamic symbol table (Linux), and the system loader resolves it at startup. This is how Tiger programs access the Windows API, Linux libc, and any third-party shared library.
+
+### Windows Imports
 
 ```delphi
 // Import printf with variadic arguments
@@ -175,11 +278,25 @@ LTiger.ImportDll('user32.dll', 'MessageBoxA',
   [vtUInt64, vtPointer, vtPointer, vtUInt32], vtInt32);
 ```
 
-### Dynamic Loading
-
-For functions that may not be available on all systems, or when you need to choose a DLL at runtime, use `LoadLibraryA` and `GetProcAddress` through standard kernel32 imports. This gives you runtime control over which libraries are loaded and lets you handle missing functions gracefully.
+### Linux Imports
 
 ```delphi
+// Import printf from GNU C Library
+LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+
+// Import puts (simpler output)
+LTiger.ImportDll('libc.so.6', 'puts', [vtPointer], vtInt32);
+
+// Import math functions
+LTiger.ImportDll('libm.so.6', 'sqrt', [vtFloat64], vtFloat64);
+```
+
+### Dynamic Loading
+
+For functions that may not be available on all systems, or when you need to choose a library at runtime, use dynamic loading. On Windows, use `LoadLibraryA` and `GetProcAddress`; on Linux, use `dlopen` and `dlsym`.
+
+```delphi
+// Windows dynamic loading
 LTiger.ImportDll('kernel32.dll', 'LoadLibraryA', [vtPointer], vtPointer);
 LTiger.ImportDll('kernel32.dll', 'GetProcAddress', [vtPointer, vtPointer], vtPointer);
 
@@ -189,20 +306,25 @@ LTiger.Func('main', vtVoid, True)
    .Assign('hUser32', LTiger.Invoke('LoadLibraryA', [LTiger.Str('user32.dll')]))
    .Assign('pFunc', LTiger.Invoke('GetProcAddress',
      [LTiger.Get('hUser32'), LTiger.Str('GetSystemMetrics')]))
-   .Call('ExitProcess', [LTiger.Int64(42)])
+   .Call('Tiger_Halt', [LTiger.Int64(0)])
 .EndFunc();
 ```
 
 ## 📦 Static Linking
 
-Tiger can produce COFF static libraries (`.lib`) and object files (`.obj`), and link against them in subsequent builds. This lets you split large projects into separately compiled modules, distribute precompiled libraries, or interoperate with object files produced by other toolchains that emit standard COFF.
+Tiger can produce static libraries and object files, and link against them in subsequent builds. This lets you split large projects into separately compiled modules, distribute precompiled libraries, or interoperate with object files produced by other toolchains.
+
+| Platform | Static Library | Object File |
+|----------|---------------|-------------|
+| Windows | COFF `.lib` | COFF `.obj` |
+| Linux | ar archive `.a` | ELF `.o` |
 
 ### Building a Static Library
 
-Compile functions into a `.lib` file by setting the target to `TargetLib`. Functions intended for external use should use C linkage (`plC`) and be marked as public (`True` for the export parameter).
+Compile functions into a static library by setting the target to `TargetLib`. Functions intended for external use should use C linkage (`plC`) and be marked as public (`True` for the export parameter).
 
 ```delphi
-// Build a .lib with exported functions
+// Build a .lib (Windows) or .a (Linux) with exported functions
 LTiger.Func('AddC', vtInt32, False, plC, True)
    .Param('a', vtInt32)
    .Param('b', vtInt32)
@@ -215,13 +337,13 @@ LTiger.Func('MulC', vtInt32, False, plC, True)
    .Return(LTiger.Mul(LTiger.Get('a'), LTiger.Get('b')))
 .EndFunc();
 
-LTiger.TargetLib('output\MyLib.lib');
+LTiger.TargetLib('output\MyLib.lib');  // or 'output/MyLib.a' on Linux
 LTiger.Build(False, nil);
 ```
 
 ### Consuming a Static Library
 
-Import functions from a static library using `ImportLib` and tell Tiger where to find the `.lib` file using `AddLibPath`. The linker reads the COFF archive, resolves symbols, and merges the referenced object code directly into your executable.
+Import functions from a static library using `ImportLib` and tell Tiger where to find the library file using `AddLibPath`. The linker reads the archive, resolves symbols, and merges the referenced object code directly into your executable.
 
 ```delphi
 LTiger.ImportLib('MyLib', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
@@ -232,16 +354,20 @@ LTiger.Func('main', vtVoid, True)
    .Local('r1', vtInt32)
    .Assign('r1', LTiger.Invoke('AddC', [LTiger.Int64(3), LTiger.Int64(4)]))
    .Call('printf', [LTiger.Str('AddC(3, 4) = %d'#10), LTiger.Get('r1')])
-   .Call('ExitProcess', [LTiger.Int64(0)])
+   .Call('Tiger_Halt', [LTiger.Int64(0)])
 .EndFunc();
 ```
 
 ## 📝 Console Output
 
-Tiger programs typically use `printf` from `msvcrt.dll` for formatted output. Import it once with the variadic flag set to `True`, then call it with standard C format strings. The Tiger runtime automatically sets the console code page to UTF-8 (65001) at startup when the runtime is included.
+Tiger programs typically use `printf` from the system C library for formatted output. Import it once with the variadic flag set to `True`, then call it with standard C format strings.
 
 ```delphi
+// Windows
 LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+
+// Linux
+LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
 LTiger.Func('main', vtVoid, True)
    .Call('printf', [LTiger.Str('Hello from Tiger!'#10)])
@@ -307,7 +433,7 @@ Tiger includes a complete type system for structured data: records with C ABI la
 
 ### Records
 
-Records define structured types with named fields. They follow C ABI alignment and padding rules, so a Tiger record with the same fields as a C struct will have identical memory layout. This makes it safe to pass Tiger records to Windows API functions and C libraries that expect specific struct layouts.
+Records define structured types with named fields. They follow C ABI alignment and padding rules, so a Tiger record with the same fields as a C struct will have identical memory layout. This makes it safe to pass Tiger records to Windows API functions, Linux system calls, and C libraries that expect specific struct layouts.
 
 ```delphi
 // Simple record: TPoint (8 bytes, align 4)
@@ -595,9 +721,7 @@ Case statements dispatch on an integer expression, branching to the first matchi
 
 ## ⚠️ Exception Handling
 
-Tiger implements structured exception handling using Windows SEH (Structured Exception Handling). Both software exceptions raised by your code via `&Raise` and hardware exceptions generated by the CPU (such as division by zero or access violations) are caught by `try/except` blocks. The `try/finally` construct guarantees cleanup code runs regardless of whether an exception occurred.
-
-Under the hood, Tiger generates `RUNTIME_FUNCTION` entries, `UNWIND_INFO` structures, and `SCOPE_TABLE` arrays that integrate with the Windows exception dispatcher. The `__C_specific_handler` from `vcruntime140.dll` is imported automatically when any function uses exception scopes.
+Tiger implements structured exception handling using platform-native mechanisms: Windows SEH (Structured Exception Handling) on Win64, and signal-based handling on Linux64. Both software exceptions raised by your code via `&Raise` and hardware exceptions generated by the CPU (such as division by zero or access violations) are caught by `try/except` blocks. The `try/finally` construct guarantees cleanup code runs regardless of whether an exception occurred.
 
 ```delphi
 // try/finally — finally block always executes
@@ -644,10 +768,14 @@ Use these inside an `except` block to retrieve information about the caught exce
 
 ### External Varargs (C Interop)
 
-Import C variadic functions by setting `AVarArgs = True`. Tiger passes the declared parameters in registers per the Win64 ABI and places any additional arguments on the stack, matching the behavior expected by C varargs functions like `printf`.
+Import C variadic functions by setting `AVarArgs = True`. Tiger passes the declared parameters in registers per the platform ABI and places any additional arguments on the stack, matching the behavior expected by C varargs functions like `printf`.
 
 ```delphi
+// Windows
 LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+
+// Linux
+LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 ```
 
 ### Native Tiger Varargs
@@ -830,7 +958,7 @@ Functions use Itanium C++ ABI name mangling by default (`plDefault`). This encod
 
 ### C Linkage
 
-Use `plC` for unmangled names suitable for C interop and DLL exports. The function's name appears exactly as declared in the symbol table, with no type encoding. Use this for any function that will be called from C code, exported from a DLL, or imported from a static library built by a C compiler.
+Use `plC` for unmangled names suitable for C interop and shared library exports. The function's name appears exactly as declared in the symbol table, with no type encoding. Use this for any function that will be called from C code, exported from a DLL/shared object, or imported from a static library built by a C compiler.
 
 ```delphi
 // C linkage, exported
@@ -888,12 +1016,13 @@ LTiger.OverloadFunc('Multiply', vtInt32, False, True)
 .EndFunc();
 ```
 
-## 🏗️ DLL Generation
+## 🏗️ Shared Library Generation
 
-Build DLLs with exported functions and a `DllMain` entry point. Exported functions appear in the PE export table and can be imported by other executables or DLLs at load time. The `DllMain` method creates the standard `DllMain(hinstDLL, fdwReason, lpReserved)` entry point that Windows calls when the DLL is loaded, unloaded, or when threads attach/detach.
+Build shared libraries (DLLs on Windows, `.so` on Linux) with exported functions. Exported functions appear in the export table and can be imported by other executables or libraries at load time.
+
+### Windows DLL
 
 ```delphi
-// Build the DLL
 LTiger.Func('AddC', vtInt32, False, plC, True)
    .Param('a', vtInt32)
    .Param('b', vtInt32)
@@ -908,10 +1037,32 @@ LTiger.TargetDll('output\MyDll.dll');
 LTiger.Build(False, nil);
 ```
 
-Import from the generated DLL in a separate build:
+### Linux Shared Object
 
 ```delphi
+LTiger := TTiger.Create(tpLinux64);
+try
+  LTiger.Func('AddC', vtInt32, False, plC, True)
+     .Param('a', vtInt32)
+     .Param('b', vtInt32)
+     .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
+  .EndFunc();
+
+  LTiger.TargetDll('output/libmylib.so');
+  LTiger.Build(False, nil);
+finally
+  LTiger.Free();
+end;
+```
+
+Import from the generated library in a separate build:
+
+```delphi
+// Windows
 LTiger.ImportDll('MyDll.dll', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
+
+// Linux
+LTiger.ImportDll('libmylib.so', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
 ```
 
 ## 📝 Managed Strings
@@ -930,7 +1081,7 @@ Tiger provides runtime-managed, reference-counted strings through built-in runti
 
 ## 💾 Memory Management
 
-Tiger includes built-in heap management through the runtime. `Tiger_GetMem` allocates zero-initialized memory from the process heap, and `Tiger_FreeMem` releases it. These map directly to the Windows heap API (`HeapAlloc`/`HeapFree`) with no additional overhead. Use `Tiger_Halt` to exit the process cleanly with a specific exit code.
+Tiger includes built-in heap management through the runtime. `Tiger_GetMem` allocates zero-initialized memory from the process heap, and `Tiger_FreeMem` releases it. On Windows, these map to the Windows heap API (`HeapAlloc`/`HeapFree`); on Linux, they use the standard C library (`malloc`/`free`). Use `Tiger_Halt` to exit the process cleanly with a specific exit code.
 
 | Runtime Function | Description |
 |-----------------|-------------|
@@ -974,7 +1125,7 @@ LTiger.Func('main', vtVoid, True)
 
 ## 🔧 Global Variables
 
-Global variables persist for the lifetime of the process and are accessible from any function. They are stored in the `.data` section of the PE image and are zero-initialized by default. Use globals for state that needs to survive across function calls, such as counters, configuration values, or cached handles.
+Global variables persist for the lifetime of the process and are accessible from any function. They are stored in the `.data` section (Windows) or equivalent data segment (Linux) and are zero-initialized by default. Use globals for state that needs to survive across function calls, such as counters, configuration values, or cached handles.
 
 ```delphi
 LTiger.Global('gCounter', vtInt64);
@@ -1031,7 +1182,7 @@ In-place arithmetic on variables. These generate a load, add/subtract, and store
 
 ### Version Info and Resources
 
-Embed version information and an application icon in the output executable. The version info appears in the file's Properties dialog in Windows Explorer and is queryable at runtime via the `GetFileVersionInfo` API. The icon appears in Explorer, the taskbar, and Alt+Tab.
+Embed version information and an application icon in the output executable. This feature is Windows-only — version info appears in the file's Properties dialog in Windows Explorer and is queryable at runtime via the `GetFileVersionInfo` API. The icon appears in Explorer, the taskbar, and Alt+Tab.
 
 ```delphi
 LTiger.SetVersionInfo(0, 1, 0,
@@ -1075,13 +1226,19 @@ Query type metadata at build time. These methods are useful when generating code
 
 **Under active development.**
 
-Tiger is functional and produces working executables, DLLs, static libraries, and object files. The following features are implemented and tested:
+Tiger is functional and produces working binaries for both Windows and Linux. The following features are implemented and tested:
 
+**Core Infrastructure:**
 - Fluent programmatic API for program construction
 - SSA-based intermediate representation with multi-pass optimizer
 - Native x86-64 machine code generation
-- PE executable and DLL linking
-- COFF static library and object file emission
+- Cross-platform targeting (Windows and Linux from a single codebase)
+
+**Binary Formats:**
+- Windows: PE executable and DLL linking, COFF static library and object file emission
+- Linux: ELF executable and shared object linking, ar archive and object file emission
+
+**Type System:**
 - Records with C ABI alignment, packing, and inheritance
 - Unions (named and anonymous) with record nesting
 - Bit fields
@@ -1091,20 +1248,26 @@ Tiger is functional and produces working executables, DLLs, static libraries, an
 - Type aliases
 - Typed and untyped pointers
 - Function pointers with indirect calls
+
+**Functions and Linkage:**
 - Function overloading via C++ name mangling
 - Public/private function exports
 - C and C++ linkage modes
-- DLL imports (static and dynamic)
+- DLL/shared object imports (static and dynamic)
 - Static library imports with `ImportLib`
 - Variadic functions with `VaCount`/`VaArg` intrinsics
+
+**Runtime Features:**
 - Structured exception handling (try/except/finally)
-- Hardware exception support (SEH)
+- Hardware exception support (Windows SEH, Linux signals)
 - Managed reference-counted strings
-- Runtime heap management
+- Runtime heap management with leak detection
 - Global variables with zero-initialization
+
+**Build Features:**
 - Compile-time intrinsics (SizeOf, AlignOf, High, Low, Len)
 - Inc/Dec, Succ/Pred, Ord/Chr intrinsics
-- Version info and icon embedding
+- Version info and icon embedding (Windows)
 - Status callbacks for build progress
 - Multi-level optimization (0, 1, 2)
 - SSA dump for IR diagnostics
@@ -1126,14 +1289,32 @@ git clone https://github.com/tinyBigGAMES/Tiger.git
 2. Build the `Testbed` project
 3. Run it — the testbed exercises every feature and writes output to the `output` folder
 
-The testbed (`src\testbed\UTestbed.pas`) is the best reference for learning the API. It contains working examples of every feature documented above, from basic hello world through exception handling, static linking, and DLL generation.
+The testbed (`src\testbed\UTestbed.pas`) is the best reference for learning the API. It contains working examples of every feature documented above, from basic hello world through exception handling, static linking, and shared library generation.
 
 ## 📋 Requirements
+
+### Development Environment
 
 | | Minimum | Tested |
 |---|---------|--------|
 | **Platform** | Windows 10 x64 | Windows 11 x64 |
 | **Build** | Delphi 11 (Alexandria) | Delphi 12 (Athens) |
+
+### Target Platforms
+
+| Target | Requirements |
+|--------|-------------|
+| **Windows (Win64)** | None — Tiger-generated executables are standalone |
+| **Linux (Linux64)** | WSL2 with Ubuntu (for development/testing from Windows) |
+
+### Linux Development Setup
+
+To build and test Linux binaries from Windows:
+
+1. Install WSL2: `wsl --install -d Ubuntu`
+2. Install build tools: `sudo apt install build-essential`
+
+Tiger automatically uses WSL to execute Linux binaries when you call `Build(True, ...)` with a Linux64 target.
 
 **Dependencies:** None — Tiger is completely self-contained. No external compilers, linkers, DLLs, or runtime installations are required. The only dependency is the Delphi RTL.
 

@@ -477,6 +477,7 @@ type
     // Type registry
     FTypes: TList<TIRTypeEntry>;
     FBuildingRecordIndex: Integer;  // Index of record being built, -1 if none
+    FSkipBuildingRecord: Boolean;    // True when DefineRecord skipped (type exists)
     FBuildingUnionIndex: Integer;   // Index of union being built, -1 if none
     FBuildingEnumIndex: Integer;    // Index of enum being built, -1 if none
     FNextEnumOrdinal: Int64;        // Next ordinal value for enum
@@ -1015,6 +1016,7 @@ begin
   FSnapshotGlobals := -1;
   FSnapshotExprs := -1;
   FBuildingRecordIndex := -1;
+  FSkipBuildingRecord := False;
   FBuildingUnionIndex := -1;
   FBuildingEnumIndex := -1;
   FNextEnumOrdinal := 0;
@@ -1541,6 +1543,15 @@ var
 begin
   Result := Self;
 
+  // Skip if type already exists (idempotent)
+  if FindType(AName) >= 0 then
+  begin
+    FSkipBuildingRecord := True;
+    Exit;
+  end;
+
+  FSkipBuildingRecord := False;
+
   if FBuildingRecordIndex >= 0 then
   begin
     if Assigned(FErrors) then
@@ -1589,6 +1600,10 @@ var
 begin
   Result := Self;
 
+  // Skip if DefineRecord was skipped (type already exists)
+  if FSkipBuildingRecord then
+    Exit;
+
   LField := Default(TIRRecordField);
   LField.FieldName := AName;
   LField.FieldType := TTigerTypeRef.FromPrimitive(AType);
@@ -1635,6 +1650,10 @@ var
   LTypeIndex: Integer;
 begin
   Result := Self;
+
+  // Skip if DefineRecord was skipped (type already exists)
+  if FSkipBuildingRecord then
+    Exit;
 
   if (FBuildingRecordIndex < 0) and (FBuildingUnionIndex < 0) then
   begin
@@ -1713,6 +1732,13 @@ end;
 function TTigerIR.EndRecord(): TTigerIR;
 begin
   Result := Self;
+
+  // Skip if DefineRecord was skipped (type already exists)
+  if FSkipBuildingRecord then
+  begin
+    FSkipBuildingRecord := False;
+    Exit;
+  end;
 
   // Check if we're closing an anonymous record inside a union
   if (FBuildingUnionIndex >= 0) and FAnonRecordInUnion then
@@ -2038,6 +2064,10 @@ var
 begin
   Result := Self;
 
+  // Skip if type already exists (idempotent)
+  if FindType(AName) >= 0 then
+    Exit;
+
   LEntry := Default(TIRTypeEntry);
   LEntry.Kind := tkPointer;
   LEntry.PointerType.TypeName := AName;
@@ -2053,6 +2083,10 @@ var
   LEntry: TIRTypeEntry;
 begin
   Result := Self;
+
+  // Skip if type already exists (idempotent)
+  if FindType(AName) >= 0 then
+    Exit;
 
   LEntry := Default(TIRTypeEntry);
   LEntry.Kind := tkPointer;
@@ -2070,6 +2104,10 @@ var
   LTypeIndex: Integer;
 begin
   Result := Self;
+
+  // Skip if type already exists (idempotent)
+  if FindType(AName) >= 0 then
+    Exit;
 
   LTypeIndex := FindType(APointeeTypeName);
   if LTypeIndex < 0 then

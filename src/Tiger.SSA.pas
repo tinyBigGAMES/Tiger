@@ -482,6 +482,7 @@ type
     FImportHandles: TArray<TTigerImportHandle>;
     FStrReleaseFuncIdx: Integer;  // Index of Pax_StrRelease function for string cleanup
     FReportLeaksFuncIdx: Integer;  // Index of Pax_ReportLeaks function (debug only)
+    FReleaseOnDetachFuncIdx: Integer;  // Index of Tiger_ReleaseOnDetach for DLL cleanup
     
     // Internal conversion helpers
     procedure ConvertStatements(
@@ -581,6 +582,7 @@ type
     function GetFunction(const AIndex: Integer): TTigerSSAFunc;
     function GetStrReleaseFuncIdx(): Integer;
     function GetReportLeaksFuncIdx(): Integer;
+    function GetReleaseOnDetachFuncIdx(): Integer;
     
     // Reset
     procedure Clear();
@@ -1721,6 +1723,9 @@ var
   LI: Integer;
   LIsEntryPoint: Boolean;
   LIsDllEntry: Boolean;
+  LReleaseOnDetachFuncIdx: Integer;
+  LReasonVar: TTigerSSAVar;
+  LParamCount: Integer;
 begin
   // Collect managed locals that are NOT parameters
   LManagedLocals := TList<Integer>.Create();
@@ -1795,11 +1800,10 @@ begin
           end;
           
           // For entry points, also release managed globals
-          // Note: DLL entry cleanup should only happen on DLL_PROCESS_DETACH (fdwReason=0)
-          // For simplicity, we release globals for both EXE and DLL entry points
-          // DLL callers should ensure proper unload handling
-          if LIsEntryPoint or LIsDllEntry then
+          // DLL entry uses Tiger_ReleaseOnDetach to check fdwReason before releasing
+          if LIsEntryPoint then
           begin
+            // EXE entry: unconditionally release all managed globals
             for LI := 0 to LManagedGlobals.Count - 1 do
             begin
               // Load the global value first
@@ -1810,7 +1814,7 @@ begin
               LBlock.InsertInstructionAt(LInstrIdx, LLoadInstr);
               Inc(LInstrIdx);
               
-              // Create call to Pax_StrRelease(globalValue)
+              // Create call to Tiger_StrRelease(globalValue)
               LReleaseInstr := Default(TTigerSSAInstr);
               LReleaseInstr.Kind := sikCall;
               LReleaseInstr.CallTarget := TTigerSSAOperand.FromFunc(LFuncIdx);
@@ -1824,7 +1828,7 @@ begin
             // Call Tiger_ReportLeaks after all cleanup (debug mode only)
             // Only for EXE entry points, not DLL entries (DllMain fires on
             // both ATTACH and DETACH, which would produce duplicate reports)
-            if LIsEntryPoint and Assigned(FSSABuilder) and (FSSABuilder.GetReportLeaksFuncIdx() >= 0) then
+            if Assigned(FSSABuilder) and (FSSABuilder.GetReportLeaksFuncIdx() >= 0) then
             begin
               LReleaseInstr := Default(TTigerSSAInstr);
               LReleaseInstr.Kind := sikCall;
@@ -1832,6 +1836,59 @@ begin
               SetLength(LReleaseInstr.CallArgs, 0);  // No arguments
               LBlock.InsertInstructionAt(LInstrIdx, LReleaseInstr);
               Inc(LInstrIdx);
+            end;
+          end
+          else if LIsDllEntry then
+          begin
+            // DLL entry: use Tiger_ReleaseOnDetach which checks fdwReason
+            LReleaseOnDetachFuncIdx := -1;
+            if Assigned(FSSABuilder) then
+              LReleaseOnDetachFuncIdx := FSSABuilder.GetReleaseOnDetachFuncIdx();
+            
+            if LReleaseOnDetachFuncIdx >= 0 then
+            begin
+              // Find fdwReason parameter (2nd parameter, index 1)
+              // DllMain signature: DllMain(hinstDLL, fdwReason, lpvReserved)
+              LParamCount := 0;
+              LReasonVar := TTigerSSAVar.None();
+              for LI := 0 to AFunc.GetLocalCount() - 1 do
+              begin
+                LLocal := AFunc.GetLocal(LI);
+                if LLocal.IsParam then
+                begin
+                  if LParamCount = 1 then  // fdwReason is 2nd param (index 1)
+                  begin
+                    LReasonVar := TTigerSSAVar.Create(LLocal.LocalName, 0);
+                    Break;
+                  end;
+                  Inc(LParamCount);
+                end;
+              end;
+              
+              if LReasonVar.IsValid() then
+              begin
+                for LI := 0 to LManagedGlobals.Count - 1 do
+                begin
+                  // Load the global value first
+                  LLoadInstr := Default(TTigerSSAInstr);
+                  LLoadInstr.Kind := sikLoad;
+                  LLoadInstr.Dest := AFunc.NewVersion('_t');
+                  LLoadInstr.Op1 := TTigerSSAOperand.FromGlobal(LManagedGlobals[LI]);
+                  LBlock.InsertInstructionAt(LInstrIdx, LLoadInstr);
+                  Inc(LInstrIdx);
+                  
+                  // Create call to Tiger_ReleaseOnDetach(fdwReason, globalValue)
+                  LReleaseInstr := Default(TTigerSSAInstr);
+                  LReleaseInstr.Kind := sikCall;
+                  LReleaseInstr.CallTarget := TTigerSSAOperand.FromFunc(LReleaseOnDetachFuncIdx);
+                  SetLength(LReleaseInstr.CallArgs, 2);
+                  LReleaseInstr.CallArgs[0] := TTigerSSAOperand.FromVar(LReasonVar);
+                  LReleaseInstr.CallArgs[1] := TTigerSSAOperand.FromVar(LLoadInstr.Dest);
+                  
+                  LBlock.InsertInstructionAt(LInstrIdx, LReleaseInstr);
+                  Inc(LInstrIdx);
+                end;
+              end;
             end;
           end;
           
@@ -1914,6 +1971,7 @@ begin
   SetLength(FImportHandles, AIR.GetImportCount());
   FStrReleaseFuncIdx := -1;  // Initialize to invalid - will search after function conversion
   FReportLeaksFuncIdx := -1;
+  FReleaseOnDetachFuncIdx := -1;
   for LI := 0 to AIR.GetImportCount() - 1 do
   begin
     LImport := AIR.GetImport(LI);
@@ -1988,6 +2046,10 @@ begin
     // Track Pax_ReportLeaks function index (debug mode only)
     if LFunc.FuncName = 'Tiger_ReportLeaks' then
       FReportLeaksFuncIdx := FFunctions.Count - 1;
+    
+    // Track Tiger_ReleaseOnDetach function index for DLL cleanup
+    if LFunc.FuncName = 'Tiger_ReleaseOnDetach' then
+      FReleaseOnDetachFuncIdx := FFunctions.Count - 1;
   end;
   
   //----------------------------------------------------------------------------
@@ -4510,7 +4572,13 @@ begin
            (LFunc.GetFuncName() = 'Tiger_Raise') or
            (LFunc.GetFuncName() = 'Tiger_RaiseCode') or
            (LFunc.GetFuncName() = 'Tiger_GetExceptionCode') or
-           (LFunc.GetFuncName() = 'Tiger_GetExceptionMessage') then
+           (LFunc.GetFuncName() = 'Tiger_GetExceptionMessage') or
+           // Linux64-specific: called by backend-generated code, not IR
+           (LFunc.GetFuncName() = 'Tiger_PushExceptFrame') or
+           (LFunc.GetFuncName() = 'Tiger_PopExceptFrame') or
+           (LFunc.GetFuncName() = 'Tiger_InitSignals') or
+           (LFunc.GetFuncName() = 'Tiger_SignalHandler') or
+           (LFunc.GetFuncName() = 'Tiger_GetExceptFrame') then
           LLive[LJ] := True;
       end;
       Break;  // Only need to check once
@@ -4790,6 +4858,7 @@ begin
             sikSetNe: LLine := Format('%s = %s <>set %s', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
             sikSetSubset: LLine := Format('%s = %s <=set %s', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
             sikSetSuperset: LLine := Format('%s = %s >=set %s', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
+            sikFuncAddr: LLine := Format('%s = funcaddr(%s)', [LInstr.Dest.ToString(), LInstr.Op1.ToString()]);
           else
             LLine := Format('unknown_%d', [Ord(LInstr.Kind)]);
           end;
@@ -5648,12 +5717,18 @@ begin
   Result := FReportLeaksFuncIdx;
 end;
 
+function TTigerSSABuilder.GetReleaseOnDetachFuncIdx(): Integer;
+begin
+  Result := FReleaseOnDetachFuncIdx;
+end;
+
 procedure TTigerSSABuilder.Clear();
 begin
   FFunctions.Clear();
   FCurrentFuncIndex := -1;
   FStrReleaseFuncIdx := -1;
   FReportLeaksFuncIdx := -1;
+  FReleaseOnDetachFuncIdx := -1;
   SetLength(FStringHandles, 0);
   SetLength(FImportHandles, 0);
 end;

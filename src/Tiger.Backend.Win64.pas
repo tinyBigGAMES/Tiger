@@ -1380,7 +1380,7 @@ begin
 
       if LEntry.IsStatic then
       begin
-        // Static import — resolve lib path from name
+        // Static import -- resolve lib path from name
         LStaticImportIndices.Add(LI);
         LStaticSymbolNames.Add(LEntry.FuncName);
 
@@ -2386,7 +2386,7 @@ begin
     AlignStream(LPDataSection, 4);
 
     //==========================================================================
-    // STEP 4c2: Static linker — resolve and merge external code
+    // STEP 4c2: Static linker -- resolve and merge external code
     //==========================================================================
     if LHasStaticImports then
     begin
@@ -2715,7 +2715,7 @@ begin
       end
       else
       begin
-        // Standard DLL import — CALL [RIP+disp32] pointing to IAT slot
+        // Standard DLL import -- CALL [RIP+disp32] pointing to IAT slot
         if LImportIndex >= LIATEntries.Count then
           Continue;
         LIATSlotOffset := LIATEntries[LImportIndex];
@@ -2843,7 +2843,7 @@ begin
 
         // Resolve target symbol
         if not LStaticResolved.TryGetValue(LPendReloc.TargetSymbol, LResolvedSym) then
-          Continue;  // Unresolved — skip (would need DLL import handling)
+          Continue;  // Unresolved -- skip (would need DLL import handling)
 
         // Calculate target RVA based on which merged section it resolved to
         case LResolvedSym.SectionKind of
@@ -3877,7 +3877,7 @@ var
 
       okData:
         begin
-          // LEA reg, [RIP+disp32] — disp32 = entry offset (addend for linker)
+          // LEA reg, [RIP+disp32] -- disp32 = entry offset (addend for linker)
           LDH.Index := AOp.DataHandle.Index;
           LDE := FData.GetEntry(LDH);
           LR.VirtualAddress := LTextSection.Size + 3;  // disp32 is at byte 3 of 7-byte LEA
@@ -3889,7 +3889,7 @@ var
 
       okGlobal:
         begin
-          // LEA reg, [RIP+disp32] — disp32 = entry offset in .data (addend)
+          // LEA reg, [RIP+disp32] -- disp32 = entry offset in .data (addend)
           LDH.Index := AOp.DataHandle.Index;
           LDE := FGlobals.GetEntry(LDH);
           LR.VirtualAddress := LTextSection.Size + 3;
@@ -3914,7 +3914,7 @@ var
 
       okFunc:
         begin
-          // LEA reg, [RIP+disp32] — resolved via backpatch (same section)
+          // LEA reg, [RIP+disp32] -- resolved via backpatch (same section)
           LFuncAddrFixups.Add(TPair<Cardinal, Integer>.Create(LTextSection.Size, AOp.FuncHandle.Index));
           EmitLeaRipRel(AReg, 0);
         end;
@@ -4062,7 +4062,7 @@ var
   end;
 
   //----------------------------------------------------------------------------
-  // Helper: Write COFF symbol name (8 bytes) — short or string table reference
+  // Helper: Write COFF symbol name (8 bytes) -- short or string table reference
   //----------------------------------------------------------------------------
   procedure WriteSymbolName(const AStream: TMemoryStream;
     const AName: AnsiString; const AStringTable: TMemoryStream);
@@ -4373,7 +4373,7 @@ begin
               LReloc.SymbolIndex := LFirstImportSymIndex + Cardinal(LInstr.ImportTarget.Index);
               LReloc.RelocationType := IMAGE_REL_AMD64_REL32;
               LTextRelocs.Add(LReloc);
-              EmitCallRel32(0);  // Placeholder — linker resolves
+              EmitCallRel32(0);  // Placeholder -- linker resolves
 
               // Sign-extend 32-bit return values to 64-bit
               if FImports.GetEntryByIndex(LInstr.ImportTarget.Index).ReturnType = vtInt32 then
@@ -4385,7 +4385,7 @@ begin
 
           ikCall:
             begin
-              // Call local function — resolved via backpatch (same .text section)
+              // Call local function -- resolved via backpatch (same .text section)
               for LK := 4 to High(LInstr.Args) do
                 StoreCallArgToStack(LInstr.Args[LK], LK, LInstr.FuncTarget.Index);
 
@@ -4399,7 +4399,7 @@ begin
               if Length(LInstr.Args) > 3 then
                 LoadCallArgToReg(LInstr.Args[3], REG_R9, LInstr.FuncTarget.Index, 3);
 
-              // CALL rel32 — displacement patched after all code generated
+              // CALL rel32 -- displacement patched after all code generated
               LCallFixups.Add(TPair<Cardinal, Integer>.Create(LTextSection.Size + 1, LInstr.FuncTarget.Index));
               EmitCallRel32(0);
 
@@ -4821,7 +4821,7 @@ begin
         LReloc.SymbolIndex := LSEHHandlerSymIndex;
         LReloc.RelocationType := IMAGE_REL_AMD64_ADDR32NB;
         LXDataRelocs.Add(LReloc);
-        LXDataSection.WriteData(Cardinal(0));  // Placeholder — linker resolves
+        LXDataSection.WriteData(Cardinal(0));  // Placeholder -- linker resolves
 
         // SCOPE_TABLE: Count + ScopeRecord entries
         LXDataSection.WriteData(Cardinal(LScopeCount));
@@ -4994,7 +4994,7 @@ begin
     LOutput.WriteData(Word($8664));           // Machine = IMAGE_FILE_MACHINE_AMD64
     LOutput.WriteData(LNumSections);          // NumberOfSections
     LOutput.WriteData(Cardinal(DateTimeToUnix(Now(), False))); // TimeDateStamp
-    // PointerToSymbolTable — we'll fix this up after writing all sections
+    // PointerToSymbolTable -- we'll fix this up after writing all sections
     LOutput.WriteData(Cardinal(0));           // Placeholder for PointerToSymbolTable
     LOutput.WriteData(Cardinal(LTotalSymbols)); // NumberOfSymbols
     LOutput.WriteData(Word(0));               // SizeOfOptionalHeader = 0 for .obj
@@ -5396,7 +5396,7 @@ begin
     LOutput.WriteData(Byte((LNumSymbols shr 8) and $FF));
     LOutput.WriteData(Byte(LNumSymbols and $FF));
 
-    // Write member offsets (big-endian) — all symbols point to the single .obj member
+    // Write member offsets (big-endian) -- all symbols point to the single .obj member
     for LI := 0 to LSymbolNames.Count - 1 do
     begin
       LOutput.WriteData(Byte((LMemberOffset shr 24) and $FF));

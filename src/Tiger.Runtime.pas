@@ -39,6 +39,10 @@ type
     // String management (alloc, free, concat, compare, etc.)
     procedure AddStrings(const AIR: TTigerIR); virtual;
 
+    // String type definitions only (TStringRec, 'string' pointer)
+    // Called early in Create() so user code can reference 'string' type
+    procedure AddTypes(const AIR: TTigerIR); virtual;
+
     // Exception handling (raise, get code, etc.)
     procedure AddExceptions(const AIR: TTigerIR); virtual;
 
@@ -64,6 +68,10 @@ begin
 end;
 
 procedure TTigerRuntime.AddStrings(const AIR: TTigerIR);
+begin
+end;
+
+procedure TTigerRuntime.AddTypes(const AIR: TTigerIR);
 begin
 end;
 

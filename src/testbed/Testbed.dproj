@@ -122,6 +122,7 @@
         <DCCReference Include="..\Tiger.Errors.pas"/>
         <DCCReference Include="..\Tiger.IR.pas"/>
         <DCCReference Include="..\Tiger.Linker.COFF.pas"/>
+        <DCCReference Include="..\Tiger.Linker.ELF.pas"/>
         <DCCReference Include="..\Tiger.Linker.pas"/>
         <DCCReference Include="..\Tiger.pas"/>
         <DCCReference Include="..\Tiger.Resources.pas"/>

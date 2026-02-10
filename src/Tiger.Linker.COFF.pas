@@ -1,4 +1,4 @@
-{===============================================================================
+﻿{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -365,7 +365,7 @@ begin
 
   if Length(AData) < COFF_FILE_HEADER_SIZE then
   begin
-    Status('Linker: COFF file too small: %s', [ASourcePath]);
+    Status('COFF Linker: COFF file too small: %s', [ASourcePath]);
     Exit;
   end;
 
@@ -373,7 +373,7 @@ begin
   LMachine := PWord(@AData[0])^;
   if LMachine <> IMAGE_FILE_MACHINE_AMD64 then
   begin
-    Status('Linker: Not an AMD64 COFF object: %s (machine=$%.4x)', [ASourcePath, LMachine]);
+    Status('COFF Linker: Not an AMD64 COFF object: %s (machine=$%.4x)', [ASourcePath, LMachine]);
     Exit;
   end;
 
@@ -512,7 +512,7 @@ var
 begin
   if Length(AData) < 8 then
   begin
-    Status('Linker: AR file too small: %s', [ASourcePath]);
+    Status('COFF Linker: AR file too small: %s', [ASourcePath]);
     Exit;
   end;
 
@@ -521,7 +521,7 @@ begin
   Move(AData[0], LSig[1], 8);
   if string(LSig) <> AR_SIGNATURE then
   begin
-    Status('Linker: Invalid AR signature: %s', [ASourcePath]);
+    Status('COFF Linker: Invalid AR signature: %s', [ASourcePath]);
     Exit;
   end;
 
@@ -541,7 +541,7 @@ begin
     // Verify end marker
     if (AData[LPos + 58] <> Ord('`')) or (AData[LPos + 59] <> 10) then
     begin
-      Status('Linker: Invalid AR member header at offset %d: %s', [LPos, ASourcePath]);
+      Status('COFF Linker: Invalid AR member header at offset %d: %s', [LPos, ASourcePath]);
       Break;
     end;
 
@@ -591,7 +591,7 @@ begin
       Inc(LPos);
   end;
 
-  Status('Linker: Parsed AR library %s — %d object members', [ASourcePath, FObjects.Count]);
+  Status('COFF Linker: Parsed AR library %s -- %d object members', [ASourcePath, FObjects.Count]);
 end;
 
 //==============================================================================
@@ -682,7 +682,7 @@ begin
     Exit;
 
   LObj.Selected := True;
-  Status('Linker: Selected object [%d] %s', [AObjectIndex, LObj.SourcePath]);
+  Status('COFF Linker: Selected object [%d] %s', [AObjectIndex, LObj.SourcePath]);
 
   // Find undefined symbols in this object — they create transitive dependencies
   for LI := 0 to High(LObj.Symbols) do
@@ -824,7 +824,7 @@ begin
     end;
   end;
 
-  Status('Linker: Merged sections -- .text=%d .rdata=%d .data=%d .pdata=%d .xdata=%d bytes',
+  Status('COFF Linker: Merged sections -- .text=%d .rdata=%d .data=%d .pdata=%d .xdata=%d bytes',
     [FMergedText.Size, FMergedRData.Size, FMergedData.Size,
      FMergedPData.Size, FMergedXData.Size]);
 end;
@@ -967,7 +967,7 @@ begin
     end;
   end;
 
-  Status('Linker: Collected %d pending relocations', [FPendingRelocs.Count]);
+  Status('COFF Linker: Collected %d pending relocations', [FPendingRelocs.Count]);
 end;
 
 //==============================================================================
@@ -981,7 +981,7 @@ var
 begin
   if not FileExists(APath) then
   begin
-    Status('Linker: Object file not found: %s', [APath]);
+    Status('COFF Linker: Object file not found: %s', [APath]);
     Exit;
   end;
 
@@ -990,7 +990,7 @@ begin
   if LObj <> nil then
   begin
     FObjects.Add(LObj);
-    Status('Linker: Added object file: %s (%d sections, %d symbols)',
+    Status('COFF Linker: Added object file: %s (%d sections, %d symbols)',
       [APath, Length(LObj.Sections), Length(LObj.Symbols)]);
   end;
 end;
@@ -1001,7 +1001,7 @@ var
 begin
   if not FileExists(APath) then
   begin
-    Status('Linker: Library file not found: %s', [APath]);
+    Status('COFF Linker: Library file not found: %s', [APath]);
     Exit;
   end;
 
@@ -1018,7 +1018,7 @@ begin
   if LObj <> nil then
   begin
     FObjects.Add(LObj);
-    Status('Linker: Added in-memory object: %s (%d sections, %d symbols)',
+    Status('COFF Linker: Added in-memory object: %s (%d sections, %d symbols)',
       [AName, Length(LObj.Sections), Length(LObj.Symbols)]);
   end;
 end;
@@ -1043,7 +1043,7 @@ var
   LSectIdx: Integer;
   LFound: Boolean;
 begin
-  Status('Linker: Resolving %d needed symbols across %d objects',
+  Status('COFF Linker: Resolving %d needed symbols across %d objects',
     [ANeededSymbols.Count, FObjects.Count]);
 
   // Phase 1: Build the global symbol index
@@ -1143,7 +1143,7 @@ begin
       FUnresolvedSymbols.Add(ANeededSymbols[LI]);
   end;
 
-  Status('Linker: Resolved %d symbols, %d unresolved, %d pending relocations',
+  Status('COFF Linker: Resolved %d symbols, %d unresolved, %d pending relocations',
     [FResolvedSymbols.Count, FUnresolvedSymbols.Count, FPendingRelocs.Count]);
 end;
 

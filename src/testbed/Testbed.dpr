@@ -30,6 +30,7 @@ uses
   Tiger.Errors in '..\Tiger.Errors.pas',
   Tiger.IR in '..\Tiger.IR.pas',
   Tiger.Linker.COFF in '..\Tiger.Linker.COFF.pas',
+  Tiger.Linker.ELF in '..\Tiger.Linker.ELF.pas',
   Tiger.Linker in '..\Tiger.Linker.pas',
   Tiger in '..\Tiger.pas',
   Tiger.Resources in '..\Tiger.Resources.pas',

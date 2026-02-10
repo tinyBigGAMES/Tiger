@@ -43,6 +43,7 @@ type
 
     // String management (Tiger_StrAlloc, Tiger_StrFree, etc.)
     procedure AddStrings(const AIR: TTigerIR); override;
+    procedure AddTypes(const AIR: TTigerIR); override;
 
     // Exception handling (Tiger_Raise, Tiger_GetExceptionCode, etc.)
     procedure AddExceptions(const AIR: TTigerIR); override;
@@ -275,18 +276,9 @@ begin
   AIR.Import('kernel32.dll', 'MultiByteToWideChar', [vtUInt32, vtUInt32, vtPointer, vtInt32, vtPointer, vtInt32], vtInt32, False);
 
   //----------------------------------------------------------------------------
-  // Define TStringRec type
+  // Ensure string types are defined (idempotent - may already be defined)
   //----------------------------------------------------------------------------
-  AIR.DefineRecord('TStringRec')
-     .Field('RefCount', vtInt64)
-     .Field('Length', vtUInt64)
-     .Field('Capacity', vtUInt64)
-     .Field('Data', vtPointer)
-     .Field('Data16', vtPointer)
-  .EndRecord();
-
-  // Register 'string' as a pointer to TStringRec
-  AIR.DefinePointer('string', 'TStringRec', False);
+  AddTypes(AIR);
 
   //----------------------------------------------------------------------------
   // Tiger_StrAlloc(ACapacity: UInt64): Pointer
@@ -414,6 +406,22 @@ begin
   .EndFunc();
 
   //----------------------------------------------------------------------------
+  // Tiger_ReleaseOnDetach(AReason: Int32; AStr: Pointer)
+  // Conditionally releases a managed string during DLL unload.
+  // Only releases when AReason = 0 (DLL_PROCESS_DETACH).
+  // Called by SSA cleanup pass for managed globals in DllMain.
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_ReleaseOnDetach', vtVoid, False, plC, False)
+     .Param('AReason', vtInt32)
+     .Param('AStr', vtPointer)
+     // Only release on DLL_PROCESS_DETACH (reason = 0)
+     .&If(AIR.Eq(AIR.Get('AReason'), AIR.Int32(0)))
+        .Call('Tiger_StrRelease', [AIR.Get('AStr')])
+     .EndIf()
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
   // Tiger_StrFromLiteral(AData: Pointer; ALen: UInt64): Pointer
   // Creates a new string from static literal data.
   // Copies the data, sets length, null-terminates.
@@ -529,10 +537,10 @@ begin
 
   //----------------------------------------------------------------------------
   // Tiger_StrAssign(ADest: Pointer; ASrc: Pointer)
-  // Assignment with move semantics.
+  // Assignment with automatic reference counting.
   // ADest is pointer to a string variable (pointer to pointer to TStringRec).
-  // Releases old dest value, stores new value (transfers ownership).
-  // NOTE: For variable-to-variable assignment (s2 := s1), caller must AddRef first!
+  // Automatically AddRefs source and releases old dest value.
+  // Self-assignment safe: AddRef before Release prevents use-after-free.
   //----------------------------------------------------------------------------
   AIR.Func('Tiger_StrAssign', vtVoid, False, plC, False)
      .Param('ADest', vtPointer)   // Pointer to the string variable
@@ -540,11 +548,12 @@ begin
      .Local('LOld', vtPointer)
      // Get old value from destination
      .Assign('LOld', AIR.Deref(AIR.Get('ADest'), vtPointer))
-     // Release the old value
-     .Call('Tiger_StrRelease', [AIR.Get('LOld')]);
-
-  // Store new value
-  AIR.AssignTo(AIR.Deref(AIR.Get('ADest'), vtPointer), AIR.Get('ASrc'))
+     // AddRef the source FIRST (self-assignment safe: refcount 1->2)
+     .Call('Tiger_StrAddRef', [AIR.Get('ASrc')])
+     // Store new value
+     .AssignTo(AIR.Deref(AIR.Get('ADest'), vtPointer), AIR.Get('ASrc'))
+     // Release old value LAST (self-assignment safe: refcount 2->1)
+     .Call('Tiger_StrRelease', [AIR.Get('LOld')])
      .Return()
   .EndFunc();
 
@@ -716,6 +725,29 @@ begin
      .Call('memset', [AIR.Add(AIR.Get('LBuf'), AIR.Mul(AIR.Get('LWideLen'), AIR.Int64(2))), AIR.Int64(0), AIR.Int64(2)])
      .Return(AIR.Get('LBuf'))
   .EndFunc();
+end;
+
+//==============================================================================
+// TTigerRuntime - String Type Definitions
+//==============================================================================
+// Defines TStringRec and 'string' pointer type only.
+// Called early in TTiger.Create() so user code can reference 'string' type.
+// Safe to call multiple times - checks if types already exist.
+//==============================================================================
+
+procedure TTigerWin64Runtime.AddTypes(const AIR: TTigerIR);
+begin
+  // Define TStringRec type
+  AIR.DefineRecord('TStringRec')
+     .Field('RefCount', vtInt64)
+     .Field('Length', vtUInt64)
+     .Field('Capacity', vtUInt64)
+     .Field('Data', vtPointer)
+     .Field('Data16', vtPointer)
+  .EndRecord();
+
+  // Register 'string' as a pointer to TStringRec
+  AIR.DefinePointer('string', 'TStringRec', False);
 end;
 
 //==============================================================================

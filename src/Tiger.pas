@@ -3418,6 +3418,9 @@ begin
 
   FBackend.SetErrors(FErrors);
 
+  // Inject string types early so user code can reference 'string' type
+  FRuntime.AddTypes(FIR);
+
   FStatus := Default(TCallback<TStatusCallback>);
 end;
 
@@ -3584,8 +3587,10 @@ begin
     // Apply post build resources
     ApplyPostBuildResources(FBackend.GetOutputPath());
 
-    // Autorun
-    if AAutoRun then
+    // Autorun (skip for DLLs/shared libraries - they can't be executed directly)
+    if AAutoRun and
+       not FBackend.GetOutputPath().EndsWith('.dll', True) and
+       not FBackend.GetOutputPath().EndsWith('.so', True) then
     begin
       FBackend.Status('Running: %s', [FBackend.GetOutputPath().Replace('\', '/')]);
       LExitCode := FBackend.Run();

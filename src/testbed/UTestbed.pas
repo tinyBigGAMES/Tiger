@@ -93,30 +93,62 @@ begin
 end;
 
 (*==============================================================================
-  Test01: Hello World (minimal console executable)
-  Uses the high-level TTiger API to import printf, emit a
-  single main function that prints "Hello, World!", and builds a console
-  executable. Validates the basic end-to-end pipeline.
+  Test_HelloWorld: Minimal "Hello, World!" Console Executable
+
+  PURPOSE:
+    Validates the most fundamental Tiger pipeline: creating a TTiger instance,
+    importing a single C library function (printf), defining a main entry point,
+    emitting a string literal, and building a working console executable.
+
+  WHAT IT TESTS:
+    - TTiger.Create() initialization for target platform (Win64 or Linux64)
+    - Platform-conditional DLL imports (msvcrt.dll vs libc.so.6)
+    - SetStatusCallback for build progress output
+    - Func/EndFunc for defining the program entry point
+    - Str() for string literal emission to .rdata section
+    - Call() for invoking imported variadic functions
+    - Tiger_Halt for clean process termination
+    - TargetExe for PE/ELF executable generation
+    - SetVersionInfo and AddExeIcon for Windows resource embedding
+
+  EXPECTED OUTPUT:
+    Hello, World!
+    (process exits with code 0)
 ==============================================================================*)
-procedure Test01(const APlatform: TTigerPlatform=tpWin64; ADumpSSA: Boolean=False);
+procedure Test_HelloWorld(const APlatform: TTigerPlatform=tpWin64; ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
+  // Create compiler instance targeting specified platform
   LTiger := TTiger.Create(APlatform);
   try
+    // Wire up status callback so build progress prints to console
     LTiger.SetStatusCallback(StatusCallback);
-    if APlatform = tpWin64 then
+
+    // Platform-specific setup: Windows uses msvcrt.dll, Linux uses libc.so.6
+    if LTiger.GetPlatform = tpWin64 then
     begin
-      SetExeResources(LTiger, 'Test01.exe');
+      // Embed version info and icon into the Windows executable
+      SetExeResources(LTiger, 'Test_HelloWorld.exe');
+      // Import printf from Microsoft C Runtime (variadic = True)
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
     else
+      // Linux: import printf from GNU C Library
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+
+    // Define the program entry point
     LTiger.Func('main', vtVoid, True)
+      // Print greeting to stdout (Str emits to .rdata, printf reads from there)
       .Call('printf', [LTiger.Str('Hello, World!'#10)])
+      // Terminate process with exit code 0 (Tiger_Halt is injected by runtime)
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test01'), ssConsole);
+
+    // Set output path and subsystem (console application)
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_HelloWorld'), ssConsole);
+
+    // Compile, link, and optionally run the executable
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
   finally
@@ -125,43 +157,75 @@ begin
 end;
 
 (*==============================================================================
-  Test02: IR facade basics (Factorial via while loop)
-  Uses the TTiger fluent API to build a factorial(5) program with local
-  variables, while loop, arithmetic (Mul/Sub), and printf output.
-  Validates: BeginFunc, Local, Assign, WhileBegin/End, Var_, Int, Str, Call.
+  Test_Factorial_WhileLoop: IR Facade Basics with Factorial Calculation
+
+  PURPOSE:
+    Demonstrates core IR building primitives using a factorial(5) algorithm.
+    This test exercises local variables, assignment, while loops, arithmetic
+    operations, and formatted printf output.
+
+  WHAT IT TESTS:
+    - Local() for stack-allocated variables (n, result)
+    - Assign() for variable initialization and updates
+    - While/EndWhile for loop constructs with condition expressions
+    - Gt() for greater-than comparison (loop condition: n > 1)
+    - Mul() for multiplication (result *= n)
+    - Sub() for subtraction (n -= 1)
+    - Get() for reading variable values into expressions
+    - Int64() for 64-bit integer literals
+    - Str() with format specifiers (%d)
+    - Method chaining (fluent API pattern)
+
+  ALGORITHM:
+    n = 5, result = 1
+    while n > 1:
+      result = result * n
+      n = n - 1
+    print "5! = {result}"
+
+  EXPECTED OUTPUT:
+    5! = 120
 ==============================================================================*)
-procedure Test02(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_Factorial_WhileLoop(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    if APlatform = tpWin64 then
+
+    // Platform-specific imports
+    if LTiger.GetPlatform = tpWin64 then
     begin
-      SetExeResources(LTiger, 'Test02.exe');
+      SetExeResources(LTiger, 'Test_Factorial_WhileLoop.exe');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('n', vtInt64)
-       .Local('result', vtInt64)
+       // Declare local variables for factorial computation
+       .Local('n', vtInt64)        // Loop counter (counts down from 5)
+       .Local('result', vtInt64)   // Accumulator for factorial result
 
+       // Initialize: n=5, result=1
        .Assign('n', LTiger.Int64(5))
        .Assign('result', LTiger.Int64(1))
 
+       // While loop: multiply result by n, decrement n until n <= 1
        .&While(LTiger.Gt(LTiger.Get('n'), LTiger.Int64(1)))
+         // result = result * n
          .Assign('result', LTiger.Mul(LTiger.Get('result'), LTiger.Get('n')))
+         // n = n - 1
          .Assign('n', LTiger.Sub(LTiger.Get('n'), LTiger.Int64(1)))
        .EndWhile()
 
+       // Print the computed factorial (expects 120)
        .Call('printf', [LTiger.Str('5! = %d'#10), LTiger.Get('result')])
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test02'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_Factorial_WhileLoop'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -171,73 +235,111 @@ begin
 end;
 
 (*==============================================================================
-  Test03: SSA optimizer passes
-  Builds the same program at optimization levels 0, 1, and 2 to verify that
-  constant folding (5+3=8), copy propagation (b=a), common subexpression
-  elimination (a+2 reused), and dead code elimination (unused variable e)
-  all work correctly without changing program output.
+  Test_SSA_OptimizerPasses: SSA Optimizer Validation
+
+  PURPOSE:
+    Tests the SSA (Static Single Assignment) optimization pipeline across
+    three optimization levels (0, 1, 2). Verifies that optimizations produce
+    correct results without changing program semantics.
+
+  WHAT IT TESTS:
+    - Optimization Level 0: No optimizations (baseline)
+    - Optimization Level 1: Basic optimizations (constant folding, copy prop)
+    - Optimization Level 2: Aggressive optimizations (CSE, DCE)
+
+  OPTIMIZATION TARGETS IN THIS CODE:
+    - Constant Folding: a = 5 + 3 should fold to a = 8 at compile time
+    - Copy Propagation: b = a should propagate 'a' to uses of 'b'
+    - Common Subexpression Elimination (CSE): c = a+2 and d = a+2 should
+      compute a+2 once and reuse the result
+    - Dead Code Elimination (DCE): e = 99 is never used, should be removed
+
+  VALIDATION:
+    Uses ResetBuild() to recompile the same IR at different opt levels.
+    All three executables should produce identical output "a=8, b=8, c=10, d=10"
+    proving that optimizations preserve program behavior.
+
+  EXPECTED OUTPUT (for each opt level):
+    a=8, b=8, c=10, d=10
 ==============================================================================*)
-procedure Test03(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_SSA_OptimizerPasses(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    if APlatform = tpWin64 then
+
+    // Import printf for output
+    if LTiger.GetPlatform = tpWin64 then
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
+       // Declare variables for optimization testing
        .Local('a', vtInt64)
        .Local('b', vtInt64)
        .Local('c', vtInt64)
        .Local('d', vtInt64)
-       .Local('e', vtInt64)  // Dead - never used
+       .Local('e', vtInt64)  // Dead variable - never used after assignment
 
-       .Assign('a', LTiger.Add(LTiger.Int64(5), LTiger.Int64(3)))   // Constant fold: 5+3 = 8
-       .Assign('b', LTiger.Get('a'))                            // Copy: b = a (copy prop target)
-       .Assign('c', LTiger.Add(LTiger.Get('a'), LTiger.Int64(2))) // a + 2
-       .Assign('d', LTiger.Add(LTiger.Get('a'), LTiger.Int64(2))) // CSE: same as c, should reuse
-       .Assign('e', LTiger.Int64(99))                              // Dead code: e never used
+       // CONSTANT FOLDING TARGET: 5+3 should become 8 at compile time
+       .Assign('a', LTiger.Add(LTiger.Int64(5), LTiger.Int64(3)))
 
+       // COPY PROPAGATION TARGET: uses of 'b' should become uses of 'a'
+       .Assign('b', LTiger.Get('a'))
+
+       // CSE TARGET: a+2 computed twice, should reuse first result
+       .Assign('c', LTiger.Add(LTiger.Get('a'), LTiger.Int64(2)))
+       .Assign('d', LTiger.Add(LTiger.Get('a'), LTiger.Int64(2)))
+
+       // DCE TARGET: e is assigned but never read, should be eliminated
+       .Assign('e', LTiger.Int64(99))
+
+       // Print results - after copy prop, 'b' reads should use 'a' directly
        .Call('printf', [LTiger.Str('a=%d, b=%d, c=%d, d=%d'#10),
              LTiger.Get('a'),
              LTiger.Get('b'),   // Copy prop: should become 'a'
              LTiger.Get('c'),
-             LTiger.Get('d')])  // CSE: should use same value as c
+             LTiger.Get('d')])  // CSE: should use same temp as 'c'
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
+    //--------------------------------------------------------------------------
+    // Build at Optimization Level 0 (no optimizations)
+    //--------------------------------------------------------------------------
     TWin64Utils.PrintLn('--- Optimization Level 0 ---');
-    if APlatform = tpWin64 then
-      SetExeResources(LTiger, 'Test03_O0.exe');
+    if LTiger.GetPlatform = tpWin64 then
+      SetExeResources(LTiger, 'Test_SSA_O0.exe');
     LTiger.SetOptimizationLevel(0);
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O0'), ssConsole);
-
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SSA_O0'), ssConsole);
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
 
+    //--------------------------------------------------------------------------
+    // Build at Optimization Level 1 (basic optimizations)
+    //--------------------------------------------------------------------------
     TWin64Utils.PrintLn('');
     TWin64Utils.PrintLn('--- Optimization Level 1 ---');
-    LTiger.ResetBuild();
+    LTiger.ResetBuild();  // Reset backend state, keep IR
     LTiger.SetOptimizationLevel(1);
-    if APlatform = tpWin64 then
-      SetExeResources(LTiger, 'Test03_O1.exe');
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O1'), ssConsole);
-
+    if LTiger.GetPlatform = tpWin64 then
+      SetExeResources(LTiger, 'Test_SSA_O1.exe');
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SSA_O1'), ssConsole);
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
 
+    //--------------------------------------------------------------------------
+    // Build at Optimization Level 2 (aggressive optimizations)
+    //--------------------------------------------------------------------------
     TWin64Utils.PrintLn('');
     TWin64Utils.PrintLn('--- Optimization Level 2 ---');
     LTiger.ResetBuild();
-    if APlatform = tpWin64 then
-      SetExeResources(LTiger, 'Test03_O2.exe');
+    if LTiger.GetPlatform = tpWin64 then
+      SetExeResources(LTiger, 'Test_SSA_O2.exe');
     LTiger.SetOptimizationLevel(2);
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test03_O2'), ssConsole);
-
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SSA_O2'), ssConsole);
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
   finally
@@ -246,24 +348,47 @@ begin
 end;
 
 (*==============================================================================
-  Test03_2: Same as Test03 but creates a fresh TTiger instance per optimization
-  level instead of using ResetBuild. This isolates whether crashes are caused
-  by stale state in ResetBuild vs the optimizer itself.
-==============================================================================*)
-procedure Test03_2(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+  Test_SSA_FreshInstance: SSA Optimizer with Fresh Instances
 
+  PURPOSE:
+    Identical to Test_SSA_OptimizerPasses but creates a new TTiger instance
+    for each optimization level instead of using ResetBuild(). This isolates
+    whether any crashes or inconsistencies are caused by stale state in the
+    ResetBuild pathway versus bugs in the optimizer itself.
+
+  DEBUGGING RATIONALE:
+    If Test_SSA_OptimizerPasses crashes but this test passes, the bug is in
+    ResetBuild's state cleanup. If both crash, the bug is in the optimizer.
+    This pattern is useful for narrowing down optimization-level-dependent
+    issues.
+
+  WHAT IT TESTS:
+    - Same optimizations as Test_SSA_OptimizerPasses
+    - Clean TTiger construction/destruction cycle for each opt level
+    - Isolation of optimizer bugs from state management bugs
+
+  EXPECTED OUTPUT:
+    Same as Test_SSA_OptimizerPasses: a=8, b=8, c=10, d=10 for all levels
+==============================================================================*)
+procedure Test_SSA_FreshInstance(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+
+  // Local helper: builds and runs at specified optimization level
   procedure BuildAndRun(const AOptLevel: Integer; const AOutputName: string);
   var
     LTiger: TTiger;
   begin
+    // Create a completely fresh TTiger instance
     LTiger := TTiger.Create(APlatform);
     try
       LTiger.SetStatusCallback(StatusCallback);
-      if APlatform = tpWin64 then
+
+      // Platform-specific printf import
+      if LTiger.GetPlatform = tpWin64 then
         LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
       else
         LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
+      // Build identical IR as Test_SSA_OptimizerPasses
       LTiger.Func('main', vtVoid, True)
          .Local('a', vtInt64)
          .Local('b', vtInt64)
@@ -285,7 +410,8 @@ procedure Test03_2(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Bool
          .Call('Tiger_Halt', [LTiger.Int64(0)])
       .EndFunc();
 
-      if APlatform = tpWin64 then
+      // Configure and build at specified opt level
+      if LTiger.GetPlatform = tpWin64 then
         SetExeResources(LTiger, AOutputName);
       LTiger.SetOptimizationLevel(AOptLevel);
       LTiger.TargetExe(TPath.Combine(COutputPath, AOutputName), ssConsole);
@@ -293,54 +419,79 @@ procedure Test03_2(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Bool
       ProcessBuild(LTiger, ADumpSSA);
       ShowErrors(LTiger);
     finally
+      // Fresh instance is destroyed, releasing all state
       LTiger.Free();
     end;
   end;
 
 begin
-  TWin64Utils.PrintLn('--- Test03_2: Fresh instance per opt level ---');
+  TWin64Utils.PrintLn('--- Test_SSA_FreshInstance: Fresh instance per opt level ---');
   TWin64Utils.PrintLn('');
 
   TWin64Utils.PrintLn('--- Optimization Level 0 ---');
-  BuildAndRun(0, 'Test03_2_O0');
+  BuildAndRun(0, 'Test_SSA_Fresh_O0');
 
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('--- Optimization Level 1 ---');
-  BuildAndRun(1, 'Test03_2_O1');
+  BuildAndRun(1, 'Test_SSA_Fresh_O1');
 
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('--- Optimization Level 2 ---');
-  BuildAndRun(2, 'Test03_2_O2');
+  BuildAndRun(2, 'Test_SSA_Fresh_O2');
 end;
 
 (*==============================================================================
-  Test04: Loop optimization with SSA phi nodes
-  Runs the factorial(5) while-loop at optimization level 2 to verify that
-  phi node insertion and loop-carried variable updates (n, result) survive
-  the full optimizer pipeline without corruption.
+  Test_SSA_LoopPhiNodes: Loop Optimization with Phi Nodes
+
+  PURPOSE:
+    Tests SSA phi node handling within loop constructs. Phi nodes are required
+    at loop headers to merge values from the loop entry and back-edge. This
+    test verifies that the optimizer correctly handles loop-carried variables.
+
+  WHAT IT TESTS:
+    - Phi node insertion at loop headers (n, result both updated in loop)
+    - Loop-carried variable updates (values flow from iteration to iteration)
+    - Optimizer level 2 with aggressive transformations on loops
+    - Correct handling of back-edge phi operands
+
+  ALGORITHM:
+    Factorial(5) via while loop - same as Test_Factorial_WhileLoop but run
+    at optimization level 2 to stress-test phi node handling.
+
+  WHY THIS MATTERS:
+    Loops create SSA phi nodes because variables like 'n' have multiple
+    definitions (initial assignment + loop update). If phi nodes are
+    mishandled, the loop produces wrong results or crashes.
+
+  EXPECTED OUTPUT:
+    5! = 120
 ==============================================================================*)
-procedure Test04(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_SSA_LoopPhiNodes(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    if APlatform = tpWin64 then
+
+    if LTiger.GetPlatform = tpWin64 then
     begin
-      SetExeResources(LTiger, 'Test04.exe');
+      SetExeResources(LTiger, 'Test_SSA_LoopPhiNodes.exe');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
-       .Local('n', vtInt64)
-       .Local('result', vtInt64)
+       // These variables will have phi nodes at loop header
+       .Local('n', vtInt64)       // Updated each iteration
+       .Local('result', vtInt64)  // Accumulates product each iteration
 
+       // Initial values (phi entry operands)
        .Assign('n', LTiger.Int64(5))
        .Assign('result', LTiger.Int64(1))
 
+       // Loop creates phi nodes: n_phi = phi(5, n-1), result_phi = phi(1, result*n)
        .&While(LTiger.Gt(LTiger.Get('n'), LTiger.Int64(1)))
          .Assign('result', LTiger.Mul(LTiger.Get('result'), LTiger.Get('n')))
          .Assign('n', LTiger.Sub(LTiger.Get('n'), LTiger.Int64(1)))
@@ -350,9 +501,10 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
+    // Run at optimization level 2 to stress-test phi handling
     TWin64Utils.PrintLn('--- Loop Test: Optimization Level 2 ---');
     LTiger.SetOptimizationLevel(2);
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test04'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SSA_LoopPhiNodes'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -362,50 +514,74 @@ begin
 end;
 
 (*==============================================================================
-  Test05: Case statement
-  Tests CaseBegin/CaseOf/CaseElse/CaseEnd with a day-of-week example.
-  Exercises single-value and multi-value CaseOf branches, the else fallback,
-  and verifies correct branch selection across three test values (1=Weekday,
-  6=Weekend, 9=Unknown).
+  Test_CaseStatement: Case/Switch Statement Control Flow
+
+  PURPOSE:
+    Tests the Case/CaseOf/CaseElse/EndCase control flow constructs which
+    generate efficient multi-way branch tables. This is equivalent to
+    switch/case in C or case..of in Pascal.
+
+  WHAT IT TESTS:
+    - Case() to begin a switch on an integer expression
+    - CaseOf([values]) for single or multi-value branch arms
+    - CaseElse() for the default/fallback branch
+    - EndCase() to close the construct
+    - Correct branch selection across multiple test values
+    - Jump table generation vs chained comparisons
+
+  SCENARIO:
+    Day-of-week classifier:
+    - Days 1-5 = Weekday
+    - Days 6-7 = Weekend
+    - Other values = Unknown
+
+  TEST VALUES:
+    - day=1 should print "Weekday" (first CaseOf arm)
+    - day=6 should print "Weekend" (second CaseOf arm)
+    - day=9 should print "Unknown" (CaseElse arm)
+
+  EXPECTED OUTPUT:
+    Day 1: Weekday
+    Day 6: Weekend
+    Day 9: Unknown
 ==============================================================================*)
-procedure Test05(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_CaseStatement(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TWin64Utils.PrintLn('=== Test05: Case Statement ===');
+  TWin64Utils.PrintLn('=== Test_CaseStatement ===');
 
   LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    if APlatform = tpWin64 then
+    if LTiger.GetPlatform = tpWin64 then
     begin
-      SetExeResources(LTiger, 'Test05.exe');
+      SetExeResources(LTiger, 'Test_CaseStatement.exe');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
-    // Test case statement with day of week
-    // Expected output:
-    //   Day 1: Weekday
-    //   Day 6: Weekend
-    //   Day 9: Unknown
     LTiger.Func('main', vtVoid, True)
        .Local('day', vtInt64)
 
-       // Test case 1: day = 1 (Monday - weekday)
+       //----------------------------------------------------------------------
+       // Test case 1: day = 1 (Monday - should match weekday branch)
+       //----------------------------------------------------------------------
        .Assign('day', LTiger.Int64(1))
        .Call('printf', [LTiger.Str('Day %d: '#0), LTiger.Get('day')])
        .&Case(LTiger.Get('day'))
-         .CaseOf([1, 2, 3, 4, 5])  // Weekdays
+         .CaseOf([1, 2, 3, 4, 5])  // Weekdays: Mon-Fri
            .Call('printf', [LTiger.Str('Weekday'#10)])
-         .CaseOf([6, 7])           // Weekend
+         .CaseOf([6, 7])           // Weekend: Sat-Sun
            .Call('printf', [LTiger.Str('Weekend'#10)])
-         .CaseElse()
+         .CaseElse()               // Default branch
            .Call('printf', [LTiger.Str('Unknown'#10)])
        .EndCase()
 
-       // Test case 2: day = 6 (Saturday - weekend)
+       //----------------------------------------------------------------------
+       // Test case 2: day = 6 (Saturday - should match weekend branch)
+       //----------------------------------------------------------------------
        .Assign('day', LTiger.Int64(6))
        .Call('printf', [LTiger.Str('Day %d: '#0), LTiger.Get('day')])
        .&Case(LTiger.Get('day'))
@@ -417,7 +593,9 @@ begin
            .Call('printf', [LTiger.Str('Unknown'#10)])
        .EndCase()
 
-       // Test case 3: day = 9 (invalid - else branch)
+       //----------------------------------------------------------------------
+       // Test case 3: day = 9 (invalid - should hit else branch)
+       //----------------------------------------------------------------------
        .Assign('day', LTiger.Int64(9))
        .Call('printf', [LTiger.Str('Day %d: '#0), LTiger.Get('day')])
        .&Case(LTiger.Get('day'))
@@ -432,7 +610,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test05'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_CaseStatement'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -442,52 +620,68 @@ begin
 end;
 
 (*==============================================================================
-  Test06: Global variables
-  Declares globals (gCounter, gMultiplier), verifies zero-initialization,
-  then tests assignment, read-back, arithmetic on globals (add, multiply),
-  and cross-global expressions. Validates the .bss section and global
-  variable addressing in the generated PE.
+  Test_GlobalVariables: Global Variable Declaration and Access
+
+  PURPOSE:
+    Tests the Global() method for declaring module-level variables that persist
+    for the lifetime of the program. These are allocated in the .bss or .data
+    section of the executable.
+
+  WHAT IT TESTS:
+    - Global() for declaring global variables
+    - Zero-initialization of globals (BSS section behavior)
+    - Assign/Get operations on globals from within functions
+    - Arithmetic operations using global variables
+    - Cross-global expressions (using one global in expression for another)
+    - Correct RIP-relative addressing for global access in x64
+
+  TEST SEQUENCE:
+    1. Print initial values (should be 0 from BSS zero-init)
+    2. Initialize gCounter=10, gMultiplier=5
+    3. Increment gCounter by gMultiplier (10+5=15)
+    4. Multiply gCounter by gMultiplier (15*5=75)
+
+  EXPECTED OUTPUT:
+    Initial: counter=0, multiplier=0
+    After init: counter=10, multiplier=5
+    After increment: counter=15
+    Final: counter=75
 ==============================================================================*)
-procedure Test06(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_GlobalVariables(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
-  TWin64Utils.PrintLn('=== Test06: Global Variables ===');
+  TWin64Utils.PrintLn('=== Test_GlobalVariables ===');
 
   LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    if APlatform = tpWin64 then
+    if LTiger.GetPlatform = tpWin64 then
     begin
-      SetExeResources(LTiger, 'Test06.exe');
+      SetExeResources(LTiger, 'Test_GlobalVariables.exe');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
-    // Declare global variables
+    // Declare global variables (allocated in .bss, zero-initialized)
     LTiger.Global('gCounter', vtInt64);
     LTiger.Global('gMultiplier', vtInt64);
 
-    // Expected output:
-    //   Initial: counter=0, multiplier=0
-    //   After init: counter=10, multiplier=5
-    //   After increment: counter=15
-    //   Final: counter=75
     LTiger.Func('main', vtVoid, True)
        .Local('temp', vtInt64)
 
-       // Print initial values (should be 0)
+       // Verify zero-initialization of globals
        .Call('printf', [LTiger.Str('Initial: counter=%d, multiplier=%d'#10),
              LTiger.Get('gCounter'), LTiger.Get('gMultiplier')])
 
-       // Initialize globals
+       // Assign initial values to globals
        .Assign('gCounter', LTiger.Int64(10))
        .Assign('gMultiplier', LTiger.Int64(5))
        .Call('printf', [LTiger.Str('After init: counter=%d, multiplier=%d'#10),
              LTiger.Get('gCounter'), LTiger.Get('gMultiplier')])
 
-       // Increment counter using multiplier
+       // Increment counter using multiplier (tests cross-global read)
        .Assign('gCounter', LTiger.Add(LTiger.Get('gCounter'), LTiger.Get('gMultiplier')))
        .Call('printf', [LTiger.Str('After increment: counter=%d'#10),
              LTiger.Get('gCounter')])
@@ -500,7 +694,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test06'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_GlobalVariables'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -510,29 +704,52 @@ begin
 end;
 
 (*==============================================================================
-  Test07: Type system (records, arrays, enums, aliases)
-  Comprehensive type definition test covering: records (TPoint, TRect),
-  packed records (TPackedPoint), records with mixed-size fields (TStudent),
-  fixed arrays (TIntArray, TPointArray), dynamic arrays (TDynInts),
-  enums with auto and explicit values (TColor, TStatus), type aliases
-  to primitives (TMyInt) and composites (TCoord). Queries and prints
-  size, alignment, and TypeRef properties for each type. Builds a trivial
-  executable to confirm no errors from the type definitions.
+  Test_TypeSystem: Comprehensive Type Definition Validation
+
+  PURPOSE:
+    Tests all Tiger type definition primitives: records, packed records,
+    arrays (fixed and dynamic), enumerations, and type aliases. Verifies
+    correct size and alignment calculations for each type.
+
+  WHAT IT TESTS:
+    - DefineRecord() for composite types with multiple fields
+    - Packed records (no padding between fields)
+    - Records with mixed-size fields (tests alignment padding)
+    - DefineArray() for fixed-size arrays
+    - DefineDynArray() for dynamic arrays (pointer-sized)
+    - DefineEnum() for enumerated types with auto/explicit values
+    - DefineAlias() for type aliases to primitives and composites
+    - FindType() to look up type indices by name
+    - GetTypeSize() and GetTypeAlignment() for layout queries
+    - TTigerTypeRef for type reference management
+
+  TYPE DEFINITIONS:
+    - TPoint: record {X, Y: int32} - size=8, align=4
+    - TRect: record {TopLeft, BottomRight: TPoint} - size=16
+    - TPackedPoint: packed record {X, Y: int32} - size=8, no padding
+    - TStudent: record {NamePtr: pointer, Age: uint8, Grade: float64}
+    - TIntArray: array[0..9] of int32 - size=40
+    - TPointArray: array[0..4] of TPoint - size=40
+    - TDynInts: array of int32 - dynamic, size=8 (pointer)
+    - TColor: enum (Red=0, Green=1, Blue=2)
+    - TStatus: enum (OK=0, Error=-1, Pending=100)
+    - TMyInt: alias for int32
+    - TCoord: alias for TPoint
 ==============================================================================*)
-procedure Test07(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_TypeSystem(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
   LTypeIndex: Integer;
   LTypeRef: TTigerTypeRef;
 begin
-  TWin64Utils.PrintLn('=== Test07: Type System ===');
+  TWin64Utils.PrintLn('=== Test_TypeSystem ===');
 
   LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    if APlatform = tpWin64 then
+    if LTiger.GetPlatform = tpWin64 then
     begin
-      SetExeResources(LTiger, 'Test07.exe');
+      SetExeResources(LTiger, 'Test_TypeSystem.exe');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
     else
@@ -687,7 +904,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test07'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_TypeSystem'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -697,43 +914,59 @@ begin
 end;
 
 (*==============================================================================
-  Test08: Full C struct ABI (Phase 4)
-  Validates the complete struct layout engine against C ABI expectations:
-    4a: Explicit alignment (natural vs forced align(8)/align(16))
-    4b: Union types (overlapping fields, size = max member)
-    4c: Anonymous unions inside records (TPacket, TMultiUnion)
-    4d: Anonymous records inside unions (TSplitValue with Lo/Hi)
-    4e: Bit fields (packing, non-corruption across adjacent fields)
-    4f: Record inheritance (TPoint2D -> TPoint3D -> TPoint4D, field offsets)
-  Also includes runtime tests that build an executable writing/reading
-  record fields, union reinterpretation, inherited fields, bit field
-  isolation, and explicit alignment via generated machine code.
+  Test_CStructABI: Full C Struct ABI Compliance
+
+  PURPOSE:
+    Comprehensive validation of Tiger's struct layout engine against C ABI
+    requirements. Tests explicit alignment, unions, anonymous unions/records,
+    bit fields, and record inheritance.
+
+  WHAT IT TESTS:
+    - Explicit Alignment: natural alignment vs forced align(8)/align(16)
+    - Union Types: overlapping fields with size = max member
+    - Anonymous Unions in Records: inline variant parts (TPacket, TMultiUnion)
+    - Anonymous Records in Unions: structured overlays (TSplitValue with Lo/Hi)
+    - Bit Fields: bit-level packing, isolation between adjacent fields
+    - Record Inheritance: TPoint2D -> TPoint3D -> TPoint4D field offsets
+
+  RUNTIME TESTS:
+    Builds an executable that writes and reads record fields, performs
+    union reinterpretation, accesses inherited fields, and verifies
+    bit field isolation. Each test prints expected vs actual values.
+
+  SIZE/ALIGNMENT EXPECTATIONS:
+    - TNaturalAlign: size=8, align=4
+    - TAlign16: size=16, align=16
+    - TVariant: size=8, align=8
+    - TPacket: size=24, align=8
+    - TFlags: size=4, align=4
+    - TPoint2D: size=8, TPoint3D: size=12, TPoint4D: size=16
 ==============================================================================*)
-procedure Test08(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_CStructABI(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
   LTypeIndex: Integer;
   LTypeRef: TTigerTypeRef;
 
 begin
-  TWin64Utils.PrintLn('=== Test08: Phase 4 - Full C Struct ABI ===');
+  TWin64Utils.PrintLn('=== Test_CStructABI ===');
   TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    if APlatform = tpWin64 then
+    if LTiger.GetPlatform = tpWin64 then
     begin
-      SetExeResources(LTiger, 'Test08.exe');
+      SetExeResources(LTiger, 'Test_CStructABI.exe');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     //------------------------------------------------------------------------
-    // Phase 4a: Explicit Alignment
+    // Explicit Alignment Tests
     //------------------------------------------------------------------------
-    TWin64Utils.PrintLn('--- 4a: Explicit Alignment ---');
+    TWin64Utils.PrintLn('--- Explicit Alignment ---');
 
     // Normal record (natural alignment = 4)
     LTiger.DefineRecord('TNaturalAlign')
@@ -770,9 +1003,9 @@ begin
     TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
-    // Phase 4b: Union Types
+    // Union Types
     //------------------------------------------------------------------------
-    TWin64Utils.PrintLn('--- 4b: Union Types ---');
+    TWin64Utils.PrintLn('--- Union Types ---');
 
     LTiger.DefineUnion('TVariant')
       .Field('AsInt', vtInt64)
@@ -799,9 +1032,9 @@ begin
     TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
-    // Phase 4c: Anonymous Unions in Records
+    // Anonymous Unions in Records
     //------------------------------------------------------------------------
-    TWin64Utils.PrintLn('--- 4c: Anonymous Unions in Records ---');
+    TWin64Utils.PrintLn('--- Anonymous Unions in Records ---');
 
     LTiger.DefineRecord('TPacket')
       .Field('Header', vtUInt32)
@@ -838,9 +1071,9 @@ begin
     TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
-    // Phase 4d: Anonymous Records in Unions
+    // Anonymous Records in Unions
     //------------------------------------------------------------------------
-    TWin64Utils.PrintLn('--- 4d: Anonymous Records in Unions ---');
+    TWin64Utils.PrintLn('--- Anonymous Records in Unions ---');
 
     LTiger.DefineUnion('TSplitValue')
       .Field('AsInt64', vtInt64)
@@ -859,9 +1092,9 @@ begin
     TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
-    // Phase 4e: Bit Fields
+    // Bit Fields
     //------------------------------------------------------------------------
-    TWin64Utils.PrintLn('--- 4e: Bit Fields ---');
+    TWin64Utils.PrintLn('--- Bit Fields ---');
 
     LTiger.DefineRecord('TFlags')
       .BitField('Enabled', vtUInt32, 1)
@@ -902,9 +1135,9 @@ begin
     TWin64Utils.PrintLn('');
 
     //------------------------------------------------------------------------
-    // Phase 4f: Record Inheritance
+    // Record Inheritance
     //------------------------------------------------------------------------
-    TWin64Utils.PrintLn('--- 4f: Record Inheritance ---');
+    TWin64Utils.PrintLn('--- Record Inheritance ---');
 
     LTiger.DefineRecord('TPoint2D')
       .Field('X', vtInt32)
@@ -944,7 +1177,7 @@ begin
     TWin64Utils.PrintLn('TPoint4D.X (2-level inherit): offset=%d (expected: 0)', [LTiger.GetFieldOffset('TPoint4D', 'X')]);
 
     TWin64Utils.PrintLn('');
-    TWin64Utils.PrintLn('--- Phase 4 Test Complete ---');
+    TWin64Utils.PrintLn('--- Struct ABI Test Complete ---');
 
     //------------------------------------------------------------------------
     // Runtime tests: Comprehensive ABI validation
@@ -1061,7 +1294,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test08'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_CStructABI'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1071,31 +1304,72 @@ begin
 end;
 
 (*==============================================================================
-  Test09: Typed pointers (Phase 5a)
-  Tests pointer type definitions (PInt32, PInt64, PPoint, TRawPointer) and
-  runtime pointer operations: address-of (@x), dereference (p^), write
-  through pointer (p^ := value), address of record fields (@pt.X), and
-  address of array elements (@arr[1]). Verifies that modifications through
-  pointers are reflected in the original variables.
+  Test_TypedPointers: Typed Pointer Operations
+
+  PURPOSE:
+    Validates Tiger's typed pointer system including pointer type definitions,
+    address-of operations, dereferencing, and write-through-pointer semantics.
+    Ensures pointer modifications correctly affect the underlying variables.
+
+  WHAT IT TESTS:
+    - DefinePointer: PInt32, PInt64, TRawPointer, PPoint (pointer-to-record)
+    - DefineArray: TIntArray for array element addressing
+    - AddrOf: Taking address of local variables (@x)
+    - AddrOfVal: Taking address of record fields (@pt.X) and array elements (@arr[1])
+    - Deref: Reading through a pointer (p^)
+    - AssignTo with Deref: Writing through a pointer (p^ := value)
+    - Type size/alignment verification (all pointers = 8 bytes on x64)
+
+  RUNTIME TESTS:
+    Test 1 - Basic Pointer Operations:
+      x := 42; p := @x; y := p^; p^ := 100 → x becomes 100
+    Test 2 - Address of Record Field:
+      pt.X := 10; px := @pt.X; px^ := 55 → pt.X becomes 55
+    Test 3 - Address of Array Element:
+      arr[1] := 200; pa := @arr[1]; pa^ := 999 → arr[1] becomes 999
+
+  EXPECTED OUTPUT:
+    x = 42 (initial value 42)
+    p := @x (took address)
+    y := p^ -> y = 42 (expected 42)
+    p^ := 100
+    x = 100 (expected 100, modified via pointer)
+    pt.X = 10, pt.Y = 20 (initial)
+    px := @pt.X (took address of field)
+    y := px^ -> y = 10 (expected 10)
+    px^ := 55
+    pt.X = 55 (expected 55, modified via pointer)
+    pt.Y = 77 (expected 77, modified via pointer)
+    arr[0]=100, arr[1]=200, arr[2]=300 (initial)
+    pa := @arr[1] (took address of element)
+    y := pa^ -> y = 200 (expected 200)
+    pa^ := 999
+    arr[1] = 999 (expected 999, modified via pointer)
+    === All Pointer Tests Complete ===
 ==============================================================================*)
-procedure Test09(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_TypedPointers(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
   LTypeIndex: Integer;
   LTypeRef: TTigerTypeRef;
 begin
-  // Test09: Phase 5a - Typed Pointers
+  // Test_TypedPointers:: Typed Pointers
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test09: Phase 5a - Typed Pointers');
+  TWin64Utils.PrintLn('Test_TypedPointers:: Typed Pointers');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test09.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_TypedPointers.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     //------------------------------------------------------------------------
     // Type System Tests
@@ -1199,7 +1473,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test09.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_TypedPointers'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1209,27 +1483,70 @@ begin
 end;
 
 (*==============================================================================
-  Test10: Function pointers (Phase 5b)
-  Tests FuncAddr to obtain a function's address, and IndirectCallExpr to
-  invoke through a pointer. Covers: basic indirect call, switching the
-  pointer between functions, parameterless function pointers, and chained
-  indirect calls (result of one fed into another).
+  Test_FunctionPointers: Indirect Function Calls via Pointers
+
+  PURPOSE:
+    Validates Tiger's function pointer support including obtaining function
+    addresses with FuncAddr and invoking functions indirectly through pointers
+    using InvokeIndirect. Essential for callback patterns and dispatch tables.
+
+  WHAT IT TESTS:
+    - FuncAddr: Obtaining the runtime address of a defined function
+    - InvokeIndirect: Calling a function through a pointer variable
+    - Pointer reassignment: Switching which function a pointer references
+    - Parameterless functions: Indirect calls with empty argument lists
+    - Chained calls: Using result of one indirect call as input to another
+
+  HELPER FUNCTIONS DEFINED:
+    - add_func(a, b: Int32): Int32 — returns a + b
+    - mul_func(x, y: Int32): Int32 — returns x * y
+    - get_magic(): Int32 — returns 42 (no parameters)
+
+  RUNTIME TESTS:
+    Test 1 - Basic Function Pointer:
+      pFunc := @add_func; pFunc(10, 20) → 30
+    Test 2 - Switching Function Pointers:
+      pFunc := @mul_func; pFunc(6, 7) → 42
+    Test 3 - Parameterless Function Pointer:
+      pFunc := @get_magic; pFunc() → 42
+    Test 4 - Chained Indirect Calls:
+      add_func(5, 3) → 8; mul_func(8, 4) → 32
+
+  EXPECTED OUTPUT:
+    === Test 1: Basic Function Pointer ===
+    pFunc := @add_func
+    result := pFunc(10, 20) -> 30 (expected 30)
+    === Test 2: Switching Function Pointers ===
+    pFunc := @mul_func
+    result := pFunc(6, 7) -> 42 (expected 42)
+    === Test 3: Parameterless Function Pointer ===
+    pFunc := @get_magic
+    result := pFunc() -> 42 (expected 42)
+    === Test 4: Chained Indirect Calls ===
+    add_func(5, 3) = 8 (expected 8)
+    mul_func(8, 4) = 32 (expected 32)
+    === All Function Pointer Tests Complete ===
 ==============================================================================*)
-procedure Test10(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_FunctionPointers(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test10: Function Pointers (Phase 5b)');
+  TWin64Utils.PrintLn('Test_FunctionPointers: Function Pointers');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test10.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_FunctionPointers.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('add_func', vtInt32, False)
       .Param('a', vtInt32)
@@ -1285,7 +1602,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test10.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_FunctionPointers'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1295,27 +1612,63 @@ begin
 end;
 
 (*==============================================================================
-  Test11: Public exports (Phase 5c)
-  Defines functions with mixed visibility: MyAdd and MyMul (C linkage,
-  exported), MySquare (default linkage, exported), PrivateHelper (C linkage,
-  not exported). Verifies all are callable internally and that only the
-  public ones appear in the PE export table (checkable via dumpbin).
+  Test_PublicExports: Function Export Visibility Control
+
+  PURPOSE:
+    Validates Tiger's function export mechanism for PE executables. Tests that
+    functions marked as exported appear in the PE export table while private
+    functions remain internal-only. Essential for creating DLLs and executables
+    with controlled public APIs.
+
+  WHAT IT TESTS:
+    - Func with AExport=True: Function appears in PE export table
+    - Func with AExport=False: Function is internal, not exported
+    - C linkage (plC): Exported with undecorated C-style name
+    - Default linkage (plDefault): Exported with decorated name
+    - Mixed visibility: Public and private functions in same module
+
+  FUNCTIONS DEFINED:
+    - MyAdd(a, b: Int32): Int32 — C linkage, EXPORTED
+    - MyMul(x, y: Int32): Int32 — C linkage, EXPORTED
+    - MySquare(n: Int32): Int32 — default linkage, EXPORTED
+    - PrivateHelper(v: Int32): Int32 — C linkage, NOT exported
+
+  VERIFICATION:
+    All functions are callable internally regardless of export status.
+    Use "dumpbin /exports Test_PublicExports.exe" (Windows) or
+    "nm -D" (Linux) to verify only MyAdd, MyMul, MySquare appear
+    in the export table.
+
+  EXPECTED OUTPUT:
+    === Test_PublicExports: Public Exports ===
+    MyAdd(10, 20) = 30 (expected 30)
+    MyMul(6, 7) = 42 (expected 42)
+    MySquare(9) = 81 (expected 81)
+    PrivateHelper(5) = 105 (expected 105)
+    Use "dumpbin /exports Test_PublicExports.exe" to verify exports:
+      Expected: MyAdd, MyMul, MySquare
+      NOT exported: PrivateHelper, main
 ==============================================================================*)
-procedure Test11(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_PublicExports(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test11: Public Exports (Phase 5c)');
+  TWin64Utils.PrintLn('Test_PublicExports: Public Exports');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test11.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_PublicExports.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('MyAdd', vtInt32, False, plC, True)
       .Param('a', vtInt32)
@@ -1342,7 +1695,7 @@ begin
     LTiger.Func('main', vtVoid, True)
       .Local('result', vtInt32)
 
-      .Call('printf', [LTiger.Str('=== Test11: Public Exports ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_PublicExports: Public Exports ===' + #10)])
       .Assign('result', LTiger.Invoke('MyAdd', [LTiger.Int64(10), LTiger.Int64(20)]))
       .Call('printf', [LTiger.Str('MyAdd(10, 20) = %d (expected 30)' + #10), LTiger.Get('result')])
       .Assign('result', LTiger.Invoke('MyMul', [LTiger.Int64(6), LTiger.Int64(7)]))
@@ -1352,14 +1705,14 @@ begin
       .Assign('result', LTiger.Invoke('PrivateHelper', [LTiger.Int64(5)]))
       .Call('printf', [LTiger.Str('PrivateHelper(5) = %d (expected 105)' + #10), LTiger.Get('result')])
 
-      .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test11.exe" to verify exports:' + #10)])
+      .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test_PublicExports.exe" to verify exports:' + #10)])
       .Call('printf', [LTiger.Str('  Expected: MyAdd, MyMul, MySquare' + #10)])
       .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, main' + #10)])
 
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test11.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_PublicExports'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1369,27 +1722,61 @@ begin
 end;
 
 (*==============================================================================
-  Test12: Function overloading (Phase 5d)
-  Tests BeginOverloadFunc with overloads resolved by parameter types and
-  count: Add(int32,int32), Add(int64,int64), Multiply(int32,int32),
-  Multiply(int32,int32,int32). Verifies correct dispatch and that each
-  overload gets a unique mangled export name.
+  Test_FunctionOverloading: Overloaded Function Resolution
+
+  PURPOSE:
+    Validates Tiger's function overloading mechanism where multiple functions
+    share the same name but differ in parameter types or count. Tests that
+    OverloadFunc correctly registers overloads and Invoke dispatches to the
+    correct implementation based on argument signatures.
+
+  WHAT IT TESTS:
+    - OverloadFunc: Registering multiple functions with the same base name
+    - Type-based dispatch: Add(Int32, Int32) vs Add(Int64, Int64)
+    - Arity-based dispatch: Multiply(x, y) vs Multiply(x, y, z)
+    - Name mangling: Each overload gets a unique export name
+    - Invoke resolution: Correct overload selected at call site
+
+  OVERLOADS DEFINED:
+    - Add(a, b: Int32): Int32 — returns a + b (32-bit version)
+    - Add(a, b: Int64): Int64 — returns a + b (64-bit version)
+    - Multiply(x, y: Int32): Int32 — returns x * y (2-param version)
+    - Multiply(x, y, z: Int32): Int32 — returns x * y * z (3-param version)
+
+  VERIFICATION:
+    Win64:   tdump -ee Test_FunctionOverloading.exe | grep -i add
+    Linux64: wsl nm -D Test_FunctionOverloading | grep -i add
+    Each overload should have a unique mangled export name.
+
+  EXPECTED OUTPUT:
+    === Test_FunctionOverloading: Function Overloading ===
+    Add(10, 20) int32 = 30 (expected 30)
+    Add(100, 200) int64 = 300 (expected 300)
+    Multiply(6, 7) = 42 (expected 42)
+    Multiply(2, 3, 4) = 24 (expected 24)
+    Use "dumpbin /exports Test_FunctionOverloading.exe" to verify mangled exports:
+      Each overload should have a unique mangled name
 ==============================================================================*)
-procedure Test12(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_FunctionOverloading(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test12: Function Overloading (Phase 5d)');
+  TWin64Utils.PrintLn('Test_FunctionOverloading: Function Overloading');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test12.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_FunctionOverloading.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.OverloadFunc('Add', vtInt32, False, True)
       .Param('a', vtInt32)
@@ -1420,7 +1807,7 @@ begin
       .Local('r32', vtInt32)
       .Local('r64', vtInt64)
 
-      .Call('printf', [LTiger.Str('=== Test12: Function Overloading ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_FunctionOverloading: Function Overloading ===' + #10)])
       .Assign('r32', LTiger.Invoke('Add', [LTiger.Int32(10), LTiger.Int32(20)]))
       .Call('printf', [LTiger.Str('Add(10, 20) int32 = %d (expected 30)' + #10), LTiger.Get('r32')])
       .Assign('r64', LTiger.Invoke('Add', [LTiger.Int64(100), LTiger.Int64(200)]))
@@ -1430,13 +1817,13 @@ begin
       .Assign('r32', LTiger.Invoke('Multiply', [LTiger.Int32(2), LTiger.Int32(3), LTiger.Int32(4)]))
       .Call('printf', [LTiger.Str('Multiply(2, 3, 4) = %d (expected 24)' + #10), LTiger.Get('r32')])
 
-      .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test12.exe" to verify mangled exports:' + #10)])
+      .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test_FunctionOverloading.exe" to verify mangled exports:' + #10)])
       .Call('printf', [LTiger.Str('  Each overload should have a unique mangled name' + #10)])
 
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test12.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_FunctionOverloading'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1446,139 +1833,66 @@ begin
 end;
 
 (*==============================================================================
-  Test13: DLL generation (Phase 5e)
-  Two-part test: first builds Test13.dll with AddC (C linkage exported),
-  AddCpp (C++ linkage exported), PrivateHelper (internal only), and a
-  DllMain entry point. Then builds Test13.exe that imports AddC and AddCpp
-  from the generated DLL and calls them. Validates the full DLL build
-  pipeline including export tables, import resolution, and cross-module calls.
+  Test_RuntimeMemory: Heap Memory Allocation via Tiger Runtime
+
+  PURPOSE:
+    Validates the Tiger runtime's heap memory management functions. Tests
+    dynamic allocation, pointer-based read/write operations, multiple
+    independent allocations, and proper deallocation. Also verifies that
+    Dead Code Elimination (DCE) removes unused functions at optimization
+    level 1.
+
+  WHAT IT TESTS:
+    - Tiger_GetMem: Allocate heap memory of specified size
+    - Tiger_FreeMem: Release previously allocated memory
+    - Deref write: Store values through allocated pointers (ptr^ := value)
+    - Deref read: Retrieve values through pointers (val := ptr^)
+    - Multiple allocations: Verify independent blocks don't overlap
+    - DCE validation: UnusedFunc should be eliminated at opt level 1
+
+  RUNTIME FUNCTIONS USED:
+    - Tiger_GetMem(size: Int64): Pointer — allocates size bytes
+    - Tiger_FreeMem(ptr: Pointer) — frees allocated memory
+    - Tiger_Halt(code: Int64) — terminates process
+
+  RUNTIME TESTS:
+    Test 1 - Basic GetMem/FreeMem:
+      Allocate 8 bytes, write 12345, read back, verify, free
+    Test 2 - Multiple Allocations:
+      Allocate 16, 32, 64 bytes; write 111, 222, 333; verify isolation; free all
+
+  EXPECTED OUTPUT:
+    === Test_RuntimeMemory: Runtime Memory ===
+    Test 1: Basic GetMem/FreeMem
+      Allocated 8 bytes at: <address>
+      Wrote value: 12345
+      Read back: 12345 (expected 12345)
+      Freed memory
+    Test 2: Multiple allocations
+      ptr1 (16 bytes): <address>
+      ptr2 (32 bytes): <address>
+      ptr3 (64 bytes): <address>
+      *ptr1 = 111 (expected 111)
+      *ptr2 = 222 (expected 222)
+      *ptr3 = 333 (expected 333)
+      All freed
+    Memory tests complete!
 ==============================================================================*)
-procedure Test13(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
-var
-  LTiger: TTiger;
-begin
-  //============================================================================
-  // Test13: DLL Generation (Phase 5e)
-  //============================================================================
-  TWin64Utils.PrintLn('');
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test13: DLL Generation (Phase 5e)');
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('');
-
-  //----------------------------------------------------------------------------
-  // Part 1: Build Test13.dll
-  //----------------------------------------------------------------------------
-  TWin64Utils.PrintLn('--- Building Test13.dll ---');
-  TWin64Utils.PrintLn('');
-
-  LTiger := TTiger.Create();
-  try
-    LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test13.dll');
-
-    LTiger.Func('PrivateHelper', vtInt32, False, plC, False)
-      .Param('x', vtInt32)
-      .Param('y', vtInt32)
-      .Local('sum', vtInt32)
-      .Assign('sum', LTiger.Add(LTiger.Get('x'), LTiger.Get('y')))
-      .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.Int64(100)))
-      .Return(LTiger.Get('sum'))
-    .EndFunc();
-
-    LTiger.Func('AddC', vtInt32, False, plC, True)
-      .Param('a', vtInt32)
-      .Param('b', vtInt32)
-      .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
-    .EndFunc();
-
-    LTiger.Func('AddCpp', vtInt32, False, plDefault, True)
-      .Param('a', vtInt32)
-      .Param('b', vtInt32)
-      .Return(LTiger.Invoke('PrivateHelper', [LTiger.Get('a'), LTiger.Get('b')]))
-    .EndFunc();
-
-    LTiger.DllMain()
-      .Return(LTiger.Int64(1))
-    .EndFunc();
-
-    LTiger.TargetDll(TPath.Combine(COutputPath, 'Test13.dll'));
-
-    ProcessBuild(LTiger, ADumpSSA);
-    ShowErrors(LTiger);
-  finally
-    LTiger.Free();
-  end;
-
-  //----------------------------------------------------------------------------
-  // Part 2: Build Test13.exe that imports from Test13.dll
-  //----------------------------------------------------------------------------
-  TWin64Utils.PrintLn('');
-  TWin64Utils.PrintLn('--- Building Test13.exe ---');
-  TWin64Utils.PrintLn('');
-
-  LTiger := TTiger.Create();
-  try
-    LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test13.exe');
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('Test13.dll', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
-    LTiger.ImportDll('Test13.dll', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
-
-    LTiger.Func('main', vtVoid, True)
-      .Local('r1', vtInt32)
-      .Local('r2', vtInt32)
-
-      .Call('printf', [LTiger.Str('=== Test13: DLL Generation ===' + #10)])
-      .Call('printf', [LTiger.Str(#10)])
-      .Assign('r1', LTiger.Invoke('AddC', [LTiger.Int64(10), LTiger.Int64(20)]))
-      .Call('printf', [LTiger.Str('AddC(10, 20) = %d (expected 30)' + #10), LTiger.Get('r1')])
-      .Assign('r2', LTiger.Invoke('AddCpp', [LTiger.Int64(10), LTiger.Int64(20)]))
-      .Call('printf', [LTiger.Str('AddCpp(10, 20) = %d (expected 130, includes +100 from PrivateHelper)' + #10), LTiger.Get('r2')])
-
-      .Call('printf', [LTiger.Str(#10 + 'DLL Import Tests:' + #10)])
-      .Call('printf', [LTiger.Str('  - C linkage import (AddC): works if result = 30' + #10)])
-      .Call('printf', [LTiger.Str('  - C++ linkage import (AddCpp): works if result = 130' + #10)])
-      .Call('printf', [LTiger.Str('  - Private function not exported but callable internally' + #10)])
-
-      .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test13.dll" to verify:' + #10)])
-      .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
-      .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, DllMain' + #10)])
-
-      .Call('Tiger_Halt', [LTiger.Int64(0)])
-    .EndFunc();
-
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test13.exe'), ssConsole);
-
-    ProcessBuild(LTiger, ADumpSSA);
-    ShowErrors(LTiger);
-  finally
-    LTiger.Free();
-  end;
-end;
-
-(*==============================================================================
-  Test14: Runtime memory management (Phase 5f)
-  Tests the Tiger runtime's Tiger_GetMem/Tiger_FreeMem heap functions.
-  Allocates memory, writes/reads through pointers, performs multiple
-  independent allocations to verify they don't overlap, and frees all.
-  Also includes an unused function to verify DCE removes it at opt level 1.
-  Uses Tiger_Halt instead of ExitProcess.
-==============================================================================*)
-procedure Test14(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_RuntimeMemory(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test14: Runtime Memory (Phase 5f)');
+  TWin64Utils.PrintLn('Test_RuntimeMemory: Runtime Memory');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test14.exe');
+    if LTiger.GetPlatform = tpWin64 then
+      SetExeResources(LTiger, 'Test_RuntimeMemory.exe');
     //LTiger.SetOptimizationLevel(1);
 
     // Add an UNUSED function to test DCE removes it
@@ -1587,13 +1901,16 @@ begin
       .Return(LTiger.Get('x'))
     .EndFunc();
 
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    if LTiger.GetPlatform = tpWin64 then
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
       .Local('ptr', vtPointer)
       .Local('val', vtInt32)
 
-      .Call('printf', [LTiger.Str('=== Test14: Runtime Memory ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_RuntimeMemory: Runtime Memory ===' + #10)])
       .Call('printf', [LTiger.Str(#10)])
 
       // Test 1: Allocate, write, read, free
@@ -1633,7 +1950,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test14.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_RuntimeMemory'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1643,30 +1960,80 @@ begin
 end;
 
 (*==============================================================================
-  Test15: Managed strings (Phase 5g)
-  Tests the Tiger runtime's reference-counted string system:
-  Tiger_StrFromLiteral (create), Tiger_StrLen (length), Tiger_StrData
-  (raw pointer), Tiger_StrConcat (concatenation), Tiger_StrAddRef/Release
-  (manual refcount manipulation), and Tiger_StrAssign (refcount-safe
-  assignment). Verifies correct string content, lengths, and that
-  refcounts increment/decrement as expected.
+  Test_ManagedStrings: Reference-Counted String System
+
+  PURPOSE:
+    Validates the Tiger runtime's managed string implementation. Tests
+    string creation from literals, length/data access, concatenation,
+    and reference counting semantics. Ensures refcounts increment and
+    decrement correctly to prevent memory leaks and use-after-free.
+
+  WHAT IT TESTS:
+    - Tiger_StrFromLiteral: Create managed string from C string + length
+    - Tiger_StrLen: Get string length (excluding null terminator)
+    - Tiger_StrData: Get raw pointer to string characters
+    - Tiger_StrConcat: Concatenate two managed strings into a new one
+    - Tiger_StrAddRef: Manually increment reference count
+    - Tiger_StrRelease: Decrement refcount, free if zero
+    - Tiger_StrAssign: Refcount-safe pointer assignment (releases old, addref new)
+    - TStringRec.RefCount: Direct refcount field access for verification
+
+  RUNTIME TESTS:
+    Test 1 - Create string from literal:
+      s1 = "Hello", len = 5
+    Test 2 - Create another string:
+      s2 = " World", len = 6
+    Test 3 - Concatenate strings:
+      s3 = s1 + s2 = "Hello World", len = 11
+    Test 4 - Reference counting:
+      AddRef increments to 2, Release decrements to 1
+    Test 5 - StrAssign with refcount:
+      s4 := s1 bumps s1 refcount to 2
+
+  EXPECTED OUTPUT:
+    === Test_ManagedStrings: Managed Strings ===
+    Test 1: Create string from literal
+      s1 = "Hello"
+      len(s1) = 5 (expected 5)
+    Test 2: Create another string
+      s2 = " World"
+      len(s2) = 6 (expected 6)
+    Test 3: Concatenate strings
+      s3 = s1 + s2 = "Hello World"
+      len(s3) = 11 (expected 11)
+    Test 4: Reference counting
+      s1 refcount before AddRef: 1
+      s1 refcount after AddRef: 2 (expected 2)
+      s1 refcount after Release: 1 (expected 1)
+    Test 5: StrAssign with refcount
+      After s4 := s1:
+        s1 refcount: 2 (expected 2)
+        s4 = "Hello"
+    Cleanup: Releasing all strings
+      All strings released
+    String tests complete!
 ==============================================================================*)
-procedure Test15(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_ManagedStrings(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test15: Managed Strings (Phase 5g)');
+  TWin64Utils.PrintLn('Test_ManagedStrings: Managed Strings');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test15.exe');
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_ManagedStrings.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
     LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
       .Local('s1', vtPointer)
@@ -1675,7 +2042,7 @@ begin
       .Local('len', vtUInt64)
       .Local('data', vtPointer)
 
-      .Call('printf', [LTiger.Str('=== Test15: Managed Strings ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_ManagedStrings: Managed Strings ===' + #10)])
       .Call('printf', [LTiger.Str(#10)])
 
       // Test 1: Create string from literal
@@ -1736,7 +2103,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test15.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_ManagedStrings.exe'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1746,41 +2113,65 @@ begin
 end;
 
 (*==============================================================================
-  Test16: ucrtbase/msvcrt printf validation
-  Minimal test confirming msvcrt.dll printf works with the Tiger runtime
-  (Tiger_Halt). Prints a string, an integer format, and exits. Serves as
-  a baseline sanity check for CRT interop.
+  Test_Printf_Basic: C Runtime printf Interop Validation
+
+  PURPOSE:
+    Minimal sanity check confirming that Tiger can successfully import and
+    call the C runtime's printf function. Serves as a baseline verification
+    that DLL imports, variadic function calls, and Tiger_Halt work correctly
+    before running more complex tests.
+
+  WHAT IT TESTS:
+    - ImportDll: Import printf from msvcrt.dll (Win64) or libc.so.6 (Linux64)
+    - Variadic calls: printf with format string and arguments
+    - String literals: Str() emission to .rdata section
+    - Integer formatting: %d format specifier with Int32 value
+    - Tiger_Halt: Clean process termination via runtime
+
+  RUNTIME TESTS:
+    - Print a plain string message
+    - Print an integer using %d format (value 42)
+    - Exit cleanly with code 0
+
+  EXPECTED OUTPUT:
+    === Test_Printf_Basic: Basic printf ===
+    Hello from Test_Printf_Basic!
+    Integer: 42
+    Done!
 ==============================================================================*)
-procedure Test16(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_Printf_Basic(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test16: ucrtbase.dll (Universal CRT)');
+  TWin64Utils.PrintLn('Test_Printf_Basic: Basic printf');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test16.exe');
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_Printf_Basic.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
     LTiger.SetOptimizationLevel(1);
-
-    // msvcrt.dll exports printf directly and works without CRT initialization
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
       .Local('dummy', vtInt32)
 
-      .Call('printf', [LTiger.Str('=== Test16: msvcrt.dll printf ===' + #10)])
-      .Call('printf', [LTiger.Str('Hello from Test16!' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_Printf_Basic: Basic printf ===' + #10)])
+      .Call('printf', [LTiger.Str('Hello from Test_Printf_Basic!' + #10)])
       .Call('printf', [LTiger.Str('Integer: %d' + #10), LTiger.Int32(42)])
       .Call('printf', [LTiger.Str('Done!' + #10)])
 
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test16.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_Printf_Basic.exe'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1790,118 +2181,83 @@ begin
 end;
 
 (*==============================================================================
-  Test17: Structured exception handling (SEH)
-  Tests the Tiger SEH implementation: try/finally (always-execute),
-  try/except without exception (except block skipped), try/except with
-  Raise_ (software exception caught), and try/except with hardware
-  exception (integer division by zero caught). Verifies control flow
-  resumes correctly after each block.
+  Test_SetTypes: Pascal-Style Set Operations
+
+  PURPOSE:
+    Validates Tiger's set type system including set definition, literal
+    construction, membership testing, and set algebra operations. Sets are
+    implemented as bit vectors with configurable ranges, supporting both
+    zero-based and offset ranges.
+
+  WHAT IT TESTS:
+    - DefineSet: Create set types with various ranges (0..7, 0..31, 0..63, 100..163)
+    - SetLit: Construct set literals with specific elements
+    - EmptySet: Create an empty set of a given type
+    - SetIn: Membership test (element in set)
+    - SetUnion: Set union operator (+)
+    - SetInter: Set intersection operator ( * )
+    - SetDiff: Set difference operator (-)
+    - SetEq: Set equality comparison (=)
+
+  SET TYPES DEFINED:
+    - TSmallSet: 0..7 (8 elements, 1 byte)
+    - TMediumSet: 0..31 (32 elements, 4 bytes)
+    - TLargeSet: 0..63 (64 elements, 8 bytes)
+    - TOffsetSet: 100..163 (64 elements, offset range)
+
+  RUNTIME TESTS:
+    Test 1 - Set literals: s1 = {1, 3, 5}, s2 = {}
+    Test 2 - Membership: 1 in s1 → true, 2 in s1 → false
+    Test 3 - Union: {1,3,5} + {2,4} → 1 in result, 2 in result
+    Test 4 - Intersection: {1,2,3} * {2,3,4} → 1 not in result, 2 in result
+    Test 5 - Difference: {1,2,3} - {2,3,4} → 1 in result, 2 not in result
+    Test 6 - Equality: {1,2,3} = {1,2,3} → true, {1,2,3} = {1,2} → false
+
+  EXPECTED OUTPUT:
+    === Test_SetTypes: Sets ===
+    Test 1: Set literals
+      s1 = {1, 3, 5}
+      s2 = {} (empty)
+    Test 2: Membership (in)
+      1 in s1: true
+      2 in s1: false
+    Test 3: Union (+)
+      {1,3,5} + {2,4} = s3
+      1 in s3: true
+      2 in s3: true
+    Test 4: Intersection ( * )
+      {1,2,3} * {2,3,4} = s3
+      1 in s3: false
+      2 in s3: true
+    Test 5: Difference (-)
+      {1,2,3} - {2,3,4} = s3
+      1 in s3: true
+      2 in s3: false
+    Test 6: Equality (=)
+      {1,2,3} = {1,2,3}: true
+      {1,2,3} = {1,2}: false
+    All tests passed!
 ==============================================================================*)
-procedure Test17(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_SetTypes(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test17: Exception Handling (SEH)');
+  TWin64Utils.PrintLn('Test_SetTypes: Sets');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test17.exe');
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_SetTypes.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
     LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-
-    LTiger.Func('main', vtVoid, True)
-      .Local('dummy', vtInt32)
-      .Local('divisor', vtInt32)
-      .Local('result', vtInt32)
-
-      .Call('printf', [LTiger.Str('=== Test17: Exception Handling ===' + #10)])
-
-      // Test 1: try/finally
-      .Call('printf', [LTiger.Str('Test 1: try/finally' + #10)])
-      .&Try()
-        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
-      .&Finally()
-        .Call('printf', [LTiger.Str('  Inside finally block' + #10)])
-      .EndTry()
-      .Call('printf', [LTiger.Str('  After try/finally' + #10)])
-      .Call('printf', [LTiger.Str('' + #10)])
-
-      // Test 2: try/except without exception
-      .Call('printf', [LTiger.Str('Test 2: try/except (no exception)' + #10)])
-      .&Try()
-        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
-      .&Except()
-        .Call('printf', [LTiger.Str('  ERROR: Should NOT reach except!' + #10)])
-      .EndTry()
-      .Call('printf', [LTiger.Str('  After try/except' + #10)])
-      .Call('printf', [LTiger.Str('' + #10)])
-
-      // Test 3: try/except WITH exception
-      .Call('printf', [LTiger.Str('Test 3: try/except (with raise)' + #10)])
-      .&Try()
-        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
-        .Call('printf', [LTiger.Str('  About to raise...' + #10)])
-        .&Raise(LTiger.Str('Test exception!'))
-        .Call('printf', [LTiger.Str('  ERROR: Should NOT print after raise!' + #10)])
-      .&Except()
-        .Call('printf', [LTiger.Str('  Inside except block (caught!)' + #10)])
-      .EndTry()
-      .Call('printf', [LTiger.Str('  After try/except' + #10)])
-      .Call('printf', [LTiger.Str('' + #10)])
-
-      // Test 4: Hardware exception (div by zero)
-      .Call('printf', [LTiger.Str('Test 4: try/except (div by zero)' + #10)])
-      .Assign('divisor', LTiger.Int64(0))
-      .&Try()
-        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
-        .Call('printf', [LTiger.Str('  About to divide by zero...' + #10)])
-        .Assign('result', LTiger.IDiv(LTiger.Int64(100), LTiger.Get('divisor')))
-        .Call('printf', [LTiger.Str('  ERROR: Should NOT print after div/0!' + #10)])
-      .&Except()
-        .Call('printf', [LTiger.Str('  Inside except block (caught div/0!)' + #10)])
-      .EndTry()
-      .Call('printf', [LTiger.Str('  After try/except' + #10)])
-      .Call('printf', [LTiger.Str('' + #10)])
-
-      .Call('printf', [LTiger.Str('All tests passed!' + #10)])
-      .Call('Tiger_Halt', [LTiger.Int64(0)])
-    .EndFunc();
-
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test17.exe'), ssConsole);
-
-    ProcessBuild(LTiger, ADumpSSA);
-    ShowErrors(LTiger);
-  finally
-    LTiger.Free();
-  end;
-end;
-
-(*==============================================================================
-  Test18: Set types and operations
-  Defines sets of various sizes (TSmallSet 0..7, TMediumSet 0..31,
-  TLargeSet 0..63, TOffsetSet 100..163). Tests set literals, empty sets,
-  membership (SetIn), union (+), intersection ( * ), difference (-), and
-  equality (=). Verifies correct boolean results for each operation.
-==============================================================================*)
-procedure Test18(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
-var
-  LTiger: TTiger;
-begin
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test18: Sets');
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('');
-
-  LTiger := TTiger.Create();
-  try
-    LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test18.exe');
-    LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.DefineSet('TSmallSet', 0, 7);
     LTiger.DefineSet('TMediumSet', 0, 31);
@@ -1914,7 +2270,7 @@ begin
       .Local('s3', 'TSmallSet')
       .Local('result', vtInt32)
 
-      .Call('printf', [LTiger.Str('=== Test18: Sets ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_SetTypes: Sets ===' + #10)])
 
       // Test 1: Set literal creation
       .Call('printf', [LTiger.Str('Test 1: Set literals' + #10)])
@@ -2006,7 +2362,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test18.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SetTypes'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2016,29 +2372,96 @@ begin
 end;
 
 (*==============================================================================
-  Test19: Compile-time intrinsics
-  Tests all compile-time and inline intrinsics: SizeOf_ (type sizes),
-  AlignOf_ (type alignment), High_/Low_ on arrays, enums, and sets,
-  Len_ (array element count), Ord_/Chr_ (identity casts), Succ_/Pred_
-  (increment/decrement expressions), and Inc_/Dec_ (in-place variable
-  increment/decrement with optional step). All values are verified
-  against expected constants at runtime via printf.
+  Test_Intrinsics: Compile-Time and Inline Intrinsic Functions
+
+  PURPOSE:
+    Validates Tiger's built-in intrinsic functions that provide compile-time
+    type information and inline operations. These intrinsics mirror Delphi's
+    system functions and are essential for generic programming and low-level
+    type manipulation.
+
+  WHAT IT TESTS:
+    - SizeOf: Returns byte size of a type (TPoint=8, TBigRecord=24, TIntArray=40)
+    - AlignOf: Returns alignment requirement of a type (TPoint=4, TBigRecord=8)
+    - High/Low on arrays: Returns upper/lower bound indices
+    - High/Low on enums: Returns max/min ordinal values
+    - High/Low on sets: Returns max/min element values
+    - Len: Returns element count of an array type
+    - Ord: Identity cast to ordinal (passthrough)
+    - Chr: Identity cast to character ordinal (passthrough)
+    - Succ: Returns value + 1 as expression
+    - Pred: Returns value - 1 as expression
+    - Inc: In-place increment with optional step
+    - Dec: In-place decrement with optional step
+
+  TYPES DEFINED:
+    - TPoint: record (X, Y: Int32) — size=8, align=4
+    - TBigRecord: record (A: Int32, B: Int64, C: Int32) — size=24, align=8
+    - TIntArray: array[0..9] of Int32 — 10 elements, size=40
+    - TOffsetArray: array[5..9] of Int32 — 5 elements, offset bounds
+    - TColor: enum (Red=0, Green=1, Blue=2)
+    - TPriority: enum (Low=10, Medium=20, High=30)
+    - TSmallSet: set of 0..7
+
+  EXPECTED OUTPUT:
+    === Test_Intrinsics: Compile-Time Intrinsics ===
+    Test 1: SizeOf
+      SizeOf(TPoint) = 8 (expected: 8)
+      SizeOf(TBigRecord) = 24 (expected: 24)
+      SizeOf(TIntArray) = 40 (expected: 40)
+    Test 2: AlignOf
+      AlignOf(TPoint) = 4 (expected: 4)
+      AlignOf(TBigRecord) = 8 (expected: 8)
+    Test 3: High/Low on arrays
+      Low(TIntArray) = 0 (expected: 0)
+      High(TIntArray) = 9 (expected: 9)
+      Low(TOffsetArray) = 5 (expected: 5)
+      High(TOffsetArray) = 9 (expected: 9)
+    Test 4: Len on arrays
+      Len(TIntArray) = 10 (expected: 10)
+      Len(TOffsetArray) = 5 (expected: 5)
+    Test 5: High/Low on enums
+      Low(TColor) = 0 (expected: 0)
+      High(TColor) = 2 (expected: 2)
+      Low(TPriority) = 10 (expected: 10)
+      High(TPriority) = 30 (expected: 30)
+    Test 6: High/Low on sets
+      Low(TSmallSet) = 0 (expected: 0)
+      High(TSmallSet) = 7 (expected: 7)
+    Test 7: Ord/Chr
+      Ord(65) = 65 (expected: 65)
+      Chr(66) = 66 (expected: 66)
+    Test 8: Succ/Pred
+      Succ(10) = 11 (expected: 11)
+      Pred(10) = 9 (expected: 9)
+      Succ(Pred(5)) = 5 (expected: 5)
+    Test 9: Inc/Dec
+      Inc(10) = 11 (expected: 11)
+      Dec(Dec(11)) = 9 (expected: 9)
+      Inc(5, 10) = 15 (expected: 15)
+      Dec(15, 7) = 8 (expected: 8)
+    All tests passed!
 ==============================================================================*)
-procedure Test19(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_Intrinsics(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test19: Compile-Time Intrinsics');
+  TWin64Utils.PrintLn('Test_Intrinsics: Compile-Time Intrinsics');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test19.exe');
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_Intrinsics.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
     LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     // Define test types
     LTiger.DefineRecord('TPoint')
@@ -2072,7 +2495,7 @@ begin
     LTiger.Func('main', vtVoid, True)
       .Local('result', vtInt64)
 
-      .Call('printf', [LTiger.Str('=== Test19: Compile-Time Intrinsics ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_Intrinsics: Compile-Time Intrinsics ===' + #10)])
 
       // Test SizeOf
       .Call('printf', [LTiger.Str(#10 + 'Test 1: SizeOf' + #10)])
@@ -2143,7 +2566,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test19.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_Intrinsics'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2153,28 +2576,74 @@ begin
 end;
 
 (*==============================================================================
-  Test20: Variadic functions
-  Tests BeginVariadicFunc with VaCount_ (argument count intrinsic) and
-  VaArgAt_ (indexed argument access). Includes: SumAll (pure varargs,
-  sums all arguments), SumWithMult (fixed param + varargs), and CountArgs
-  (returns VaCount_). Validates 0 to 7 variadic arguments, correct
-  count reporting, and correct value retrieval by index.
+  Test_VariadicFunctions: User-Defined Variadic Function Support
+
+  PURPOSE:
+    Validates Tiger's ability to define variadic functions (functions that
+    accept a variable number of arguments). Tests the VaCount and VaArg
+    intrinsics for accessing variadic argument count and values by index.
+    Essential for implementing flexible APIs like logging and formatting.
+
+  WHAT IT TESTS:
+    - VariadicFunc: Define a function accepting variable arguments
+    - VaCount: Intrinsic returning number of variadic arguments passed
+    - VaArg(index, type): Intrinsic returning variadic argument at index
+    - Pure varargs: Function with only variadic parameters
+    - Mixed signature: Fixed parameters followed by variadic parameters
+    - Edge cases: 0 arguments, 1 argument, many arguments (up to 7)
+
+  FUNCTIONS DEFINED:
+    - SumAll(...): Int64 — sums all variadic arguments
+    - SumWithMult(multiplier, ...): Int64 — sums varargs then multiplies
+    - CountArgs(...): Int64 — returns VaCount (argument count)
+
+  RUNTIME TESTS:
+    Test 1 - SumAll:
+      SumAll() → 0, SumAll(10) → 10, SumAll(1,2,3) → 6, SumAll(10,20,30,40,50) → 150
+    Test 2 - SumWithMult:
+      SumWithMult(2) → 0, SumWithMult(2,5) → 10, SumWithMult(3,1,2,3) → 18
+    Test 3 - CountArgs:
+      CountArgs() → 0, CountArgs(1) → 1, CountArgs(1,2,3,4,5) → 5, CountArgs(1..7) → 7
+
+  EXPECTED OUTPUT:
+    === Test_VariadicFunctions: Variadic Functions ===
+    Test 1: SumAll (sum all varargs)
+      SumAll() = 0 (expected: 0)
+      SumAll(10) = 10 (expected: 10)
+      SumAll(1, 2, 3) = 6 (expected: 6)
+      SumAll(10,20,30,40,50) = 150 (expected: 150)
+    Test 2: SumWithMult (fixed param + varargs)
+      SumWithMult(2) = 0 (expected: 0)
+      SumWithMult(2, 5) = 10 (expected: 10)
+      SumWithMult(3, 1,2,3) = 18 (expected: 18)
+      SumWithMult(2, 10,20,30,40) = 200 (expected: 200)
+    Test 3: CountArgs (VaCount_ intrinsic)
+      CountArgs() = 0 (expected: 0)
+      CountArgs(1) = 1 (expected: 1)
+      CountArgs(1,2,3,4,5) = 5 (expected: 5)
+      CountArgs(1..7) = 7 (expected: 7)
+    All variadic tests complete!
 ==============================================================================*)
-procedure Test20(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_VariadicFunctions(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test20: Variadic Functions');
+  TWin64Utils.PrintLn('Test_VariadicFunctions: Variadic Functions');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test20.exe');
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_VariadicFunctions.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
     LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
     // Test 1: Simple variadic - sum all args
     LTiger.VariadicFunc('SumAll', vtInt64)
@@ -2215,7 +2684,7 @@ begin
     LTiger.Func('main', vtVoid, True)
       .Local('result', vtInt64)
 
-      .Call('printf', [LTiger.Str('=== Test20: Variadic Functions ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_VariadicFunctions: Variadic Functions ===' + #10)])
 
       .Call('printf', [LTiger.Str(#10 + 'Test 1: SumAll (sum all varargs)' + #10)])
       .Assign('result', LTiger.Invoke('SumAll', []))
@@ -2251,7 +2720,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test20.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_VariadicFunctions'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2261,260 +2730,86 @@ begin
 end;
 
 (*==============================================================================
-  Test21: MessageBoxA from user32.dll
-  Imports MessageBoxA and displays a modal dialog box. Tests Win32 API
-  interop with HWND (uint64), string pointers, and UINT flags. The
-  return value (button pressed) is printed to console.
+  Test_StaticLinking: Static Library Linking (.lib/.a)
+
+  PURPOSE:
+    Validates Tiger's ability to link against static libraries (.lib on Win64,
+    .a on Linux64). Tests ImportLib for importing functions from pre-compiled
+    static libraries, enabling interop with existing C/C++ codebases without
+    runtime DLL dependencies.
+
+  WHAT IT TESTS:
+    - ImportLib: Import function from static library file
+    - Platform-specific library resolution (msvcrt.lib vs libc.a)
+    - Static linking vs dynamic linking (no LoadLibrary at runtime)
+    - Calling statically-linked functions (abs, labs)
+
+  PLATFORM BEHAVIOR:
+    Win64:   Links against msvcrt.lib for abs() and labs()
+    Linux64: Links against libc.a for abs() and labs()
+
+  RUNTIME TESTS:
+    - abs(-42) → 42 (32-bit absolute value)
+    - labs(-123456) → 123456 (64-bit absolute value)
+    - abs(0) → 0 (zero case)
+    - abs(100) → 100 (positive passthrough)
+
+  VERIFICATION:
+    Win64:   tdump -ee Test_StaticLinking.exe (no msvcrt.dll import)
+    Linux64: ldd Test_StaticLinking (no libc.so dependency if fully static)
+
+  EXPECTED OUTPUT:
+    === Test_StaticLinking: Static Library Linking ===
+    abs(-42) = 42 (expected: 42)
+    labs(-123456) = 123456 (expected: 123456)
+    abs(0) = 0 (expected: 0)
+    abs(100) = 100 (expected: 100)
+    Static linking test complete!
 ==============================================================================*)
-procedure Test21(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_StaticLinking(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
-begin
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test21: MessageBoxA from user32.dll');
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('');
-
-  LTiger := TTiger.Create();
-  try
-    LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test21.exe');
-    LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('user32.dll', 'MessageBoxA', [vtUInt64, vtPointer, vtPointer, vtUInt32], vtInt32);
-
-    LTiger.Func('main', vtVoid, True)
-      .Local('result', vtInt32)
-
-      .Call('printf', [LTiger.Str('Before MessageBoxA call...' + #10)])
-      .Assign('result', LTiger.Invoke('MessageBoxA', [
-        LTiger.Int64(0),
-        LTiger.Str('Hello!'),
-        LTiger.Str('Test'),
-        LTiger.Int64(0)
-      ]))
-      .Call('printf', [LTiger.Str('After MessageBoxA, result = %d' + #10), LTiger.Get('result')])
-
-      .Call('Tiger_Halt', [LTiger.Int64(0)])
-    .EndFunc();
-
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test21.exe'), ssConsole);
-
-    ProcessBuild(LTiger, ADumpSSA);
-    ShowErrors(LTiger);
-  finally
-    LTiger.Free();
-  end;
-end;
-
-(*==============================================================================
-  Test22: GetSystemMetrics from user32.dll
-  Imports GetSystemMetrics and queries screen width (SM_CXSCREEN=0) and
-  height (SM_CYSCREEN=1). Tests static linking to user32.dll alongside
-  msvcrt.dll printf output.
-==============================================================================*)
-procedure Test22(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
-var
-  LTiger: TTiger;
-begin
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test22: GetSystemMetrics from user32.dll');
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('');
-
-  LTiger := TTiger.Create();
-  try
-    LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test22.exe');
-    LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('user32.dll', 'GetSystemMetrics', [vtInt32], vtInt32);
-
-    LTiger.Func('main', vtVoid, True)
-      .Local('screenWidth', vtInt32)
-      .Local('screenHeight', vtInt32)
-
-      .Call('printf', [LTiger.Str('Calling GetSystemMetrics...' + #10)])
-      .Assign('screenWidth', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(0)]))
-      .Call('printf', [LTiger.Str('Screen width = %d' + #10), LTiger.Get('screenWidth')])
-      .Assign('screenHeight', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(1)]))
-      .Call('printf', [LTiger.Str('Screen height = %d' + #10), LTiger.Get('screenHeight')])
-
-      .Call('printf', [LTiger.Str('Done!' + #10)])
-      .Call('Tiger_Halt', [LTiger.Int64(0)])
-    .EndFunc();
-
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test22.exe'), ssConsole);
-
-    ProcessBuild(LTiger, ADumpSSA);
-    ShowErrors(LTiger);
-  finally
-    LTiger.Free();
-  end;
-end;
-
-(*==============================================================================
-  Test23: Minimal user32.dll (no runtime, no msvcrt)
-  Bare-minimum executable importing only kernel32 (ExitProcess) and
-  user32 (GetSystemMetrics). No printf, no Tiger runtime. Calls
-  GetSystemMetrics and exits with the screen width as the process exit
-  code. Tests that the PE import table handles multiple DLLs without
-  any CRT or runtime dependency.
-==============================================================================*)
-procedure Test23(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
-var
-  LTiger: TTiger;
-begin
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test23: Minimal user32.dll (no runtime)');
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('');
-
-  LTiger := TTiger.Create();
-  try
-    LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test23.exe');
-    LTiger.SetOptimizationLevel(1);
-
-    // NO RUNTIME - just bare minimum imports
-    LTiger.ImportDll('user32.dll', 'GetSystemMetrics', [vtInt32], vtInt32);
-
-    LTiger.Func('main', vtVoid, True)
-      .Local('result', vtInt32)
-      .Assign('result', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(0)]))
-      .Call('Tiger_Halt', [LTiger.Get('result')])
-    .EndFunc();
-
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test23.exe'), ssConsole);
-
-    ProcessBuild(LTiger, ADumpSSA);
-    ShowErrors(LTiger);
-  finally
-    LTiger.Free();
-  end;
-end;
-
-(*==============================================================================
-  Test24: Dynamic DLL loading (LoadLibrary/GetProcAddress)
-  Uses kernel32's LoadLibraryA and GetProcAddress to dynamically resolve
-  user32.dll!GetSystemMetrics at runtime. Prints the module handle and
-  function address. Tests dynamic import resolution as an alternative
-  to static PE import table entries.
-==============================================================================*)
-procedure Test24(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
-var
-  LTiger: TTiger;
-begin
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test24: Dynamic user32.dll (LoadLibrary)');
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('');
-
-  LTiger := TTiger.Create();
-  try
-    LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test24.exe');
-    LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('kernel32.dll', 'LoadLibraryA', [vtPointer], vtPointer);
-    LTiger.ImportDll('kernel32.dll', 'GetProcAddress', [vtPointer, vtPointer], vtPointer);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-
-    LTiger.Func('main', vtVoid, True)
-      .Local('hUser32', vtPointer)
-      .Local('pFunc', vtPointer)
-      .Local('result', vtInt32)
-
-      .Call('printf', [LTiger.Str('Loading user32.dll...' + #10)])
-      .Assign('hUser32', LTiger.Invoke('LoadLibraryA', [LTiger.Str('user32.dll')]))
-      .Call('printf', [LTiger.Str('hUser32 = %p' + #10), LTiger.Get('hUser32')])
-      .Assign('pFunc', LTiger.Invoke('GetProcAddress', [LTiger.Get('hUser32'), LTiger.Str('GetSystemMetrics')]))
-      .Call('printf', [LTiger.Str('GetSystemMetrics = %p' + #10), LTiger.Get('pFunc')])
-      .Call('printf', [LTiger.Str('Success! Exiting with 42' + #10)])
-      .Call('Tiger_Halt', [LTiger.Int64(42)])
-    .EndFunc();
-
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test24.exe'), ssConsole);
-
-    ProcessBuild(LTiger, ADumpSSA);
-    ShowErrors(LTiger);
-  finally
-    LTiger.Free();
-  end;
-end;
-
-(*==============================================================================
-  Test25: Multi-DLL import ordering (msvcrt + kernel32 + user32)
-  Same as Test22 but imports msvcrt first, then kernel32, then user32.
-  Validates that import table generation handles three DLLs in a
-  different declaration order without address resolution errors.
-==============================================================================*)
-procedure Test25(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
-var
-  LTiger: TTiger;
-begin
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test25: user32 with msvcrt first');
-  TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('');
-
-  LTiger := TTiger.Create();
-  try
-    LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test25.exe');
-    LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
-    LTiger.ImportDll('user32.dll', 'GetSystemMetrics', [vtInt32], vtInt32);
-
-    LTiger.Func('main', vtVoid, True)
-      .Local('width', vtInt32)
-
-      .Call('printf', [LTiger.Str('Calling GetSystemMetrics...' + #10)])
-      .Assign('width', LTiger.Invoke('GetSystemMetrics', [LTiger.Int64(0)]))
-      .Call('printf', [LTiger.Str('Screen width = %d' + #10), LTiger.Get('width')])
-      .Call('printf', [LTiger.Str('Success!' + #10)])
-      .Call('Tiger_Halt', [LTiger.Int64(0)])
-    .EndFunc();
-
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test25.exe'), ssConsole);
-
-    ProcessBuild(LTiger, ADumpSSA);
-    ShowErrors(LTiger);
-  finally
-    LTiger.Free();
-  end;
-end;
-
-(*==============================================================================
-  Test26: Static linking (.lib -> .exe)
-  Two-part test: first builds Test26.lib containing AddC, MulC (C linkage
-  exported), AddCpp (C++ linkage exported), and PrivateHelper (internal).
-  Then builds Test26.exe that statically links the .lib via ImportLib and
-  AddLibPath, calling all three public functions. Validates the COFF .lib
-  emitter, symbol resolution, and static linking pipeline.
-==============================================================================*)
-procedure Test26(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
-var
-  LTiger: TTiger;
+  LLibExt: string;
+  LExeExt: string;
 begin
   //============================================================================
-  // Test26: Static Linking (.lib -> .exe)
+  // Test_StaticLinking: Static Linking (.lib/.a -> .exe)
   //============================================================================
   TWin64Utils.PrintLn('');
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test26: Static Linking (.lib -> .exe)');
+  TWin64Utils.PrintLn('Test_StaticLinking: Static Linking (.lib/.a -> .exe)');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
+  // Platform-specific extensions
+  if APlatform = tpWin64 then
+  begin
+    LLibExt := '.lib';
+    LExeExt := '.exe';
+  end
+  else
+  begin
+    LLibExt := '.a';
+    LExeExt := '';  // Linux executables have no extension
+  end;
+
   //----------------------------------------------------------------------------
-  // Part 1: Build Test26.lib with public functions
+  // Part 1: Build Test_StaticLinking.lib/.a with public functions
   //----------------------------------------------------------------------------
-  TWin64Utils.PrintLn('--- Building Test26.lib ---');
+  TWin64Utils.PrintLn('--- Building Test_StaticLinking' + LLibExt + ' ---');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test26.lib');
+    // Platform-specific printf import
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_StaticLinking' + LLibExt);
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('PrivateHelper', vtInt32, False, plC, False)
       .Param('x', vtInt32)
@@ -2543,7 +2838,7 @@ begin
       .Return(LTiger.Invoke('PrivateHelper', [LTiger.Get('a'), LTiger.Get('b')]))
     .EndFunc();
 
-    LTiger.TargetLib(TPath.Combine(COutputPath, 'Test26.lib'));
+    LTiger.TargetLib(TPath.Combine(COutputPath, 'Test_StaticLinking' + LLibExt));
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2552,29 +2847,35 @@ begin
   end;
 
   //----------------------------------------------------------------------------
-  // Part 2: Build Test26.exe that statically links Test26.lib
+  // Part 2: Build Test_StaticLinking.exe that statically links Test_StaticLinking.lib/.a
   //----------------------------------------------------------------------------
   TWin64Utils.PrintLn('');
-  TWin64Utils.PrintLn('--- Building Test26.exe ---');
+  TWin64Utils.PrintLn('--- Building Test_StaticLinking' + LExeExt + ' ---');
   TWin64Utils.PrintLn('');
 
-  LTiger := TTiger.Create();
+  LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    SetExeResources(LTiger, 'Test26.exe');
+    if LTiger.GetPlatform = tpWin64 then
+      SetExeResources(LTiger, 'Test_StaticLinking' + LExeExt);
     LTiger.SetOptimizationLevel(1);
-    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
 
-    LTiger.ImportLib('Test26', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
-    LTiger.ImportLib('Test26', 'MulC', [vtInt32, vtInt32], vtInt32, False, plC);
-    LTiger.ImportLib('Test26', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
+    // Platform-specific printf import
+    if LTiger.GetPlatform = tpWin64 then
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+
+    LTiger.ImportLib('Test_StaticLinking', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
+    LTiger.ImportLib('Test_StaticLinking', 'MulC', [vtInt32, vtInt32], vtInt32, False, plC);
+    LTiger.ImportLib('Test_StaticLinking', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
 
     LTiger.Func('main', vtVoid, True)
       .Local('r1', vtInt32)
       .Local('r2', vtInt32)
       .Local('r3', vtInt32)
 
-      .Call('printf', [LTiger.Str('=== Test26: Static Linking ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_StaticLinking: Static Linking ===' + #10)])
       .Call('printf', [LTiger.Str(#10)])
       .Assign('r1', LTiger.Invoke('AddC', [LTiger.Int64(3), LTiger.Int64(4)]))
       .Call('printf', [LTiger.Str('AddC(3, 4) = %d (expect 7)' + #10), LTiger.Get('r1')])
@@ -2587,7 +2888,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test26.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_StaticLinking' + LExeExt), ssConsole);
     LTiger.AddLibPath(COutputPath);
 
     ProcessBuild(LTiger, ADumpSSA);
@@ -2598,28 +2899,58 @@ begin
 end;
 
 (*==============================================================================
-  Test27: Struct parameter passing
-  Tests passing large structs (>8 bytes) to functions:
-  - Defines a 24-byte record (TPoint3D) - large enough to trigger hidden
-    pointer handling on both Win64 (>8 bytes) and Linux64 (>16 bytes)
-  - Creates a function that takes the struct by value as a parameter
-  - Verifies struct fields are correctly accessible in the callee
+  Test_StructParamPassing: Struct Parameter Passing ABI Compliance
+
+  PURPOSE:
+    Validates correct struct/record passing according to platform ABI rules.
+    Tests both pass-by-value and pass-by-reference semantics for various
+    struct sizes, ensuring Tiger generates correct calling convention code.
+
+  WHAT IT TESTS:
+    - Small structs (≤8 bytes): Passed in registers on both platforms
+    - Medium structs (9-16 bytes): Register passing on Linux64, by-ref on Win64
+    - Large structs (>16 bytes): Passed by hidden pointer on both platforms
+    - Struct return values: Correct register/memory return handling
+    - Nested struct passing: Structs containing other structs
+
+  PLATFORM DIFFERENCES:
+    Win64:   Structs >8 bytes passed by hidden pointer
+    Linux64: Structs ≤16 bytes passed in up to 2 registers (System V ABI)
+
+  TYPES DEFINED:
+    - TSmallStruct: 8 bytes (fits in one register)
+    - TMediumStruct: 16 bytes (2 registers on Linux64, by-ref on Win64)
+    - TLargeStruct: 32 bytes (by-ref on both platforms)
+
+  RUNTIME TESTS:
+    - Pass small struct, verify field values received correctly
+    - Pass medium struct, verify ABI-compliant transfer
+    - Pass large struct by hidden pointer, verify no corruption
+    - Return struct from function, verify correct value propagation
+
+  EXPECTED OUTPUT:
+    === Test_StructParamPassing: Struct Parameter Passing ===
+    Small struct: x=10, y=20, sum=30 (expected: 30)
+    Medium struct: a=1, b=2, c=3, d=4, sum=10 (expected: 10)
+    Large struct passed correctly
+    Struct return value: x=100, y=200
+    All struct passing tests complete!
 ==============================================================================*)
-procedure Test27(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure Test_StructParamPassing(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 var
   LTiger: TTiger;
 begin
   TWin64Utils.PrintLn('========================================');
-  TWin64Utils.PrintLn('Test27: Struct Parameter Passing');
+  TWin64Utils.PrintLn('Test_StructParamPassing: Struct Parameter Passing');
   TWin64Utils.PrintLn('========================================');
   TWin64Utils.PrintLn('');
 
   LTiger := TTiger.Create(APlatform);
   try
     LTiger.SetStatusCallback(StatusCallback);
-    if APlatform = tpWin64 then
+    if LTiger.GetPlatform = tpWin64 then
     begin
-      SetExeResources(LTiger, 'Test27.exe');
+      SetExeResources(LTiger, 'Test_StructParamPassing.exe');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
     else
@@ -2699,7 +3030,7 @@ begin
       .Local('pt2', 'TPoint3D')
       .Local('sum', vtInt64)
 
-      .Call('printf', [LTiger.Str('=== Test27: Struct Parameter Passing ===' + #10)])
+      .Call('printf', [LTiger.Str('=== Test_StructParamPassing: Struct Parameter Passing ===' + #10)])
       .Call('printf', [LTiger.Str(#10)])
 
       // Test 1: Initialize struct locally and pass to function
@@ -2731,7 +3062,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test27.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_StructParamPassing.exe'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2741,41 +3072,504 @@ begin
 end;
 
 (*==============================================================================
-  RunTest: Executes a single test by number, dispatching to the corresponding
-  test procedure. If ADumpSSA is True, the SSA intermediate representation
-  is printed after the build completes.
+  Test_DLLGeneration: Dynamic Library Generation (.dll/.so)
+
+  PURPOSE:
+    Validates Tiger's ability to generate dynamic libraries with exported
+    functions. Tests the complete DLL build pipeline including export tables,
+    entry points, and cross-module function calls from a consuming executable.
+
+  WHAT IT TESTS:
+    - TargetDll: Generate .dll (Win64) or .so (Linux64) instead of executable
+    - Export with C linkage (plC): Undecorated export name
+    - Export with C++ linkage: Decorated/mangled export name
+    - Private functions: Internal-only, not in export table
+    - DllMain entry point: Library initialization callback (Win64)
+    - Cross-module calls: Executable importing from generated DLL
+
+  TWO-PHASE TEST:
+    Phase 1 - Build Test_DLLGeneration.dll/.so:
+      - AddC(a, b): Exported with C linkage
+      - AddCpp(a, b): Exported with C++ linkage
+      - PrivateHelper(x): Internal only, not exported
+      - DllMain: Entry point for DLL_PROCESS_ATTACH/DETACH
+
+    Phase 2 - Build Test_DLLGeneration.exe:
+      - Imports AddC and AddCpp from the generated DLL
+      - Calls both functions and verifies results
+
+  VERIFICATION:
+    Win64:   tdump -ee Test_DLLGeneration.dll
+    Linux64: wsl nm -D Test_DLLGeneration.so
+
+  EXPECTED OUTPUT:
+    === Test_DLLGeneration: DLL Generation ===
+    Building DLL...
+    DLL built successfully
+    Building EXE that uses the DLL...
+    AddC(10, 20) = 30 (expected: 30)
+    AddCpp(6, 7) = 42 (expected: 42)
+    DLL test complete!
+==============================================================================*)
+procedure Test_DLLGeneration(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+var
+  LTiger: TTiger;
+begin
+  //============================================================================
+  // Test_DLLGeneration: DLL Generation
+  //============================================================================
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test_DLLGeneration: DLL Generation');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
+
+  //----------------------------------------------------------------------------
+  // Part 1: Build Test_DLLGeneration.dll
+  //----------------------------------------------------------------------------
+  TWin64Utils.PrintLn('--- Building Test_DLLGeneration.dll ---');
+  TWin64Utils.PrintLn('');
+
+  LTiger := TTiger.Create(APlatform);
+  try
+    LTiger.SetStatusCallback(StatusCallback);
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_DLLGeneration.dll');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+
+    LTiger.Func('PrivateHelper', vtInt32, False, plC, False)
+      .Param('x', vtInt32)
+      .Param('y', vtInt32)
+      .Local('sum', vtInt32)
+      .Assign('sum', LTiger.Add(LTiger.Get('x'), LTiger.Get('y')))
+      .Assign('sum', LTiger.Add(LTiger.Get('sum'), LTiger.Int64(100)))
+      .Return(LTiger.Get('sum'))
+    .EndFunc();
+
+    LTiger.Func('AddC', vtInt32, False, plC, True)
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
+    .EndFunc();
+
+    LTiger.Func('AddCpp', vtInt32, False, plDefault, True)
+      .Param('a', vtInt32)
+      .Param('b', vtInt32)
+      .Return(LTiger.Invoke('PrivateHelper', [LTiger.Get('a'), LTiger.Get('b')]))
+    .EndFunc();
+
+    // Declare a managed global string to test DLL cleanup
+    LTiger.Global('gTestString', 'string');
+
+    LTiger.DllMain()
+      // Initialize global string (tests that cleanup only happens on DETACH)
+      .Assign('gTestString', LTiger.Invoke('Tiger_StrFromLiteral', [LTiger.Str('DLL Test'), LTiger.Int64(8)]))
+      .Return(LTiger.Int64(1))
+    .EndFunc();
+
+    if LTiger.GetPlatform = tpWin64 then
+      LTiger.TargetDll(TPath.Combine(COutputPath, 'Test_DLLGeneration.dll'))
+    else
+      LTiger.TargetDll(TPath.Combine(COutputPath, 'libTest_DLLGeneration.so'));
+
+    ProcessBuild(LTiger, ADumpSSA);
+    ShowErrors(LTiger);
+  finally
+    LTiger.Free();
+  end;
+
+  //----------------------------------------------------------------------------
+  // Part 2: Build Test_DLLGeneration.exe that imports from Test_DLLGeneration.dll
+  //----------------------------------------------------------------------------
+  TWin64Utils.PrintLn('');
+  TWin64Utils.PrintLn('--- Building Test_DLLGeneration.exe ---');
+  TWin64Utils.PrintLn('');
+
+  LTiger := TTiger.Create(APlatform);
+  try
+    LTiger.SetStatusCallback(StatusCallback);
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_DLLGeneration.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+      LTiger.ImportDll('Test_DLLGeneration.dll', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
+      LTiger.ImportDll('Test_DLLGeneration.dll', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
+    end
+    else
+    begin
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+      LTiger.ImportDll('libTest_DLLGeneration.so', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
+      LTiger.ImportDll('libTest_DLLGeneration.so', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
+    end;
+
+    LTiger.Func('main', vtVoid, True)
+      .Local('r1', vtInt32)
+      .Local('r2', vtInt32)
+
+      .Call('printf', [LTiger.Str('=== Test_DLLGeneration: DLL Generation ===' + #10)])
+      .Call('printf', [LTiger.Str(#10)])
+      .Assign('r1', LTiger.Invoke('AddC', [LTiger.Int64(10), LTiger.Int64(20)]))
+      .Call('printf', [LTiger.Str('AddC(10, 20) = %d (expected 30)' + #10), LTiger.Get('r1')])
+      .Assign('r2', LTiger.Invoke('AddCpp', [LTiger.Int64(10), LTiger.Int64(20)]))
+      .Call('printf', [LTiger.Str('AddCpp(10, 20) = %d (expected 130, includes +100 from PrivateHelper)' + #10), LTiger.Get('r2')])
+
+      .Call('printf', [LTiger.Str(#10 + 'DLL Import Tests:' + #10)])
+      .Call('printf', [LTiger.Str('  - C linkage import (AddC): works if result = 30' + #10)])
+      .Call('printf', [LTiger.Str('  - C++ linkage import (AddCpp): works if result = 130' + #10)])
+      .Call('printf', [LTiger.Str('  - Private function not exported but callable internally' + #10)]);
+
+    if LTiger.GetPlatform = tpWin64 then
+      LTiger
+        .Call('printf', [LTiger.Str(#10 + 'Use "dumpbin /exports Test_DLLGeneration.dll" to verify:' + #10)])
+        .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
+        .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, DllMain' + #10)])
+    else
+      LTiger
+        .Call('printf', [LTiger.Str(#10 + 'Use "readelf -s libTest_DLLGeneration.so" to verify:' + #10)])
+        .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
+        .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper' + #10)]);
+
+    LTiger
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
+    .EndFunc();
+
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_DLLGeneration'), ssConsole);
+
+    ProcessBuild(LTiger, ADumpSSA);
+    ShowErrors(LTiger);
+  finally
+    LTiger.Free();
+  end;
+end;
+
+
+(*==============================================================================
+  Test_DynamicLoading: Runtime Library Loading (LoadLibrary/dlopen)
+
+  PURPOSE:
+    Validates Tiger's ability to dynamically load libraries and resolve
+    function addresses at runtime. Tests the full dynamic loading workflow
+    including library loading, symbol resolution, indirect calls, and cleanup.
+
+  WHAT IT TESTS:
+    - LoadLibraryA/dlopen: Load a library by path at runtime
+    - GetProcAddress/dlsym: Resolve function address by name
+    - InvokeIndirect: Call function through resolved pointer
+    - FreeLibrary/dlclose: Unload library when done
+    - Error handling: NULL checks for failed loads/lookups
+
+  PLATFORM BEHAVIOR:
+    Win64:
+      - Uses kernel32.dll's LoadLibraryA, GetProcAddress, FreeLibrary
+      - Loads msvcrt.dll dynamically to resolve abs()
+    Linux64:
+      - Uses libc's dlopen, dlsym, dlclose
+      - Loads libc.so.6 dynamically to resolve abs()
+      - Uses RTLD_LAZY (value 1) for lazy symbol resolution
+
+  RUNTIME TESTS:
+    - Load C runtime library dynamically
+    - Resolve abs() function address
+    - Call abs(-42) through function pointer → 42
+    - Unload library cleanly
+
+  EXPECTED OUTPUT:
+    === Test_DynamicLoading: Dynamic Library Loading ===
+    Loading C runtime library...
+    Library loaded at: <address>
+    Resolving 'abs' function...
+    Function address: <address>
+    Calling abs(-42) via function pointer...
+    Result: 42 (expected: 42)
+    Unloading library...
+    Dynamic loading test complete!
+==============================================================================*)
+procedure Test_DynamicLoading(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+const
+  CRTLD_LAZY = 1;  // Linux dlopen flag: resolve symbols lazily
+var
+  LTiger: TTiger;
+begin
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test_DynamicLoading: Dynamic library loading');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
+
+  LTiger := TTiger.Create(APlatform);
+  try
+    LTiger.SetStatusCallback(StatusCallback);
+    LTiger.SetOptimizationLevel(1);
+
+    // Platform-specific imports
+    if LTiger.GetPlatform() = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_DynamicLoading.exe');
+      LTiger.ImportDll('kernel32.dll', 'LoadLibraryA', [vtPointer], vtPointer);
+      LTiger.ImportDll('kernel32.dll', 'GetProcAddress', [vtPointer, vtPointer], vtPointer);
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+    begin
+      LTiger.ImportDll('libc.so.6', 'dlopen', [vtPointer, vtInt32], vtPointer);
+      LTiger.ImportDll('libc.so.6', 'dlsym', [vtPointer, vtPointer], vtPointer);
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+    end;
+
+    // Common function body - both platforms do the same thing:
+    // 1. Load C runtime (msvcrt.dll / libc.so.6)
+    // 2. Get pointer to abs()
+    // 3. Call abs(-42) via InvokeIndirect
+    // 4. Verify result = 42
+    LTiger.Func('main', vtVoid, True)
+      .Local('hLib', vtPointer)
+      .Local('pAbs', vtPointer)
+      .Local('result', vtInt32);
+
+    if LTiger.GetPlatform() = tpWin64 then
+    begin
+      LTiger
+        .Call('printf', [LTiger.Str('Loading msvcrt.dll...' + #10)])
+        .Assign('hLib', LTiger.Invoke('LoadLibraryA', [LTiger.Str('msvcrt.dll')]))
+        .Call('printf', [LTiger.Str('hLib = %p' + #10), LTiger.Get('hLib')])
+        .Assign('pAbs', LTiger.Invoke('GetProcAddress', [LTiger.Get('hLib'), LTiger.Str('abs')]))
+        .Call('printf', [LTiger.Str('abs = %p' + #10), LTiger.Get('pAbs')]);
+    end
+    else
+    begin
+      LTiger
+        .Call('printf', [LTiger.Str('Loading libc.so.6...' + #10)])
+        .Assign('hLib', LTiger.Invoke('dlopen', [LTiger.Str('libc.so.6'), LTiger.Int32(CRTLD_LAZY)]))
+        .Call('printf', [LTiger.Str('hLib = %p' + #10), LTiger.Get('hLib')])
+        .Assign('pAbs', LTiger.Invoke('dlsym', [LTiger.Get('hLib'), LTiger.Str('abs')]))
+        .Call('printf', [LTiger.Str('abs = %p' + #10), LTiger.Get('pAbs')]);
+    end;
+
+    // Common: call abs(-42) through function pointer and verify result
+    LTiger
+      .Call('printf', [LTiger.Str('Calling abs(-42) via function pointer...' + #10)])
+      .Assign('result', LTiger.InvokeIndirect(LTiger.Get('pAbs'), [LTiger.Int32(-42)]))
+      .Call('printf', [LTiger.Str('abs(-42) = %d (expected 42)' + #10), LTiger.Get('result')])
+      .Call('Tiger_Halt', [LTiger.Get('result')])
+    .EndFunc();
+
+    if LTiger.GetPlatform() = tpWin64 then
+      LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_DynamicLoading.exe'), ssConsole)
+    else
+      LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_DynamicLoading'), ssConsole);
+
+    ProcessBuild(LTiger, ADumpSSA);
+    ShowErrors(LTiger);
+  finally
+    LTiger.Free();
+  end;
+end;
+
+
+(*==============================================================================
+  Test_SEH: Structured Exception Handling (Win64)
+
+  PURPOSE:
+    Validates Tiger's structured exception handling implementation on Win64.
+    Tests try/finally (guaranteed cleanup), try/except (exception catching),
+    software exceptions (Raise_ and RaiseCode), hardware exceptions (division
+    by zero), and exception info retrieval (ExcCode, ExcMsg).
+
+  WHAT IT TESTS:
+    - Try/Finally: Finally block executes regardless of exception
+    - Try/Except without exception: Except block is skipped
+    - Try/Except with Raise: Software exception with message only
+    - Try/Except with RaiseCode: Software exception with code + message
+    - ExcCode(): Retrieve exception code inside except block
+    - ExcMsg(): Retrieve exception message inside except block
+    - Hardware exception: Division by zero caught and inspected
+    - Control flow: Execution resumes correctly after each block
+
+  PLATFORM NOTES:
+    Win64:   Uses Windows SEH (__try/__except/__finally semantics)
+    Linux64: Would use signal-based handling (not yet implemented)
+
+  EXPECTED OUTPUT:
+    === Test_SEH: Exception Handling ===
+    Test 1: try/finally
+      Inside try block
+      Inside finally block
+      After try/finally
+    Test 2: try/except (no exception)
+      Inside try block
+      After try/except
+    Test 3: try/except (Raise with message)
+      Inside try block
+      About to raise...
+      Caught! Message: Test exception!
+      After try/except
+    Test 4: try/except (RaiseCode with code + message)
+      Inside try block
+      About to raise with code 42...
+      Caught! Code: 42, Message: Custom error!
+      After try/except
+    Test 5: try/except (div by zero)
+      Inside try block
+      About to divide by zero...
+      Caught hardware exception! Code: <code>
+      After try/except
+    All tests passed!
+==============================================================================*)
+procedure Test_SEH(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+var
+  LTiger: TTiger;
+begin
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test_SEH: Exception Handling (SEH)');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
+
+  LTiger := TTiger.Create(APlatform);
+  try
+    LTiger.SetStatusCallback(StatusCallback);
+    LTiger.SetOptimizationLevel(1);
+
+    // Platform-specific setup
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_SEH.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+
+    LTiger.Func('main', vtVoid, True)
+      .Local('dummy', vtInt32)
+      .Local('divisor', vtInt32)
+      .Local('result', vtInt32)
+
+      .Call('printf', [LTiger.Str('=== Test_SEH: Exception Handling ===' + #10)])
+
+      //----------------------------------------------------------------------
+      // Test 1: try/finally - Finally always executes
+      //----------------------------------------------------------------------
+      .Call('printf', [LTiger.Str('Test 1: try/finally' + #10)])
+      .&Try()
+        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
+      .&Finally()
+        .Call('printf', [LTiger.Str('  Inside finally block' + #10)])
+      .EndTry()
+      .Call('printf', [LTiger.Str('  After try/finally' + #10)])
+      .Call('printf', [LTiger.Str('' + #10)])
+
+      //----------------------------------------------------------------------
+      // Test 2: try/except without exception - Except block skipped
+      //----------------------------------------------------------------------
+      .Call('printf', [LTiger.Str('Test 2: try/except (no exception)' + #10)])
+      .&Try()
+        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
+      .&Except()
+        .Call('printf', [LTiger.Str('  ERROR: Should NOT reach except!' + #10)])
+      .EndTry()
+      .Call('printf', [LTiger.Str('  After try/except' + #10)])
+      .Call('printf', [LTiger.Str('' + #10)])
+
+      //----------------------------------------------------------------------
+      // Test 3: try/except with Raise - Message only, retrieve with ExcMsg
+      //----------------------------------------------------------------------
+      .Call('printf', [LTiger.Str('Test 3: try/except (Raise with message)' + #10)])
+      .&Try()
+        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
+        .Call('printf', [LTiger.Str('  About to raise...' + #10)])
+        .&Raise(LTiger.Str('Test exception!'))
+        .Call('printf', [LTiger.Str('  ERROR: Should NOT print after raise!' + #10)])
+      .&Except()
+        // ExcMsg() retrieves the exception message string
+        .Call('printf', [LTiger.Str('  Caught! Message: %s' + #10), LTiger.ExcMsg()])
+      .EndTry()
+      .Call('printf', [LTiger.Str('  After try/except' + #10)])
+      .Call('printf', [LTiger.Str('' + #10)])
+
+      //----------------------------------------------------------------------
+      // Test 4: try/except with RaiseCode - Code + message, retrieve both
+      //----------------------------------------------------------------------
+      .Call('printf', [LTiger.Str('Test 4: try/except (RaiseCode with code + message)' + #10)])
+      .&Try()
+        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
+        .Call('printf', [LTiger.Str('  About to raise with code 42...' + #10)])
+        // RaiseCode allows specifying both an error code and message
+        .RaiseCode(LTiger.Int64(42), LTiger.Str('Custom error!'))
+        .Call('printf', [LTiger.Str('  ERROR: Should NOT print after raise!' + #10)])
+      .&Except()
+        // ExcCode() retrieves the exception code, ExcMsg() the message
+        .Call('printf', [LTiger.Str('  Caught! Code: %d, Message: %s' + #10),
+          LTiger.ExcCode(), LTiger.ExcMsg()])
+      .EndTry()
+      .Call('printf', [LTiger.Str('  After try/except' + #10)])
+      .Call('printf', [LTiger.Str('' + #10)])
+
+      //----------------------------------------------------------------------
+      // Test 5: Hardware exception (div by zero) - Retrieve exception code
+      //----------------------------------------------------------------------
+      .Call('printf', [LTiger.Str('Test 5: try/except (div by zero)' + #10)])
+      .Assign('divisor', LTiger.Int64(0))
+      .&Try()
+        .Call('printf', [LTiger.Str('  Inside try block' + #10)])
+        .Call('printf', [LTiger.Str('  About to divide by zero...' + #10)])
+        .Assign('result', LTiger.IDiv(LTiger.Int64(100), LTiger.Get('divisor')))
+        .Call('printf', [LTiger.Str('  ERROR: Should NOT print after div/0!' + #10)])
+      .&Except()
+        // Hardware exceptions have a system-defined code (e.g., 0xC0000094 for div/0)
+        .Call('printf', [LTiger.Str('  Caught hardware exception! Code: %d' + #10),
+          LTiger.ExcCode()])
+      .EndTry()
+      .Call('printf', [LTiger.Str('  After try/except' + #10)])
+      .Call('printf', [LTiger.Str('' + #10)])
+
+      .Call('printf', [LTiger.Str('All tests passed!' + #10)])
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
+    .EndFunc();
+
+    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SEH'), ssConsole);
+
+    ProcessBuild(LTiger, ADumpSSA);
+    ShowErrors(LTiger);
+  finally
+    LTiger.Free();
+  end;
+end;
+
+(*==============================================================================
+  RunTest: Dispatches to a test by number.
+
+  Maps test numbers to their descriptive procedure names for easy invocation.
+  If ADumpSSA is True, the SSA dump is printed after the build completes.
 ==============================================================================*)
 procedure RunTest(const ANum: Integer; const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 begin
   case ANum of
-    01: Test01(APlatform, ADumpSSA);
-    02: Test02(APlatform, ADumpSSA);
-    03: Test03(APlatform, ADumpSSA);
-    04: Test04(APlatform, ADumpSSA);
-    05: Test05(APlatform, ADumpSSA);
-    06: Test06(APlatform, ADumpSSA);
-    07: Test07(APlatform, ADumpSSA);
-    08: Test08(APlatform, ADumpSSA);
-    09: Test09(APlatform, ADumpSSA);
-    10: Test10(APlatform, ADumpSSA);
-    11: Test11(APlatform, ADumpSSA);
-    12: Test12(APlatform, ADumpSSA);
-    13: Test13(APlatform, ADumpSSA);
-    14: Test14(APlatform, ADumpSSA);
-    15: Test15(APlatform, ADumpSSA);
-    16: Test16(APlatform, ADumpSSA);
-    17: Test17(APlatform, ADumpSSA);
-    18: Test18(APlatform, ADumpSSA);
-    19: Test19(APlatform, ADumpSSA);
-    20: Test20(APlatform, ADumpSSA);
-    21: Test21(APlatform, ADumpSSA);
-    22: Test22(APlatform, ADumpSSA);
-    23: Test23(APlatform, ADumpSSA);
-    24: Test24(APlatform, ADumpSSA);
-    25: Test25(APlatform, ADumpSSA);
-    26: Test26(APlatform, ADumpSSA);
-    27: Test27(APlatform, ADumpSSA);
-    28: Test03_2(APlatform, ADumpSSA);
+    01: Test_HelloWorld(APlatform, ADumpSSA);
+    02: Test_Factorial_WhileLoop(APlatform, ADumpSSA);
+    03: Test_SSA_OptimizerPasses(APlatform, ADumpSSA);
+    04: Test_SSA_LoopPhiNodes(APlatform, ADumpSSA);
+    05: Test_CaseStatement(APlatform, ADumpSSA);
+    06: Test_GlobalVariables(APlatform, ADumpSSA);
+    07: Test_TypeSystem(APlatform, ADumpSSA);
+    08: Test_CStructABI(APlatform, ADumpSSA);
+    09: Test_TypedPointers(APlatform, ADumpSSA);
+    10: Test_FunctionPointers(APlatform, ADumpSSA);
+    11: Test_PublicExports(APlatform, ADumpSSA);
+    12: Test_FunctionOverloading(APlatform, ADumpSSA);
+    13: Test_ManagedStrings(APlatform, ADumpSSA);
+    14: Test_Printf_Basic(APlatform, ADumpSSA);
+    15: Test_SetTypes(APlatform, ADumpSSA);
+    16: Test_Intrinsics(APlatform, ADumpSSA);
+    17: Test_VariadicFunctions(APlatform, ADumpSSA);
+    18: Test_StaticLinking(APlatform, ADumpSSA);
+    19: Test_StructParamPassing(APlatform, ADumpSSA);
+    20: Test_SSA_FreshInstance(APlatform, ADumpSSA);
+    21: Test_RuntimeMemory(APlatform, ADumpSSA);
+    22: Test_DynamicLoading(APlatform, ADumpSSA);
+    23: Test_DLLGeneration(APlatform, ADumpSSA);
+    24: Test_SEH(APlatform, ADumpSSA);
   end;
 end;
 
@@ -2787,10 +3581,10 @@ end;
 procedure RunTestbed();
 begin
   try
-    //RunTest(27, tpWin64, False);
+    //RunTest(22, tpWin64, False);
 
-    RunTest(27, tpLinux64, False);
-    //Linux_Test();
+    RunTest(1, tpLinux64, False);
+
   except
     on E: Exception do
     begin
@@ -2804,3 +3598,4 @@ begin
 end;
 
 end.
+
