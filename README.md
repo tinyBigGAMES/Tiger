@@ -8,7 +8,7 @@
 
 </div>
 
-## What is Tiger?
+## What is Tiger? 
 
 **Tiger** is a Delphi-hosted compiler infrastructure that lets you programmatically generate native x86-64 binaries for Windows and Linux — executables, shared libraries, static libraries, and object files — entirely from code. There is no source language to parse. Instead, you construct programs using a fluent Delphi API: define types, declare functions, emit statements and expressions, and call `Build`. Tiger handles SSA-based IR generation, optimization, machine code emission, PE/ELF linking, and resource embedding.
 
