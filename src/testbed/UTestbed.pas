@@ -3581,8 +3581,7 @@ end;
 procedure RunTestbed();
 begin
   try
-    //RunTest(22, tpWin64, False);
-
+    //RunTest(1, tpWin64, False);
     RunTest(1, tpLinux64, False);
 
   except

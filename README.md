@@ -1329,6 +1329,16 @@ Contributions are welcome. If you'd like to get involved:
 
 Join our [Discord](https://discord.gg/Wb6z8Wam7p) to discuss development, ask questions, or share what you're building with Tiger.
 
+## 💙 Like What You See?
+
+Tiger is a labor of love, built in the open. If it saves you time or sparks an idea:
+
+- ⭐ **Star the repo** to help others find it
+- 🗣️ **Spread the word** on social media or your blog
+- 💬 **Join us on Discord** to share what you're building
+
+Your support keeps the project alive!
+
 ## 📄 License
 
 Tiger is licensed under the **Apache License 2.0**. See [LICENSE](https://github.com/tinyBigGAMES/Tiger/tree/main?tab=License-1-ov-file#readme) for details.
