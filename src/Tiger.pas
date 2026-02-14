@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -28,10 +28,12 @@ uses
   Tiger.Backend,
   Tiger.Backend.Win64,
   Tiger.Backend.Linux64,
+  Tiger.Backend.MacOS64,
   Tiger.IR,
   Tiger.Runtime,
   Tiger.Runtime.Win64,
-  Tiger.Runtime.Linux64;
+  Tiger.Runtime.Linux64,
+  Tiger.Runtime.MacOS64;
 
 //==============================================================================
 // TYPE ALIASES
@@ -353,7 +355,8 @@ type
   /// </remarks>
   TTigerPlatform = (
     tpWin64,    // Windows x86-64 (PE/COFF, Microsoft x64 ABI)
-    tpLinux64   // Linux x86-64 (ELF, System V AMD64 ABI)
+    tpLinux64,  // Linux x86-64 (ELF, System V AMD64 ABI)
+    tpMacOS64   // macOS ARM64 (Mach-O, Apple ARM64 ABI)
   );
 
   //============================================================================
@@ -3414,6 +3417,13 @@ begin
       FBackend := TTigerLinux64Backend.Create();
       FRuntime := TTigerLinux64Runtime.Create();
     end;
+    tpMacOS64:
+    begin
+      FBackend := TTigerMacOS64Backend.Create();
+      FRuntime := TTigerMacOS64Runtime.Create();
+    end;
+  else
+    raise EArgumentException.Create('Unsupported platform');
   end;
 
   FBackend.SetErrors(FErrors);

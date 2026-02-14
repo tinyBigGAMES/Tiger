@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -31,6 +31,7 @@ uses
   Tiger.IR in '..\Tiger.IR.pas',
   Tiger.Linker.COFF in '..\Tiger.Linker.COFF.pas',
   Tiger.Linker.ELF in '..\Tiger.Linker.ELF.pas',
+  Tiger.Linker.MachO in '..\Tiger.Linker.MachO.pas',
   Tiger.Linker in '..\Tiger.Linker.pas',
   Tiger in '..\Tiger.pas',
   Tiger.Resources in '..\Tiger.Resources.pas',

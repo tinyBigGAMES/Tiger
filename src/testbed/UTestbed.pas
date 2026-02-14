@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -125,16 +125,17 @@ begin
     // Wire up status callback so build progress prints to console
     LTiger.SetStatusCallback(StatusCallback);
 
-    // Platform-specific setup: Windows uses msvcrt.dll, Linux uses libc.so.6
+    // Platform-specific setup: Windows uses msvcrt.dll, Linux uses libc, macOS uses libSystem
     if LTiger.GetPlatform = tpWin64 then
     begin
       // Embed version info and icon into the Windows executable
       SetExeResources(LTiger, 'Test_HelloWorld.exe');
-      // Import printf from Microsoft C Runtime (variadic = True)
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
+    else if LTiger.GetPlatform = tpMacOS64 then
+      // macOS: runtime injects libSystem.B.dylib with printf, exit; no ImportDll needed
+      ;
     else
-      // Linux: import printf from GNU C Library
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     // Define the program entry point
@@ -3582,6 +3583,8 @@ procedure RunTestbed();
 begin
   try
     //RunTest(1, tpWin64, False);
+    //RunTest(1, tpLinux64, False);
+    //RunTest(1, tpMacOS64, False);  // Builds Mach-O for Apple Silicon; copy output to Mac to run
     RunTest(1, tpLinux64, False);
 
   except
