@@ -62,25 +62,32 @@ const
   CPU_TYPE_ARM64 = $0100000C;
   CPU_SUBTYPE_ARM64_ALL = 0;
   MH_EXECUTE     = 2;
+  MH_NOUNDEFS    = $00000001;
+  MH_DYLDLINK    = $00000004;
+  MH_TWOLEVEL    = $00000080;
+  MH_PIE         = $00200000;
   LC_SEGMENT_64  = $19;
   LC_REQ_DYLD    = $80000000;
   LC_MAIN        = $28 or LC_REQ_DYLD;
   LC_LOAD_DYLINKER = $0E;
   LC_LOAD_DYLIB   = $0C;
   LC_DYLD_INFO_ONLY = $22 or LC_REQ_DYLD;
+  LC_BUILD_VERSION = $32;
   LC_SYMTAB       = $02;
   LC_DYSYMTAB     = $0B;
 
   SEG_TEXT = '__TEXT';
   SEG_DATA = '__DATA';
+  SEG_LINKEDIT = '__LINKEDIT';
+  SEG_PAGEZERO = '__PAGEZERO';
   SECT_TEXT = '__text';
   SECT_CSTRING = '__cstring';
   SECT_DATA = '__data';
   SECT_GOT = '__got';
 
   PAGE_SIZE = 4096;
-  SEG_TEXT_VADDR = 0;
-  SEG_DATA_VADDR = $100000000;  // After 4GB
+  SEG_TEXT_VADDR = $0000000100000000;  // Canonical arm64 executable __TEXT base
+  SEG_DATA_VADDR = $0000000100001000;  // Keep same vmaddr-fileoff slide across segments
 
 procedure TTigerMacOS64Backend.EnsureOutputDir();
 begin
@@ -143,12 +150,17 @@ var
   LCallFixups: TList<TPair<Cardinal, Integer>>;
   LImportFixups: TList<TPair<Cardinal, Integer>>;
   LDataFixups: TList<TPair<Cardinal, Integer>>;
+  LGlobalFixups: TList<TPair<Cardinal, Integer>>;
   LLabelOffsets: TDictionary<Integer, Cardinal>;
   LJumpFixups: TList<TPair<Cardinal, Integer>>;
   LCondJumpFixups: TList<TPair<Cardinal, Integer>>;
   LOutStream: TMemoryStream;
   LHeaderSize, LLoadCmdSize: Cardinal;
   LSegTextFileOff, LSegTextFileSize, LSegDataFileOff, LSegDataFileSize: Cardinal;
+  LSegLinkEditFileOff, LSegLinkEditFileSize: Cardinal;
+  LTextSectionFileOff: Cardinal;
+  LTextMapSize: Cardinal;
+  LSlide: UInt64;
   LTextFileOff, LCStringFileOff, LDataFileOff, LGotFileOff: Cardinal;
   LGotVAddr, LSlotAddr: UInt64;
   LOfs12: Cardinal;
@@ -177,6 +189,9 @@ var
   LCardVal: Cardinal;
   LByteOffset: Int64;
   LPageIndex: Int64;
+  LTargetIndex: Integer;
+  LTargetReg: Byte;
+  LDataHandle: TTigerDataHandle;
   procedure WriteFixedAnsi(const AText: AnsiString; const ASize: Integer);
   var
     LBuf: TBytes;
@@ -205,6 +220,13 @@ var
     if LCopyLen > 0 then
       Move(AText[1], LBuf[0], LCopyLen);
     LOutStream.WriteBuffer(LBuf[0], ASize);
+  end;
+
+  function AlignUp32(const AValue, AAlignment: Cardinal): Cardinal;
+  begin
+    if AAlignment <= 1 then
+      Exit(AValue);
+    Result := (AValue + AAlignment - 1) and (not (AAlignment - 1));
   end;
 
   procedure EmitU32(const AValue: Cardinal);
@@ -305,8 +327,8 @@ var
   var
     LImm7: Cardinal;
   begin
-    LImm7 := Byte((Int32(AImm) div 8) and $7F);
-    EmitARM64($A9A00000 or (LImm7 shl 15) or (Cardinal(ARn) shl 5) or ARt1 or (Cardinal(ARt2) shl 10));
+    LImm7 := Cardinal((AImm div 8) and $7F);
+    EmitARM64($A9800000 or (LImm7 shl 15) or (Cardinal(ARn) shl 5) or ARt1 or (Cardinal(ARt2) shl 10));
   end;
 
   procedure EmitLdpPost(const ARt1, ARt2, ARn: Byte; const AImm: Cardinal);
@@ -447,13 +469,13 @@ var
           EmitLdrFp(AReg, GetLocalOffset(AOp.LocalHandle.Index));
       okData:
         begin
-          LDataFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), AOp.DataHandle.Index));
+          LDataFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), (AOp.DataHandle.Index shl 8) or AReg));
           EmitAdrp(AReg, 0);
           EmitARM64($91000000 or (0 shl 10) or (Cardinal(AReg) shl 5) or AReg);
         end;
       okGlobal:
         begin
-          LDataFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), AOp.DataHandle.Index));
+          LGlobalFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), (AOp.DataHandle.Index shl 8) or AReg));
           EmitAdrp(AReg, 0);
           EmitARM64($91000000 or (0 shl 10) or (Cardinal(AReg) shl 5) or AReg);
         end;
@@ -495,6 +517,7 @@ begin
   LCallFixups := TList<TPair<Cardinal, Integer>>.Create();
   LImportFixups := TList<TPair<Cardinal, Integer>>.Create();
   LDataFixups := TList<TPair<Cardinal, Integer>>.Create();
+  LGlobalFixups := TList<TPair<Cardinal, Integer>>.Create();
   LJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LCondJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LLabelOffsets := TDictionary<Integer, Cardinal>.Create();
@@ -584,8 +607,8 @@ begin
       if (LStackFrameSize mod 16) <> 0 then
         LStackFrameSize := (LStackFrameSize + 15) and (not 15);
 
-      EmitStpPre(REG_FP, REG_LR, REG_SP, 16);
-      EmitARM64($910003E0 or (REG_FP shl 5) or REG_SP);
+      EmitStpPre(REG_FP, REG_LR, REG_SP, -16);
+      EmitARM64($910003E0 or (REG_SP shl 5) or REG_FP);
       if LStackFrameSize > 0 then
         EmitSubImm(REG_SP, REG_SP, LStackFrameSize);
 
@@ -922,18 +945,72 @@ begin
       end;
     end;
 
+    // -------------------------------------------------------------------------
+    // Compute canonical Mach-O layout needed for ADRP-based fixups.
+    //
+    // Important: these values are required for import/data/global fixups below.
+    // They must be initialized BEFORE patching instructions.
+    // -------------------------------------------------------------------------
+    LSegTextFileOff := 0;
+    LTextSectionFileOff := PAGE_SIZE;
+    LSegTextFileSize := (Length(LTextBytes) + Length(LCStringBytes) + 15) and (not 15);
+    LTextMapSize := AlignUp32(LTextSectionFileOff + LSegTextFileSize, PAGE_SIZE);
+    LSegDataFileOff := LTextMapSize;
+    LSlide := SEG_TEXT_VADDR; // since __TEXT.fileoff = 0
+
     for LI := 0 to LImportFixups.Count - 1 do
     begin
-      LSlotAddr := SEG_DATA_VADDR + Cardinal(Length(LDataBytes)) + Cardinal(LImportFixups[LI].Value) * 8;
-      LByteOffset := Int64(LSlotAddr) - Int64(LImportFixups[LI].Key);
-      LPageIndex := LByteOffset div 4096;
-      LOfs12 := Cardinal((LByteOffset mod 4096 + 4096) mod 4096) div 8;
+      // GOT lives in __DATA right after globals.
+      LSlotAddr := LSlide + UInt64(LSegDataFileOff) + UInt64(Length(LDataBytes)) + UInt64(LImportFixups[LI].Value) * 8;
+      LPageIndex := (Int64(LSlotAddr) shr 12) - (Int64(LSlide + UInt64(LTextSectionFileOff) + UInt64(LImportFixups[LI].Key)) shr 12);
+      LOfs12 := (LSlotAddr and $FFF) div 8;
       if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) and
          (LImportFixups[LI].Key + 8 <= Cardinal(Length(LTextBytes))) then
       begin
         LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
         PCardinal(@LTextBytes[LImportFixups[LI].Key])^ := $90000000 or REG_X16 or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
         PCardinal(@LTextBytes[LImportFixups[LI].Key + 4])^ := $F9400000 or (LOfs12 shl 10) or (REG_X16 shl 5) or REG_X16;
+      end;
+    end;
+
+    for LI := 0 to LDataFixups.Count - 1 do
+    begin
+      LTargetIndex := LDataFixups[LI].Value shr 8;
+      LTargetReg := Byte(LDataFixups[LI].Value and $FF);
+      if (LTargetIndex >= 0) then
+      begin
+        LDataHandle.Index := LTargetIndex;
+        // C-strings are placed after .text in the __TEXT mapping.
+        LSlotAddr := LSlide + UInt64(LTextSectionFileOff) + UInt64(Length(LTextBytes)) + UInt64(LData.GetEntry(LDataHandle).Offset);
+        LPageIndex := (Int64(LSlotAddr) shr 12) - (Int64(LSlide + UInt64(LTextSectionFileOff) + UInt64(LDataFixups[LI].Key)) shr 12);
+        LOfs12 := LSlotAddr and $FFF;
+        if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) and
+           (LDataFixups[LI].Key + 8 <= Cardinal(Length(LTextBytes))) then
+        begin
+          LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
+          PCardinal(@LTextBytes[LDataFixups[LI].Key])^ := $90000000 or LTargetReg or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
+          PCardinal(@LTextBytes[LDataFixups[LI].Key + 4])^ := $91000000 or (LOfs12 shl 10) or (Cardinal(LTargetReg) shl 5) or LTargetReg;
+        end;
+      end;
+    end;
+
+    for LI := 0 to LGlobalFixups.Count - 1 do
+    begin
+      LTargetIndex := LGlobalFixups[LI].Value shr 8;
+      LTargetReg := Byte(LGlobalFixups[LI].Value and $FF);
+      if (LTargetIndex >= 0) then
+      begin
+        LDataHandle.Index := LTargetIndex;
+        LSlotAddr := LSlide + UInt64(LSegDataFileOff) + UInt64(LGlobals.GetEntry(LDataHandle).Offset);
+        LPageIndex := (Int64(LSlotAddr) shr 12) - (Int64(LSlide + UInt64(LTextSectionFileOff) + UInt64(LGlobalFixups[LI].Key)) shr 12);
+        LOfs12 := LSlotAddr and $FFF;
+        if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) and
+           (LGlobalFixups[LI].Key + 8 <= Cardinal(Length(LTextBytes))) then
+        begin
+          LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
+          PCardinal(@LTextBytes[LGlobalFixups[LI].Key])^ := $90000000 or LTargetReg or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
+          PCardinal(@LTextBytes[LGlobalFixups[LI].Key + 4])^ := $91000000 or (LOfs12 shl 10) or (Cardinal(LTargetReg) shl 5) or LTargetReg;
+        end;
       end;
     end;
 
@@ -962,11 +1039,9 @@ begin
         if LHasStaticImports and (LStaticImportIndices.IndexOf(LI) >= 0) then
           Continue;
         LEntry := LImports.GetEntryByIndex(LI);
-        LByteVal := $71;
-        LBindStream.WriteBuffer(LByteVal, 1);
         LByteVal := $11;
         LBindStream.WriteBuffer(LByteVal, 1);
-        LByteVal := $30;
+        LByteVal := $40;
         LBindStream.WriteBuffer(LByteVal, 1);
         LByteVal := 95;
         LBindStream.WriteBuffer(LByteVal, 1);
@@ -977,7 +1052,11 @@ begin
         end;
         LByteVal := 0;
         LBindStream.WriteBuffer(LByteVal, 1);
-        LByteVal := $41;
+        LByteVal := $51;
+        LBindStream.WriteBuffer(LByteVal, 1);
+        // SET_SEGMENT_AND_OFFSET_ULEB: imm = segment index.
+        // With __PAGEZERO + __TEXT preceding, __DATA is segment index 2.
+        LByteVal := $72;
         LBindStream.WriteBuffer(LByteVal, 1);
         LVal := Length(LDataBytes) + Cardinal(LI) * 8;
         repeat
@@ -1008,11 +1087,19 @@ begin
       LHeaderSize := 32;
       LSegTextFileSize := (Length(LTextBytes) + Length(LCStringBytes) + 15) and (not 15);
       LSegDataFileSize := (Length(LDataBytes) + Length(LGotBytes) + 15) and (not 15);
-      LLoadCmdSize := 72 + 160 + 72 + 160 + 24 + 40 + 56 + 48;
-      // __TEXT must start at a page boundary for the kernel to accept the executable
-      LSegTextFileOff := PAGE_SIZE;
-      LSegDataFileOff := LSegTextFileOff + LSegTextFileSize;
-      LBindOff := LSegDataFileOff + LSegDataFileSize;
+      LLoadCmdSize := 72 + 72 + 160 + 72 + 160 + 24 + 24 + 40 + 56 + 72 + 48;
+      // Map Mach header inside __TEXT (canonical layout): __TEXT.fileoff = 0
+      LSegTextFileOff := 0;
+      // Place code at a page boundary after header/loadcmds.
+      LTextSectionFileOff := PAGE_SIZE;
+      // Total mapped __TEXT size includes the first page + code+rodata.
+      LTextMapSize := AlignUp32(LTextSectionFileOff + LSegTextFileSize, PAGE_SIZE);
+
+      LSegDataFileOff := LTextMapSize;
+      LBindOff := AlignUp32(LSegDataFileOff + LSegDataFileSize, PAGE_SIZE);
+      LSegLinkEditFileOff := LBindOff;
+      LSegLinkEditFileSize := Length(LBindBytes);
+      LSlide := SEG_TEXT_VADDR - UInt64(LSegTextFileOff);
 
       LCardVal := MH_MAGIC_64;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1022,10 +1109,29 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := MH_EXECUTE;
       LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 6;
+      LCardVal := 9;
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LLoadCmdSize, 4);
+      LCardVal := MH_NOUNDEFS or MH_DYLDLINK or MH_TWOLEVEL;
+      LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 0;
+      LOutStream.WriteBuffer(LCardVal, 4);
+
+      LCardVal := LC_SEGMENT_64;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 72;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      WriteFixedAnsi(SEG_PAGEZERO, 16);
+      LVal := 0;
+      LOutStream.WriteBuffer(LVal, 8);
+      LVal := SEG_TEXT_VADDR;
+      LOutStream.WriteBuffer(LVal, 8);
+      LVal := 0;
+      LOutStream.WriteBuffer(LVal, 8);
+      LOutStream.WriteBuffer(LVal, 8);
+      LCardVal := 0;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
 
@@ -1036,13 +1142,13 @@ begin
       WriteFixedAnsi('__TEXT', 16);
       LVal := SEG_TEXT_VADDR;
       LOutStream.WriteBuffer(LVal, 8);
-      LVal := LSegTextFileSize;
+      LVal := LTextMapSize;
       LOutStream.WriteBuffer(LVal, 8);
       LVal := LSegTextFileOff;
       LOutStream.WriteBuffer(LVal, 8);
-      LVal := LSegTextFileSize;
+      LVal := LTextMapSize;
       LOutStream.WriteBuffer(LVal, 8);
-      LCardVal := 7;
+      LCardVal := 5;
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 5;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1052,11 +1158,11 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       WriteFixedAnsi('__text', 16);
       WriteFixedAnsi('__TEXT', 16);
-      LVal := 0;
+      LVal := LSlide + UInt64(LTextSectionFileOff);
       LOutStream.WriteBuffer(LVal, 8);
       LVal := Length(LTextBytes);
       LOutStream.WriteBuffer(LVal, 8);
-      LCardVal := LSegTextFileOff;
+      LCardVal := LTextSectionFileOff;
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 4;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1069,11 +1175,11 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       WriteFixedAnsi('__cstring', 16);
       WriteFixedAnsi('__TEXT', 16);
-      LVal := Length(LTextBytes);
+      LVal := LSlide + UInt64(LTextSectionFileOff) + UInt64(Length(LTextBytes));
       LOutStream.WriteBuffer(LVal, 8);
       LVal := Length(LCStringBytes);
       LOutStream.WriteBuffer(LVal, 8);
-      LCardVal := LSegTextFileOff + Length(LTextBytes);
+      LCardVal := LTextSectionFileOff + Length(LTextBytes);
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 4;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1090,7 +1196,7 @@ begin
       LCardVal := 72 + 160;
       LOutStream.WriteBuffer(LCardVal, 4);
       WriteFixedAnsi('__DATA', 16);
-      LVal := SEG_DATA_VADDR;
+      LVal := LSlide + UInt64(LSegDataFileOff);
       LOutStream.WriteBuffer(LVal, 8);
       LVal := LSegDataFileSize;
       LOutStream.WriteBuffer(LVal, 8);
@@ -1108,7 +1214,7 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       WriteFixedAnsi('__data', 16);
       WriteFixedAnsi('__DATA', 16);
-      LVal := 0;
+      LVal := LSlide + UInt64(LSegDataFileOff);
       LOutStream.WriteBuffer(LVal, 8);
       LVal := Length(LDataBytes);
       LOutStream.WriteBuffer(LVal, 8);
@@ -1124,7 +1230,7 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       WriteFixedAnsi('__got', 16);
       WriteFixedAnsi('__DATA', 16);
-      LVal := Length(LDataBytes);
+      LVal := LSlide + UInt64(LSegDataFileOff) + UInt64(Length(LDataBytes));
       LOutStream.WriteBuffer(LVal, 8);
       LVal := Length(LGotBytes);
       LOutStream.WriteBuffer(LVal, 8);
@@ -1143,10 +1249,23 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 24;
       LOutStream.WriteBuffer(LCardVal, 4);
-      LVal := LEntryOffset;
+      LVal := UInt64(LTextSectionFileOff) + LEntryOffset;
       LOutStream.WriteBuffer(LVal, 8);
       LVal := 0;
       LOutStream.WriteBuffer(LVal, 8);
+
+      // LC_BUILD_VERSION(platform=macOS, minos=11.0.0, sdk=11.0.0, ntools=0)
+      LCardVal := LC_BUILD_VERSION;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 24;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 1;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := $000B0000;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 0;
+      LOutStream.WriteBuffer(LCardVal, 4);
 
       LCardVal := LC_LOAD_DYLINKER;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1168,6 +1287,27 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       WritePaddedCString('/usr/lib/libSystem.B.dylib', 32);
 
+      LCardVal := LC_SEGMENT_64;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 72;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      WriteFixedAnsi(SEG_LINKEDIT, 16);
+      LVal := LSlide + UInt64(LSegLinkEditFileOff);
+      LOutStream.WriteBuffer(LVal, 8);
+      LVal := LSegLinkEditFileSize;
+      LOutStream.WriteBuffer(LVal, 8);
+      LVal := LSegLinkEditFileOff;
+      LOutStream.WriteBuffer(LVal, 8);
+      LVal := LSegLinkEditFileSize;
+      LOutStream.WriteBuffer(LVal, 8);
+      LCardVal := 1;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 1;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 0;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LOutStream.WriteBuffer(LCardVal, 4);
+
       LCardVal := LC_DYLD_INFO_ONLY;
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 48;
@@ -1187,7 +1327,7 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
 
       LByteVal := 0;
-      while LOutStream.Position < LSegTextFileOff do
+      while Cardinal(LOutStream.Position) < LTextSectionFileOff do
         LOutStream.WriteBuffer(LByteVal, 1);
 
       if Length(LTextBytes) > 0 then
@@ -1198,12 +1338,16 @@ begin
       LByteVal := 0;
       for LI := 0 to LK - 1 do
         LOutStream.WriteBuffer(LByteVal, 1);
+      while Cardinal(LOutStream.Position) < LSegDataFileOff do
+        LOutStream.WriteBuffer(LByteVal, 1);
       if Length(LDataBytes) > 0 then
         LOutStream.WriteBuffer(LDataBytes[0], Length(LDataBytes));
       if Length(LGotBytes) > 0 then
         LOutStream.WriteBuffer(LGotBytes[0], Length(LGotBytes));
       LK := LSegDataFileSize - Length(LDataBytes) - Length(LGotBytes);
       for LI := 0 to LK - 1 do
+        LOutStream.WriteBuffer(LByteVal, 1);
+      while Cardinal(LOutStream.Position) < LBindOff do
         LOutStream.WriteBuffer(LByteVal, 1);
       if Length(LBindBytes) > 0 then
         LOutStream.WriteBuffer(LBindBytes[0], Length(LBindBytes));
@@ -1224,6 +1368,7 @@ begin
     LCondJumpFixups.Free();
     LLabelOffsets.Free();
     LJumpFixups.Free();
+    LGlobalFixups.Free();
     LDataFixups.Free();
     LImportFixups.Free();
     LCallFixups.Free();
