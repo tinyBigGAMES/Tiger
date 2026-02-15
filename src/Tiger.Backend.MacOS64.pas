@@ -1076,14 +1076,14 @@ begin
 
     // -------------------------------------------------------------------------
     // Compute canonical Mach-O layout needed for ADRP-based fixups.
-    //
-    // Important: these values are required for import/data/global fixups below.
-    // They must be initialized BEFORE patching instructions.
+    // Must use the same alignment (SEGMENT_PAGE_SIZE) as the emitted binary
+    // or GOT/data addresses patched into code will be wrong and the program
+    // will jump to 0 or crash.
     // -------------------------------------------------------------------------
     LSegTextFileOff := 0;
     LTextSectionFileOff := PAGE_SIZE;
     LSegTextFileSize := (Length(LTextBytes) + Length(LCStringBytes) + 15) and (not 15);
-    LTextMapSize := AlignUp32(LTextSectionFileOff + LSegTextFileSize, PAGE_SIZE);
+    LTextMapSize := AlignUp32(LTextSectionFileOff + LSegTextFileSize, SEGMENT_PAGE_SIZE);
     LSegDataFileOff := LTextMapSize;
     LSlide := SEG_TEXT_VADDR; // since __TEXT.fileoff = 0
 
@@ -1232,15 +1232,36 @@ begin
       LSegDataFileOff := LTextMapSize;
       LRebaseOff := AlignUp32(LSegDataFileOff + LSegDataFileSize, SEGMENT_PAGE_SIZE);
       LSegDataSegmentFileSize := LRebaseOff - LSegDataFileOff;
-      // Minimal rebase opcodes for PIE: dyld requires rebase info when MH_PIE is set.
-      // SET_TYPE_IMM(pointer) | SET_SEGMENT_AND_OFFSET_ULEB(segment 2=__DATA, offset 0) | DO_REBASE_IMM(1) | DONE
-      SetLength(LRebaseBytes, 6);
-      LRebaseBytes[0] := $11;  // REBASE_OPCODE_SET_TYPE_IMM, type 1 = pointer
-      LRebaseBytes[1] := $20;  // REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
-      LRebaseBytes[2] := $02;  // ULEB segment index 2 (__DATA)
-      LRebaseBytes[3] := $00;  // ULEB offset 0
-      LRebaseBytes[4] := $51;  // REBASE_OPCODE_DO_REBASE_IMM_TIMES, count 1
-      LRebaseBytes[5] := $00;  // REBASE_OPCODE_DONE
+      // Minimal rebase opcodes for PIE: rebase one pointer in __DATA *padding* (after __data+__got).
+      // REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: byte = (opcode<<4)|segment_imm; only offset ULEB follows (segment in nibble, not separate ULEB).
+      LBindStream := TMemoryStream.Create();
+      try
+        LByteVal := $11;
+        LBindStream.WriteBuffer(LByteVal, 1);
+        LByteVal := $22;  // opcode 2, segment 2 (__DATA) in low nibble; next is offset ULEB only
+        LBindStream.WriteBuffer(LByteVal, 1);
+        LVal := UInt64(Length(LDataBytes)) + UInt64(Length(LGotBytes));
+        repeat
+          LJ := LVal and $7F;
+          LVal := LVal shr 7;
+          if LVal <> 0 then
+            LJ := LJ or $80;
+          LByteVal := Byte(LJ);
+          LBindStream.WriteBuffer(LByteVal, 1);
+        until LVal = 0;
+        LByteVal := $51;
+        LBindStream.WriteBuffer(LByteVal, 1);
+        LByteVal := $00;
+        LBindStream.WriteBuffer(LByteVal, 1);
+        SetLength(LRebaseBytes, LBindStream.Size);
+        if LBindStream.Size > 0 then
+        begin
+          LBindStream.Position := 0;
+          LBindStream.ReadBuffer(LRebaseBytes[0], LBindStream.Size);
+        end;
+      finally
+        LBindStream.Free();
+      end;
       LBindOff := LRebaseOff + Cardinal(Length(LRebaseBytes));
       LSegLinkEditFileOff := LRebaseOff;
       LCodeLimit := LBindOff + Cardinal(Length(LBindBytes));
