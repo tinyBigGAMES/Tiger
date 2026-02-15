@@ -73,6 +73,7 @@ const
   LC_LOAD_DYLIB   = $0C;
   LC_DYLD_INFO_ONLY = $22 or LC_REQ_DYLD;
   LC_BUILD_VERSION = $32;
+  LC_UUID         = $1B;
   LC_SYMTAB       = $02;
   LC_DYSYMTAB     = $0B;
 
@@ -192,6 +193,7 @@ var
   LTargetIndex: Integer;
   LTargetReg: Byte;
   LDataHandle: TTigerDataHandle;
+  LUUID: TGUID;
   procedure WriteFixedAnsi(const AText: AnsiString; const ASize: Integer);
   var
     LBuf: TBytes;
@@ -1087,7 +1089,14 @@ begin
       LHeaderSize := 32;
       LSegTextFileSize := (Length(LTextBytes) + Length(LCStringBytes) + 15) and (not 15);
       LSegDataFileSize := (Length(LDataBytes) + Length(LGotBytes) + 15) and (not 15);
-      LLoadCmdSize := 72 + 72 + 160 + 72 + 160 + 24 + 24 + 40 + 56 + 72 + 48;
+      // NOTE: sizeofcmds must match exactly what we emit.
+      // PAGEZERO(72) + TEXT seg(72+2*80) + DATA seg(72+2*80) +
+      // LC_MAIN(24) + LC_BUILD_VERSION(24) + LC_UUID(24) +
+      // LC_LOAD_DYLINKER(40) + LC_LOAD_DYLIB(56) +
+      // LINKEDIT seg(72) + LC_DYLD_INFO_ONLY(48)
+      //
+      // We intentionally do NOT emit LC_CODE_SIGNATURE here; `codesign` will add it.
+      LLoadCmdSize := 72 + (72 + 160) + (72 + 160) + 24 + 24 + 24 + 40 + 56 + 72 + 48;
       // Map Mach header inside __TEXT (canonical layout): __TEXT.fileoff = 0
       LSegTextFileOff := 0;
       // Place code at a page boundary after header/loadcmds.
@@ -1109,10 +1118,11 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := MH_EXECUTE;
       LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 9;
+      // ncmds must match emitted load commands (see LLoadCmdSize comment).
+      LCardVal := 10;
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LLoadCmdSize, 4);
-      LCardVal := MH_NOUNDEFS or MH_DYLDLINK or MH_TWOLEVEL;
+      LCardVal := MH_NOUNDEFS or MH_DYLDLINK or MH_TWOLEVEL or MH_PIE;
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 0;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1266,6 +1276,14 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 0;
       LOutStream.WriteBuffer(LCardVal, 4);
+
+      // LC_UUID (required/expected by various tools)
+      LCardVal := LC_UUID;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 24;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      CreateGUID(LUUID);
+      LOutStream.WriteBuffer(LUUID, SizeOf(LUUID));
 
       LCardVal := LC_LOAD_DYLINKER;
       LOutStream.WriteBuffer(LCardVal, 4);
