@@ -22,6 +22,7 @@ uses
   System.IOUtils,
   System.Generics.Collections,
   System.Math,
+  System.Hash,
   Tiger.Utils,
   Tiger.Utils.Win64,
   Tiger.Errors,
@@ -72,10 +73,23 @@ const
   LC_LOAD_DYLINKER = $0E;
   LC_LOAD_DYLIB   = $0C;
   LC_DYLD_INFO_ONLY = $22 or LC_REQ_DYLD;
-  LC_BUILD_VERSION = $32;
+  LC_VERSION_MIN_MACOSX = $24;
+  LC_CODE_SIGNATURE = $1D;
   LC_UUID         = $1B;
   LC_SYMTAB       = $02;
   LC_DYSYMTAB     = $0B;
+  // Code signature blob (linker-signed ad-hoc)
+  CSMAGIC_EMBEDDED_SIGNATURE = $FADE0CC0;
+  CSMAGIC_CODEDIRECTORY = $FADE0C02;
+  CSSLOT_CODEDIRECTORY = 0;
+  CS_CD_FLAG_ADHOC = $2;
+  CS_CD_FLAG_LINKER_SIGNED = $20000;
+  CS_HASHTYPE_SHA256 = 2;
+  CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE = 88;  // version 0x20400 layout (incl. scatter/team/codeLimit64/execSeg)
+  CODE_SIGNATURE_IDENTIFIER_SIZE = 1;   // minimal identifier (null byte) required by codesign
+  CS_EXECSEG_MAIN_BINARY = $1;
+  CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE = 20;
+  CODE_SIGNATURE_ALIGN = 16;  // dataoff must be 16-byte aligned for codesign to accept
 
   SEG_TEXT = '__TEXT';
   SEG_DATA = '__DATA';
@@ -87,6 +101,7 @@ const
   SECT_GOT = '__got';
 
   PAGE_SIZE = 4096;
+  SEGMENT_PAGE_SIZE = 16384;  // ARM64 macOS uses 16KB pages; segment fileoff/vmsize must be 16K aligned
   SEG_TEXT_VADDR = $0000000100000000;  // Canonical arm64 executable __TEXT base
   SEG_DATA_VADDR = $0000000100001000;  // Keep same vmaddr-fileoff slide across segments
 
@@ -157,7 +172,7 @@ var
   LCondJumpFixups: TList<TPair<Cardinal, Integer>>;
   LOutStream: TMemoryStream;
   LHeaderSize, LLoadCmdSize: Cardinal;
-  LSegTextFileOff, LSegTextFileSize, LSegDataFileOff, LSegDataFileSize: Cardinal;
+  LSegTextFileOff, LSegTextFileSize, LSegDataFileOff, LSegDataFileSize, LSegDataSegmentFileSize: Cardinal;
   LSegLinkEditFileOff, LSegLinkEditFileSize: Cardinal;
   LTextSectionFileOff: Cardinal;
   LTextMapSize: Cardinal;
@@ -182,7 +197,15 @@ var
   LJ: Integer;
   LBindStream: TMemoryStream;
   LBindBytes: TBytes;
+  LRebaseBytes: TBytes;
   LBindOff: Cardinal;
+  LRebaseOff: Cardinal;
+  LCodeLimit: Cardinal;
+  LSignatureOffset: Cardinal;
+  LSignatureSize: Cardinal;
+  LNumPages: Cardinal;
+  LPadding: Cardinal;
+  LSignatureBytes: TBytes;
   LVal: UInt64;
   LLabelOffset: Cardinal;
   LAdrpImm: Cardinal;
@@ -229,6 +252,110 @@ var
     if AAlignment <= 1 then
       Exit(AValue);
     Result := (AValue + AAlignment - 1) and (not (AAlignment - 1));
+  end;
+
+  procedure PutU32BE(var ABuf: TBytes; AOffset: Cardinal; AValue: Cardinal);
+  begin
+    ABuf[AOffset] := Byte((AValue shr 24) and $FF);
+    ABuf[AOffset + 1] := Byte((AValue shr 16) and $FF);
+    ABuf[AOffset + 2] := Byte((AValue shr 8) and $FF);
+    ABuf[AOffset + 3] := Byte(AValue and $FF);
+  end;
+
+  procedure PutU64BE(var ABuf: TBytes; AOffset: Cardinal; AValue: UInt64);
+  begin
+    PutU32BE(ABuf, AOffset, Cardinal(AValue shr 32));
+    PutU32BE(ABuf, AOffset + 4, Cardinal(AValue and $FFFFFFFF));
+  end;
+
+  procedure BuildLinkerSignedSignature(const AData: TBytes; ACodeLimit, ANumPages, ASignatureSize: Cardinal; AExecSegBase, AExecSegLimit: UInt64; AExecSegFlags: Cardinal; var AOutSignature: TBytes);
+  var
+    LPageStream: TMemoryStream;
+    LHashBytes: TBytes;
+    LCodeDirSize: Cardinal;
+    LHashOffset: Cardinal;
+    LOff: Cardinal;
+    LPageStart: Cardinal;
+    LPageLen: Cardinal;
+    LIdx: Integer;
+  begin
+    SetLength(AOutSignature, ASignatureSize);
+    FillChar(AOutSignature[0], ASignatureSize, 0);
+    LHashOffset := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + CODE_SIGNATURE_IDENTIFIER_SIZE;
+    LCodeDirSize := LHashOffset + ANumPages * 32;
+    LOff := 0;
+    PutU32BE(AOutSignature, LOff, CSMAGIC_EMBEDDED_SIGNATURE);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + LCodeDirSize);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, 1);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, CSSLOT_CODEDIRECTORY);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, CSMAGIC_CODEDIRECTORY);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, LCodeDirSize);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, $20400);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, CS_CD_FLAG_ADHOC or CS_CD_FLAG_LINKER_SIGNED);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, LHashOffset);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, 0);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, ANumPages);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, ACodeLimit);
+    Inc(LOff, 4);
+    AOutSignature[LOff] := 32;
+    Inc(LOff);
+    AOutSignature[LOff] := CS_HASHTYPE_SHA256;
+    Inc(LOff);
+    AOutSignature[LOff] := 0;
+    Inc(LOff);
+    AOutSignature[LOff] := 12;
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, 0);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, 0);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, 0);
+    Inc(LOff, 4);
+    PutU32BE(AOutSignature, LOff, 0);
+    Inc(LOff, 4);
+    PutU64BE(AOutSignature, LOff, UInt64(ACodeLimit));
+    Inc(LOff, 8);
+    PutU64BE(AOutSignature, LOff, AExecSegBase);
+    Inc(LOff, 8);
+    PutU64BE(AOutSignature, LOff, AExecSegLimit);
+    Inc(LOff, 8);
+    PutU64BE(AOutSignature, LOff, UInt64(AExecSegFlags));
+    AOutSignature[CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE] := 0;
+    LPageStream := TMemoryStream.Create();
+    try
+      for LIdx := 0 to ANumPages - 1 do
+      begin
+        LPageStart := LIdx * PAGE_SIZE;
+        if LPageStart >= ACodeLimit then
+          Break;
+        LPageLen := PAGE_SIZE;
+        if LPageStart + LPageLen > ACodeLimit then
+          LPageLen := ACodeLimit - LPageStart;
+        LPageStream.Clear();
+        LPageStream.WriteBuffer(AData[LPageStart], LPageLen);
+        LPageStream.Position := 0;
+        LHashBytes := THashSHA2.GetHashBytes(LPageStream);
+        if Length(LHashBytes) >= 32 then
+          Move(LHashBytes[0], AOutSignature[CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + LHashOffset + Cardinal(LIdx) * 32], 32);
+      end;
+    finally
+      LPageStream.Free();
+    end;
   end;
 
   procedure EmitU32(const AValue: Cardinal);
@@ -1090,24 +1217,38 @@ begin
       LSegTextFileSize := (Length(LTextBytes) + Length(LCStringBytes) + 15) and (not 15);
       LSegDataFileSize := (Length(LDataBytes) + Length(LGotBytes) + 15) and (not 15);
       // NOTE: sizeofcmds must match exactly what we emit.
-      // PAGEZERO(72) + TEXT seg(72+2*80) + DATA seg(72+2*80) +
-      // LC_MAIN(24) + LC_BUILD_VERSION(24) + LC_UUID(24) +
-      // LC_LOAD_DYLINKER(40) + LC_LOAD_DYLIB(56) +
-      // LINKEDIT seg(72) + LC_DYLD_INFO_ONLY(48)
-      //
-      // We intentionally do NOT emit LC_CODE_SIGNATURE here; `codesign` will add it.
-      LLoadCmdSize := 72 + (72 + 160) + (72 + 160) + 24 + 24 + 24 + 40 + 56 + 72 + 48;
+      // All LC_SEGMENT_64 must come first (dyld/kernel expect contiguous segments).
+      // PAGEZERO(72) + TEXT(72+2*80) + DATA(72+2*80) + LINKEDIT(72) +
+      // LC_MAIN(24) + LC_VERSION_MIN_MACOSX(16) + LC_UUID(24) +
+      // LC_LOAD_DYLINKER(32) + LC_LOAD_DYLIB(56) + LC_DYLD_INFO_ONLY(48) + LC_CODE_SIGNATURE(16)
+      LLoadCmdSize := 72 + (72 + 160) + (72 + 160) + 72 + 24 + 16 + 24 + 32 + 56 + 48 + 16;
       // Map Mach header inside __TEXT (canonical layout): __TEXT.fileoff = 0
       LSegTextFileOff := 0;
       // Place code at a page boundary after header/loadcmds.
       LTextSectionFileOff := PAGE_SIZE;
-      // Total mapped __TEXT size includes the first page + code+rodata.
-      LTextMapSize := AlignUp32(LTextSectionFileOff + LSegTextFileSize, PAGE_SIZE);
+      // Total mapped __TEXT size: 16K aligned so segment layout satisfies ARM64 dyld/kernel.
+      LTextMapSize := AlignUp32(LTextSectionFileOff + LSegTextFileSize, SEGMENT_PAGE_SIZE);
 
       LSegDataFileOff := LTextMapSize;
-      LBindOff := AlignUp32(LSegDataFileOff + LSegDataFileSize, PAGE_SIZE);
-      LSegLinkEditFileOff := LBindOff;
-      LSegLinkEditFileSize := Length(LBindBytes);
+      LRebaseOff := AlignUp32(LSegDataFileOff + LSegDataFileSize, SEGMENT_PAGE_SIZE);
+      LSegDataSegmentFileSize := LRebaseOff - LSegDataFileOff;
+      // Minimal rebase opcodes for PIE: dyld requires rebase info when MH_PIE is set.
+      // SET_TYPE_IMM(pointer) | SET_SEGMENT_AND_OFFSET_ULEB(segment 2=__DATA, offset 0) | DO_REBASE_IMM(1) | DONE
+      SetLength(LRebaseBytes, 6);
+      LRebaseBytes[0] := $11;  // REBASE_OPCODE_SET_TYPE_IMM, type 1 = pointer
+      LRebaseBytes[1] := $20;  // REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
+      LRebaseBytes[2] := $02;  // ULEB segment index 2 (__DATA)
+      LRebaseBytes[3] := $00;  // ULEB offset 0
+      LRebaseBytes[4] := $51;  // REBASE_OPCODE_DO_REBASE_IMM_TIMES, count 1
+      LRebaseBytes[5] := $00;  // REBASE_OPCODE_DONE
+      LBindOff := LRebaseOff + Cardinal(Length(LRebaseBytes));
+      LSegLinkEditFileOff := LRebaseOff;
+      LCodeLimit := LBindOff + Cardinal(Length(LBindBytes));
+      LSignatureOffset := AlignUp32(LCodeLimit, CODE_SIGNATURE_ALIGN);
+      LPadding := LSignatureOffset - LCodeLimit;
+      LNumPages := (LSignatureOffset + PAGE_SIZE - 1) div PAGE_SIZE;
+      LSignatureSize := CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + CODE_SIGNATURE_IDENTIFIER_SIZE + LNumPages * 32;
+      LSegLinkEditFileSize := Cardinal(Length(LRebaseBytes)) + Cardinal(Length(LBindBytes)) + LPadding + LSignatureSize;
       LSlide := SEG_TEXT_VADDR - UInt64(LSegTextFileOff);
 
       LCardVal := MH_MAGIC_64;
@@ -1119,7 +1260,7 @@ begin
       LCardVal := MH_EXECUTE;
       LOutStream.WriteBuffer(LCardVal, 4);
       // ncmds must match emitted load commands (see LLoadCmdSize comment).
-      LCardVal := 10;
+      LCardVal := 11;
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LLoadCmdSize, 4);
       LCardVal := MH_NOUNDEFS or MH_DYLDLINK or MH_TWOLEVEL or MH_PIE;
@@ -1208,11 +1349,12 @@ begin
       WriteFixedAnsi('__DATA', 16);
       LVal := LSlide + UInt64(LSegDataFileOff);
       LOutStream.WriteBuffer(LVal, 8);
-      LVal := LSegDataFileSize;
+      // vmsize 16K-aligned for ARM64 (dyld/kernel segment mapping).
+      LVal := AlignUp32(LSegDataSegmentFileSize, SEGMENT_PAGE_SIZE);
       LOutStream.WriteBuffer(LVal, 8);
       LVal := LSegDataFileOff;
       LOutStream.WriteBuffer(LVal, 8);
-      LVal := LSegDataFileSize;
+      LVal := LSegDataSegmentFileSize;
       LOutStream.WriteBuffer(LVal, 8);
       LCardVal := 3;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1255,56 +1397,7 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
 
-      LCardVal := LC_MAIN;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 24;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LVal := UInt64(LTextSectionFileOff) + LEntryOffset;
-      LOutStream.WriteBuffer(LVal, 8);
-      LVal := 0;
-      LOutStream.WriteBuffer(LVal, 8);
-
-      // LC_BUILD_VERSION(platform=macOS, minos=11.0.0, sdk=11.0.0, ntools=0)
-      LCardVal := LC_BUILD_VERSION;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 24;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 1;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := $000B0000;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 0;
-      LOutStream.WriteBuffer(LCardVal, 4);
-
-      // LC_UUID (required/expected by various tools)
-      LCardVal := LC_UUID;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 24;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      CreateGUID(LUUID);
-      LOutStream.WriteBuffer(LUUID, SizeOf(LUUID));
-
-      LCardVal := LC_LOAD_DYLINKER;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 40;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 12;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      WritePaddedCString('/usr/lib/dyld', 28);
-
-      LCardVal := LC_LOAD_DYLIB;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 56;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 24;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 0;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LOutStream.WriteBuffer(LCardVal, 4);
-      WritePaddedCString('/usr/lib/libSystem.B.dylib', 32);
-
+      // __LINKEDIT segment immediately after __DATA (all segments contiguous for dyld/kernel).
       LCardVal := LC_SEGMENT_64;
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 72;
@@ -1312,7 +1405,7 @@ begin
       WriteFixedAnsi(SEG_LINKEDIT, 16);
       LVal := LSlide + UInt64(LSegLinkEditFileOff);
       LOutStream.WriteBuffer(LVal, 8);
-      LVal := LSegLinkEditFileSize;
+      LVal := AlignUp32(LSegLinkEditFileSize, SEGMENT_PAGE_SIZE);
       LOutStream.WriteBuffer(LVal, 8);
       LVal := LSegLinkEditFileOff;
       LOutStream.WriteBuffer(LVal, 8);
@@ -1326,12 +1419,59 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
 
+      LCardVal := LC_MAIN;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 24;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LVal := UInt64(LTextSectionFileOff) + LEntryOffset;
+      LOutStream.WriteBuffer(LVal, 8);
+      LVal := 0;
+      LOutStream.WriteBuffer(LVal, 8);
+
+      // LC_VERSION_MIN_MACOSX (match FPC; kernel may handle this better than LC_BUILD_VERSION)
+      LCardVal := LC_VERSION_MIN_MACOSX;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 16;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := $000A0900;  // 10.9.0
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := $000A0900;  // sdk 10.9.0
+      LOutStream.WriteBuffer(LCardVal, 4);
+
+      // LC_UUID (required/expected by various tools)
+      LCardVal := LC_UUID;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 24;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      CreateGUID(LUUID);
+      LOutStream.WriteBuffer(LUUID, SizeOf(LUUID));
+
+      LCardVal := LC_LOAD_DYLINKER;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 32;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 12;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      WritePaddedCString('/usr/lib/dyld', 20);
+
+      LCardVal := LC_LOAD_DYLIB;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 56;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 24;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 0;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LOutStream.WriteBuffer(LCardVal, 4);
+      WritePaddedCString('/usr/lib/libSystem.B.dylib', 32);
+
       LCardVal := LC_DYLD_INFO_ONLY;
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 48;
       LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 0;
-      LOutStream.WriteBuffer(LCardVal, 4);
+      LOutStream.WriteBuffer(LRebaseOff, 4);
+      LCardVal := Length(LRebaseBytes);
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LBindOff, 4);
       LCardVal := Length(LBindBytes);
@@ -1343,6 +1483,13 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
+
+      LCardVal := LC_CODE_SIGNATURE;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LCardVal := 16;
+      LOutStream.WriteBuffer(LCardVal, 4);
+      LOutStream.WriteBuffer(LSignatureOffset, 4);
+      LOutStream.WriteBuffer(LSignatureSize, 4);
 
       LByteVal := 0;
       while Cardinal(LOutStream.Position) < LTextSectionFileOff do
@@ -1365,14 +1512,26 @@ begin
       LK := LSegDataFileSize - Length(LDataBytes) - Length(LGotBytes);
       for LI := 0 to LK - 1 do
         LOutStream.WriteBuffer(LByteVal, 1);
+      while Cardinal(LOutStream.Position) < LRebaseOff do
+        LOutStream.WriteBuffer(LByteVal, 1);
+      if Length(LRebaseBytes) > 0 then
+        LOutStream.WriteBuffer(LRebaseBytes[0], Length(LRebaseBytes));
       while Cardinal(LOutStream.Position) < LBindOff do
         LOutStream.WriteBuffer(LByteVal, 1);
       if Length(LBindBytes) > 0 then
         LOutStream.WriteBuffer(LBindBytes[0], Length(LBindBytes));
+      for LI := 0 to LPadding - 1 do
+        LOutStream.WriteBuffer(LByteVal, 1);
+      for LI := 0 to LSignatureSize - 1 do
+        LOutStream.WriteBuffer(LByteVal, 1);
 
       SetLength(Result, LOutStream.Size);
       LOutStream.Position := 0;
       LOutStream.ReadBuffer(Result[0], LOutStream.Size);
+
+      BuildLinkerSignedSignature(Result, LSignatureOffset, LNumPages, LSignatureSize, UInt64(LSegTextFileOff), UInt64(LTextMapSize), CS_EXECSEG_MAIN_BINARY, LSignatureBytes);
+      if Length(LSignatureBytes) = LSignatureSize then
+        Move(LSignatureBytes[0], Result[LSignatureOffset], LSignatureSize);
     finally
       LOutStream.Free();
     end;
