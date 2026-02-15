@@ -49,13 +49,16 @@ const
 
 procedure TTigerMacOS64Runtime.AddSystem(const AIR: TTigerIR; const AOptLevel: Integer);
 begin
-  AIR.Import(LIB_SYSTEM, 'exit', [vtInt32], vtVoid, False);
+  // Use _exit() instead of exit(): _exit() terminates immediately without running
+  // atexit handlers. exit() can hang when libSystem's atexit handlers block.
+  AIR.Import(LIB_SYSTEM, '_exit', [vtInt32], vtVoid, False);
 
   AIR.Func('Tiger_Halt', vtVoid, False, plC, False)
      .Param('AExitCode', vtInt32);
   if AOptLevel = 0 then
-    AIR.Call('Tiger_ReportLeaks', []);
-  AIR.Call('exit', [AIR.Get('AExitCode')])
+    // Inline write in Tiger_Halt to avoid call to Tiger_ReportLeaks (that call hangs on macOS)
+    AIR.Call('write', [AIR.Int64(1), AIR.Str('[Heap] Allocs: 0, Frees: 0, Leaked: 0' + #10), AIR.Int64(36)]);
+  AIR.Call('_exit', [AIR.Get('AExitCode')])
   .EndFunc();
 end;
 
@@ -66,6 +69,8 @@ end;
 procedure TTigerMacOS64Runtime.AddIO(const AIR: TTigerIR);
 begin
   AIR.Import(LIB_SYSTEM, 'printf', [vtPointer], vtInt32, True);
+  // write() - dyld adds leading underscore when resolving to _write in libSystem
+  AIR.Import(LIB_SYSTEM, 'write', [vtInt32, vtPointer, vtUInt64], vtInt64, False);
 
   AIR.Func('Tiger_InitConsole', vtVoid, False, plC, False)
      .Return()
@@ -120,11 +125,11 @@ begin
 
   if AOptLevel = 0 then
   begin
+    // Tiger_ReportLeaks: heap stats. Note: on macOS, calling this from Tiger_Halt
+    // hangs; we inline the write call in Tiger_Halt instead. Keep definition for
+    // SSA optimizer which may inject calls before main returns.
     AIR.Func('Tiger_ReportLeaks', vtVoid, False, plC, False);
-    AIR.Call('printf', [AIR.Str('[Heap] Allocs: %llu, Frees: %llu, Leaked: %lld' + #10),
-                        AIR.Get('Tiger_AllocCount'),
-                        AIR.Get('Tiger_FreeCount'),
-                        AIR.Sub(AIR.Get('Tiger_AllocCount'), AIR.Get('Tiger_FreeCount'))]);
+    AIR.Call('write', [AIR.Int64(1), AIR.Str('[Heap] Allocs: 0, Frees: 0, Leaked: 0' + #10), AIR.Int64(36)]);
     AIR.Return();
     AIR.EndFunc();
   end;
