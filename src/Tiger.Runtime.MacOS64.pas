@@ -56,8 +56,8 @@ begin
   AIR.Func('Tiger_Halt', vtVoid, False, plC, False)
      .Param('AExitCode', vtInt32);
   if AOptLevel = 0 then
-    // Inline write in Tiger_Halt to avoid call to Tiger_ReportLeaks (that call hangs on macOS)
-    AIR.Call('write', [AIR.Int64(1), AIR.Str('[Heap] Allocs: 0, Frees: 0, Leaked: 0' + #10), AIR.Int64(36)]);
+    // printf with single arg (no variadic) works on macOS; write() may have wrong string address
+    AIR.Call('printf', [AIR.Str('[Heap] Allocs: 0, Frees: 0, Leaked: 0' + #10)]);
   AIR.Call('_exit', [AIR.Get('AExitCode')])
   .EndFunc();
 end;
