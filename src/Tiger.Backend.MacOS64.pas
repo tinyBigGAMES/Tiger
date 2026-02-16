@@ -568,7 +568,9 @@ var
   var
     LImm26: Cardinal;
   begin
-    LImm26 := (Cardinal(AOffset) shr 2) and $3FFFFFF;
+    // BL encodes a signed 28-bit byte offset (imm26 << 2). Use signed math so
+    // backward calls encode correctly (logical shifts break negative offsets).
+    LImm26 := Cardinal(AOffset div 4) and $3FFFFFF;
     EmitARM64($94000000 or LImm26);
   end;
 

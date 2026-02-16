@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -506,6 +506,7 @@ type
       const AOp: TTigerSSAOperand;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     ): TTigerOperand;
     function StoreSSAVar(
@@ -513,30 +514,35 @@ type
       const AValue: TTigerOperand;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     ): TTigerTempHandle;
     procedure EmitCall(
       const AInstr: TTigerSSAInstr;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     );
     function EmitCallWithResult(
       const AInstr: TTigerSSAInstr;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     ): TTigerTempHandle;
     procedure EmitIndirectCall(
       const AInstr: TTigerSSAInstr;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     );
     function EmitIndirectCallWithResult(
       const AInstr: TTigerSSAInstr;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     ): TTigerTempHandle;
     
@@ -4899,6 +4905,7 @@ var
   LLocalHandles: TDictionary<string, TTigerLocalHandle>;
   LLabelHandles: TDictionary<Integer, TTigerLabelHandle>;
   LVarTemps: TDictionary<string, TTigerTempHandle>;
+  LVarOperands: TDictionary<string, TTigerOperand>;
   LLocalHandle: TTigerLocalHandle;
   LLabelHandle: TTigerLabelHandle;
   LOp1: TTigerOperand;
@@ -4928,6 +4935,7 @@ begin
     LLocalHandles := TDictionary<string, TTigerLocalHandle>.Create();
     LLabelHandles := TDictionary<Integer, TTigerLabelHandle>.Create();
     LVarTemps := TDictionary<string, TTigerTempHandle>.Create();
+    LVarOperands := TDictionary<string, TTigerOperand>.Create();
     try
       //------------------------------------------------------------------------
       // Begin function
@@ -5001,8 +5009,8 @@ begin
           LInstr := LBlock.GetInstruction(LK);
           
           // Resolve operands
-          LOp1 := ResolveOperand(LInstr.Op1, LLocalHandles, LVarTemps, ABackend);
-          LOp2 := ResolveOperand(LInstr.Op2, LLocalHandles, LVarTemps, ABackend);
+          LOp1 := ResolveOperand(LInstr.Op1, LLocalHandles, LVarTemps, LVarOperands, ABackend);
+          LOp2 := ResolveOperand(LInstr.Op2, LLocalHandles, LVarTemps, LVarOperands, ABackend);
           
           case LInstr.Kind of
             sikNop:
@@ -5017,7 +5025,7 @@ begin
                   Continue;
                   
                 // For SSA, we track the temp handle by variable name
-                LDestTemp := StoreSSAVar(LInstr.Dest, LOp1, LLocalHandles, LVarTemps, ABackend);
+                LDestTemp := StoreSSAVar(LInstr.Dest, LOp1, LLocalHandles, LVarTemps, LVarOperands, ABackend);
               end;
               
             sikAdd:
@@ -5258,13 +5266,13 @@ begin
             sikCall:
               begin
                 // Call without return value
-                EmitCall(LInstr, LLocalHandles, LVarTemps, ABackend);
+                EmitCall(LInstr, LLocalHandles, LVarTemps, LVarOperands, ABackend);
               end;
               
             sikCallAssign:
               begin
                 // Call with return value
-                LDestTemp := EmitCallWithResult(LInstr, LLocalHandles, LVarTemps, ABackend);
+                LDestTemp := EmitCallWithResult(LInstr, LLocalHandles, LVarTemps, LVarOperands, ABackend);
                 LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
               end;
               
@@ -5278,13 +5286,13 @@ begin
             sikIndirectCall:
               begin
                 // Indirect call (no return value)
-                EmitIndirectCall(LInstr, LLocalHandles, LVarTemps, ABackend);
+                EmitIndirectCall(LInstr, LLocalHandles, LVarTemps, LVarOperands, ABackend);
               end;
               
             sikIndirectCallAssign:
               begin
                 // Indirect call with return value
-                LDestTemp := EmitIndirectCallWithResult(LInstr, LLocalHandles, LVarTemps, ABackend);
+                LDestTemp := EmitIndirectCallWithResult(LInstr, LLocalHandles, LVarTemps, LVarOperands, ABackend);
                 LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
               end;
               
@@ -5315,7 +5323,7 @@ begin
                 // Syscall as statement (discard result)
                 SetLength(LArgs, Length(LInstr.CallArgs));
                 for LM := 0 to High(LInstr.CallArgs) do
-                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, ABackend);
+                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, LVarOperands, ABackend);
                 ABackend.GetCode().EmitSyscall(LInstr.SyscallNr, LArgs);
               end;
 
@@ -5324,7 +5332,7 @@ begin
                 // Syscall as expression (capture result)
                 SetLength(LArgs, Length(LInstr.CallArgs));
                 for LM := 0 to High(LInstr.CallArgs) do
-                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, ABackend);
+                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, LVarOperands, ABackend);
                 LDestTemp := ABackend.GetCode().EmitSyscallFunc(LInstr.SyscallNr, LArgs);
                 LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
               end;
@@ -5379,6 +5387,7 @@ begin
       
     finally
       LVarTemps.Free();
+      LVarOperands.Free();
       LLabelHandles.Free();
       LLocalHandles.Free();
     end;
@@ -5391,12 +5400,14 @@ function TTigerSSABuilder.ResolveOperand(
   const AOp: TTigerSSAOperand;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 ): TTigerOperand;
 var
   LLocalHandle: TTigerLocalHandle;
   LTempHandle: TTigerTempHandle;
   LVarKey: string;
+  LOp: TTigerOperand;
 begin
   case AOp.Kind of
     sokNone:
@@ -5418,6 +5429,11 @@ begin
         if AVarTemps.TryGetValue(LVarKey, LTempHandle) then
         begin
           Result := TTigerOperand.FromTemp(LTempHandle);
+        end
+        // Next check if it's a tracked SSA operand (e.g. const string okData kept as-is)
+        else if Assigned(AVarOperands) and AVarOperands.TryGetValue(LVarKey, LOp) then
+        begin
+          Result := LOp;
         end
         // Otherwise check if it's a local/param
         else if ALocalHandles.TryGetValue(AOp.Var_.BaseName, LLocalHandle) then
@@ -5473,6 +5489,7 @@ function TTigerSSABuilder.StoreSSAVar(
   const AValue: TTigerOperand;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 ): TTigerTempHandle;
 var
@@ -5504,9 +5521,11 @@ begin
     end
     else if AValue.Kind = okData then
     begin
-      // Create a temp for data address - use add with 0 to materialize address
-      Result := ABackend.GetCode.OpAdd(AValue, Int64(0));
-      AVarTemps.AddOrSetValue(LVarKey, Result);
+      // Keep okData as an operand instead of materializing it into a temp.
+      // This avoids temp slot aliasing corrupting C-string pointers used by printf.
+      if Assigned(AVarOperands) then
+        AVarOperands.AddOrSetValue(LVarKey, AValue);
+      Result := TTigerTempHandle.Invalid();
     end
     else if AValue.Kind = okGlobal then
     begin
@@ -5531,6 +5550,7 @@ procedure TTigerSSABuilder.EmitCall(
   const AInstr: TTigerSSAInstr;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 );
 var
@@ -5562,7 +5582,7 @@ begin
         Continue;
       end;
     end;
-    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, ABackend);
+    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, AVarOperands, ABackend);
   end;
   
   // Call based on target type
@@ -5588,6 +5608,7 @@ function TTigerSSABuilder.EmitCallWithResult(
   const AInstr: TTigerSSAInstr;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 ): TTigerTempHandle;
 var
@@ -5619,7 +5640,7 @@ begin
         Continue;
       end;
     end;
-    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, ABackend);
+    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, AVarOperands, ABackend);
   end;
   
   // Call based on target type
@@ -5649,6 +5670,7 @@ procedure TTigerSSABuilder.EmitIndirectCall(
   const AInstr: TTigerSSAInstr;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 );
 var
@@ -5657,12 +5679,12 @@ var
   LI: Integer;
 begin
   // Resolve the function pointer operand
-  LFuncPtr := ResolveOperand(AInstr.Op1, ALocalHandles, AVarTemps, ABackend);
+  LFuncPtr := ResolveOperand(AInstr.Op1, ALocalHandles, AVarTemps, AVarOperands, ABackend);
   
   // Resolve arguments
   SetLength(LArgs, Length(AInstr.CallArgs));
   for LI := 0 to High(AInstr.CallArgs) do
-    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, ABackend);
+    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, AVarOperands, ABackend);
   
   // Indirect call through function pointer
   if Length(LArgs) > 0 then
@@ -5675,6 +5697,7 @@ function TTigerSSABuilder.EmitIndirectCallWithResult(
   const AInstr: TTigerSSAInstr;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 ): TTigerTempHandle;
 var
@@ -5683,12 +5706,12 @@ var
   LI: Integer;
 begin
   // Resolve the function pointer operand
-  LFuncPtr := ResolveOperand(AInstr.Op1, ALocalHandles, AVarTemps, ABackend);
+  LFuncPtr := ResolveOperand(AInstr.Op1, ALocalHandles, AVarTemps, AVarOperands, ABackend);
   
   // Resolve arguments
   SetLength(LArgs, Length(AInstr.CallArgs));
   for LI := 0 to High(AInstr.CallArgs) do
-    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, ABackend);
+    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, AVarOperands, ABackend);
   
   // Indirect call through function pointer with result
   if Length(LArgs) > 0 then

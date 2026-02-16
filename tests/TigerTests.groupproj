@@ -1,0 +1,48 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{A5B70009-D760-4A91-9983-9492936DFA2B}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="leaks\test_leaks.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="simple\test_simple.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="test_leaks">
+        <MSBuild Projects="leaks\test_leaks.dproj"/>
+    </Target>
+    <Target Name="test_leaks:Clean">
+        <MSBuild Projects="leaks\test_leaks.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="test_leaks:Make">
+        <MSBuild Projects="leaks\test_leaks.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="test_simple">
+        <MSBuild Projects="simple\test_simple.dproj"/>
+    </Target>
+    <Target Name="test_simple:Clean">
+        <MSBuild Projects="simple\test_simple.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="test_simple:Make">
+        <MSBuild Projects="simple\test_simple.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="test_leaks;test_simple"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="test_leaks:Clean;test_simple:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="test_leaks:Make;test_simple:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>
