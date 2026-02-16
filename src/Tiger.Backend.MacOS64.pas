@@ -1,4 +1,4 @@
-{===============================================================================
+﻿{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -37,7 +37,7 @@ type
   { TTigerMacOS64Backend }
   TTigerMacOS64Backend = class(TTigerBackend)
   private
-    function GenerateMachO(): TBytes;
+    function GenerateMachO(const AIsDylib: Boolean): TBytes;
     procedure EnsureOutputDir();
   protected
     procedure PreBuild(); override;
@@ -63,6 +63,7 @@ const
   CPU_TYPE_ARM64 = $0100000C;
   CPU_SUBTYPE_ARM64_ALL = 0;
   MH_EXECUTE     = 2;
+  MH_DYLIB       = 6;
   MH_NOUNDEFS    = $00000001;
   MH_DYLDLINK    = $00000004;
   MH_TWOLEVEL    = $00000080;
@@ -72,6 +73,7 @@ const
   LC_MAIN        = $28 or LC_REQ_DYLD;
   LC_LOAD_DYLINKER = $0E;
   LC_LOAD_DYLIB   = $0C;
+  LC_ID_DYLIB     = $0D;
   LC_DYLD_INFO_ONLY = $22 or LC_REQ_DYLD;
   LC_VERSION_MIN_MACOSX = $24;
   LC_CODE_SIGNATURE = $1D;
@@ -131,8 +133,10 @@ function TTigerMacOS64Backend.BuildToMemory(): TBytes;
 begin
   case FOutputType of
     otExe:
-      Result := GenerateMachO();
-    otObj, otLib, otDll:
+      Result := GenerateMachO(False);
+    otDll:
+      Result := GenerateMachO(True);
+    otObj, otLib:
       Result := nil;  // Phase 3/4
   else
     Result := nil;
@@ -150,7 +154,7 @@ begin
   inherited Clear();
 end;
 
-function TTigerMacOS64Backend.GenerateMachO(): TBytes;
+function TTigerMacOS64Backend.GenerateMachO(const AIsDylib: Boolean): TBytes;
 var
   LCode: TTigerCodeBuilder;
   LData: TTigerDataBuilder;
@@ -200,7 +204,9 @@ var
   LBindStream: TMemoryStream;
   LBindBytes: TBytes;
   LRebaseBytes: TBytes;
+  LExportBytes: TBytes;
   LBindOff: Cardinal;
+  LExportOff: Cardinal;
   LRebaseOff: Cardinal;
   LCodeLimit: Cardinal;
   LSignatureOffset: Cardinal;
@@ -219,6 +225,15 @@ var
   LTargetReg: Byte;
   LDataHandle: TTigerDataHandle;
   LUUID: TGUID;
+  LIdName: AnsiString;
+  LCmdCount: Cardinal;
+  LDylibNames: TStringList;
+  LDylibOrdinals: TDictionary<string, Integer>;
+  LDylibName: string;
+  LDylibOrdinal: Integer;
+  LDylibCmdSizeTotal: Cardinal;
+  LDylibCmdSize: Cardinal;
+  LNamePaddedSize: Cardinal;
 
   procedure WriteFixedAnsi(const AText: AnsiString; const ASize: Integer);
   var
@@ -248,6 +263,27 @@ var
     if LCopyLen > 0 then
       Move(AText[1], LBuf[0], LCopyLen);
     LOutStream.WriteBuffer(LBuf[0], ASize);
+  end;
+
+  function AlignUp8(const AValue: Cardinal): Cardinal;
+  begin
+    Result := (AValue + 7) and (not 7);
+  end;
+
+  function NormalizeDylibName(const AName: string): string;
+  var
+    L: string;
+  begin
+    L := AName;
+    if L = '' then
+      Exit('/usr/lib/libSystem.B.dylib');
+
+    // Many existing tests use Linux-style libc names on non-Windows platforms.
+    // On macOS, map those to libSystem so existing code keeps working.
+    if L.Contains('libc.so') or L.Contains('libm.so') then
+      Exit('/usr/lib/libSystem.B.dylib');
+
+    Result := L;
   end;
 
   function AlignUp32(const AValue, AAlignment: Cardinal): Cardinal;
@@ -661,6 +697,73 @@ var
     end;
   end;
 
+  function UlebLen(const AValue: UInt64): Integer;
+  var
+    V: UInt64;
+  begin
+    V := AValue;
+    Result := 1;
+    while V >= $80 do
+    begin
+      Inc(Result);
+      V := V shr 7;
+    end;
+  end;
+
+  procedure WriteUleb(const AStream: TMemoryStream; const AValue: UInt64);
+  var
+    V: UInt64;
+    B: Byte;
+  begin
+    V := AValue;
+    repeat
+      B := Byte(V and $7F);
+      V := V shr 7;
+      if V <> 0 then
+        B := B or $80;
+      AStream.WriteBuffer(B, 1);
+    until V = 0;
+  end;
+
+  function MakeTerminalNode(const AAddr: UInt64): TBytes;
+  var
+    S: TMemoryStream;
+    LTermData: TBytes;
+  begin
+    S := TMemoryStream.Create();
+    try
+      // terminalData = flags(uleb=0) + address(uleb)
+      WriteUleb(S, 0);
+      WriteUleb(S, AAddr);
+      SetLength(LTermData, S.Size);
+      if S.Size > 0 then
+      begin
+        S.Position := 0;
+        S.ReadBuffer(LTermData[0], S.Size);
+      end;
+    finally
+      S.Free();
+    end;
+
+    S := TMemoryStream.Create();
+    try
+      // node: terminalSize + terminalData + childCount(0)
+      WriteUleb(S, UInt64(Length(LTermData)));
+      if Length(LTermData) > 0 then
+        S.WriteBuffer(LTermData[0], Length(LTermData));
+      var LZero: Byte := 0;
+      S.WriteBuffer(LZero, 1);
+      SetLength(Result, S.Size);
+      if S.Size > 0 then
+      begin
+        S.Position := 0;
+        S.ReadBuffer(Result[0], S.Size);
+      end;
+    finally
+      S.Free();
+    end;
+  end;
+
   procedure StoreTempFromReg(const ATempIndex: Integer; const AReg: Byte);
   begin
     if GetTempOffset(ATempIndex) >= -255 then
@@ -710,6 +813,11 @@ begin
   LStaticCallFixups := TList<TPair<Cardinal, Integer>>.Create();
   LHasStaticImports := False;
   LLinker := nil;
+  LDylibNames := TStringList.Create();
+  LDylibNames.CaseSensitive := False;
+  LDylibNames.Sorted := False;
+  LDylibNames.Duplicates := dupIgnore;
+  LDylibOrdinals := TDictionary<string, Integer>.Create();
   try
     for LI := 0 to LImports.GetCount() - 1 do
     begin
@@ -757,6 +865,21 @@ begin
       LVal := 0;
       LGotStream.WriteBuffer(LVal, 8);
     end;
+
+    // Collect dynamic library dependencies (for LC_LOAD_DYLIB and bind ordinals).
+    // Always include libSystem on macOS.
+    LDylibNames.Add('/usr/lib/libSystem.B.dylib');
+    for LI := 0 to LImports.GetCount() - 1 do
+    begin
+      if LHasStaticImports and (LStaticImportIndices.IndexOf(LI) >= 0) then
+        Continue;
+      LEntry := LImports.GetEntryByIndex(LI);
+      LDylibName := NormalizeDylibName(LEntry.DllName);
+      if LDylibNames.IndexOf(LDylibName) < 0 then
+        LDylibNames.Add(LDylibName);
+    end;
+    for LI := 0 to LDylibNames.Count - 1 do
+      LDylibOrdinals.AddOrSetValue(LDylibNames[LI], LI + 1); // ordinals are 1-based
 
     LCStringBytes := LData.GetData();
     if Length(LCStringBytes) > 0 then
@@ -1268,7 +1391,15 @@ begin
         if LHasStaticImports and (LStaticImportIndices.IndexOf(LI) >= 0) then
           Continue;
         LEntry := LImports.GetEntryByIndex(LI);
-        LByteVal := $11;
+        // Bind this symbol against the correct dylib ordinal.
+        LDylibName := NormalizeDylibName(LEntry.DllName);
+        if not LDylibOrdinals.TryGetValue(LDylibName, LDylibOrdinal) then
+          LDylibOrdinal := 1;
+        if LDylibOrdinal < 0 then
+          LDylibOrdinal := 1;
+        if LDylibOrdinal > 15 then
+          LDylibOrdinal := 1; // TODO: support SET_DYLIB_ORDINAL_ULEB for larger ordinals
+        LByteVal := Byte($10 or (LDylibOrdinal and $F));
         LBindStream.WriteBuffer(LByteVal, 1);
         LByteVal := $40;
         LBindStream.WriteBuffer(LByteVal, 1);
@@ -1311,17 +1442,140 @@ begin
       LBindStream.Free();
     end;
 
+    // Build a minimal export trie for dylib outputs so executables can bind to
+    // our exported functions (AddC, mangled C++ exports, etc.).
+    LExportBytes := nil;
+    if AIsDylib then
+    begin
+      var LExportSyms: TStringList;
+      var LExportAddrs: TDictionary<string, UInt64>;
+      var LExportStream: TMemoryStream;
+
+      LExportSyms := TStringList.Create();
+      LExportAddrs := TDictionary<string, UInt64>.Create();
+      LExportStream := TMemoryStream.Create();
+      try
+        LExportSyms.CaseSensitive := True;
+        LExportSyms.Sorted := True;
+        LExportSyms.Duplicates := dupIgnore;
+
+        for LI := 0 to LFuncCount - 1 do
+        begin
+          LFunc := LCode.GetFunc(LI);
+          if LFunc.IsPublic then
+          begin
+            // Mach-O symbols are underscore-prefixed (e.g. _AddC, __Z6AddCppii)
+            var LSym := '_' + LFunc.ExportName;
+            // Address in export trie is vm-offset within the image.
+            // We always place __text at PAGE_SIZE.
+            var LAddr := UInt64(PAGE_SIZE) + UInt64(LFuncOffsets[LI]);
+            if LExportSyms.IndexOf(LSym) < 0 then
+              LExportSyms.Add(LSym);
+            LExportAddrs.AddOrSetValue(LSym, LAddr);
+          end;
+        end;
+
+        if LExportSyms.Count > 0 then
+        begin
+          // Root node: no terminal, N children. Each child label is the full symbol name.
+          // Child nodes are simple terminals with no children.
+          var LChildNodes: array of TBytes;
+          SetLength(LChildNodes, LExportSyms.Count);
+          for LI := 0 to LExportSyms.Count - 1 do
+          begin
+            if not LExportAddrs.TryGetValue(LExportSyms[LI], LVal) then
+              LVal := 0;
+            LChildNodes[LI] := MakeTerminalNode(LVal);
+          end;
+
+          // Compute root size and child offsets (iterative to account for uleb sizes).
+          var LOffsets: array of Cardinal;
+          SetLength(LOffsets, LExportSyms.Count);
+
+          var LRootSize: Cardinal := 0;
+          var LPrevRootSize: Cardinal := 0;
+          repeat
+            LPrevRootSize := LRootSize;
+            // terminalSize(0) uleb + childCount byte
+            LRootSize := Cardinal(UlebLen(0)) + 1;
+            // add each child entry: label cstring + uleb(offset)
+            for LI := 0 to LExportSyms.Count - 1 do
+            begin
+              // compute provisional offset based on current root size + previous child sizes
+              var LOff: Cardinal := LRootSize;
+              for LK := 0 to LI - 1 do
+                Inc(LOff, Cardinal(Length(LChildNodes[LK])));
+              LOffsets[LI] := LOff;
+              Inc(LRootSize, Cardinal(Length(AnsiString(LExportSyms[LI])) + 1));
+              Inc(LRootSize, Cardinal(UlebLen(LOff)));
+            end;
+          until (LRootSize = LPrevRootSize);
+
+          // Emit root
+          WriteUleb(LExportStream, 0);
+          var LChildCount: Byte := Byte(LExportSyms.Count);
+          LExportStream.WriteBuffer(LChildCount, 1);
+          for LI := 0 to LExportSyms.Count - 1 do
+          begin
+            var LLabel: AnsiString := AnsiString(LExportSyms[LI]);
+            if Length(LLabel) > 0 then
+              LExportStream.WriteBuffer(LLabel[1], Length(LLabel));
+            var LNull: Byte := 0;
+            LExportStream.WriteBuffer(LNull, 1);
+            WriteUleb(LExportStream, LOffsets[LI]);
+          end;
+
+          // Emit child nodes sequentially
+          for LI := 0 to High(LChildNodes) do
+            if Length(LChildNodes[LI]) > 0 then
+              LExportStream.WriteBuffer(LChildNodes[LI][0], Length(LChildNodes[LI]));
+
+          SetLength(LExportBytes, LExportStream.Size);
+          if LExportStream.Size > 0 then
+          begin
+            LExportStream.Position := 0;
+            LExportStream.ReadBuffer(LExportBytes[0], LExportStream.Size);
+          end;
+        end;
+      finally
+        LExportStream.Free();
+        LExportAddrs.Free();
+        LExportSyms.Free();
+      end;
+    end;
+
     LOutStream := TMemoryStream.Create();
     try
       LHeaderSize := 32;
       LSegTextFileSize := (Length(LTextBytes) + Length(LCStringBytes) + 15) and (not 15);
       LSegDataFileSize := (Length(LDataBytes) + Length(LGotBytes) + 15) and (not 15);
-      // NOTE: sizeofcmds must match exactly what we emit.
+      // Compute load command sizes dynamically based on dylib names.
       // All LC_SEGMENT_64 must come first (dyld/kernel expect contiguous segments).
-      // PAGEZERO(72) + TEXT(72+2*80) + DATA(72+2*80) + LINKEDIT(72) +
-      // LC_MAIN(24) + LC_VERSION_MIN_MACOSX(16) + LC_UUID(24) +
-      // LC_LOAD_DYLINKER(32) + LC_LOAD_DYLIB(56) + LC_DYLD_INFO_ONLY(48) + LC_CODE_SIGNATURE(16)
-      LLoadCmdSize := 72 + (72 + 160) + (72 + 160) + 72 + 24 + 16 + 24 + 32 + 56 + 48 + 16;
+      LDylibCmdSizeTotal := 0;
+      for LI := 0 to LDylibNames.Count - 1 do
+      begin
+        LNamePaddedSize := AlignUp8(Cardinal(Length(AnsiString(LDylibNames[LI])) + 1));
+        LDylibCmdSizeTotal := LDylibCmdSizeTotal + (24 + LNamePaddedSize); // dylib_command
+      end;
+
+      if AIsDylib then
+      begin
+        // LC_ID_DYLIB uses @loader_path/<filename> so the EXE can load from its folder.
+        LIdName := AnsiString('@loader_path/' + TPath.GetFileName(FOutputPath));
+        LNamePaddedSize := AlignUp8(Cardinal(Length(LIdName) + 1));
+        LDylibCmdSize := 24 + LNamePaddedSize;
+      end
+      else
+      begin
+        LIdName := '';
+        LDylibCmdSize := 24; // LC_MAIN
+      end;
+
+      // PAGEZERO(72) + TEXT(72+160) + DATA(72+160) + LINKEDIT(72) = 608
+      LLoadCmdSize := 608 + LDylibCmdSize + 16 {LC_VERSION_MIN_MACOSX} + 24 {LC_UUID} +
+                      (IfThen(AIsDylib, 0, 32)) {LC_LOAD_DYLINKER for exec only} +
+                      LDylibCmdSizeTotal {LC_LOAD_DYLIB*} +
+                      48 {LC_DYLD_INFO_ONLY} + 16 {LC_CODE_SIGNATURE};
       // Map Mach header inside __TEXT (canonical layout): __TEXT.fileoff = 0
       LSegTextFileOff := 0;
       // Place code at a page boundary after header/loadcmds.
@@ -1364,12 +1618,22 @@ begin
       end;
       LBindOff := LRebaseOff + Cardinal(Length(LRebaseBytes));
       LSegLinkEditFileOff := LRebaseOff;
-      LCodeLimit := LBindOff + Cardinal(Length(LBindBytes));
+      // Place export trie (dylib only) immediately after bind opcodes.
+      LExportOff := LBindOff + Cardinal(Length(LBindBytes));
+      if (AIsDylib) and (Length(LExportBytes) > 0) then
+        LCodeLimit := LExportOff + Cardinal(Length(LExportBytes))
+      else
+      begin
+        LExportOff := 0;
+        LCodeLimit := LExportOff; // keep compiler quiet
+        LCodeLimit := LBindOff + Cardinal(Length(LBindBytes));
+      end;
       LSignatureOffset := AlignUp32(LCodeLimit, CODE_SIGNATURE_ALIGN);
       LPadding := LSignatureOffset - LCodeLimit;
       LNumPages := (LSignatureOffset + PAGE_SIZE - 1) div PAGE_SIZE;
       LSignatureSize := CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + CODE_SIGNATURE_IDENTIFIER_SIZE + LNumPages * 32;
-      LSegLinkEditFileSize := Cardinal(Length(LRebaseBytes)) + Cardinal(Length(LBindBytes)) + LPadding + LSignatureSize;
+      LSegLinkEditFileSize := Cardinal(Length(LRebaseBytes)) + Cardinal(Length(LBindBytes)) +
+                              Cardinal(Length(LExportBytes)) + LPadding + LSignatureSize;
       LSlide := SEG_TEXT_VADDR - UInt64(LSegTextFileOff);
 
       LCardVal := MH_MAGIC_64;
@@ -1378,13 +1642,25 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := CPU_SUBTYPE_ARM64_ALL;
       LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := MH_EXECUTE;
+      if AIsDylib then
+        LCardVal := MH_DYLIB
+      else
+        LCardVal := MH_EXECUTE;
       LOutStream.WriteBuffer(LCardVal, 4);
       // ncmds must match emitted load commands (see LLoadCmdSize comment).
-      LCardVal := 11;
+      // 4 segments + (LC_MAIN or LC_ID_DYLIB) + LC_VERSION_MIN + LC_UUID +
+      // (LC_LOAD_DYLINKER for exec) + N*LC_LOAD_DYLIB + LC_DYLD_INFO + LC_CODE_SIGNATURE
+      if AIsDylib then
+        LCmdCount := 9 + Cardinal(LDylibNames.Count)
+      else
+        LCmdCount := 10 + Cardinal(LDylibNames.Count);
+      LCardVal := LCmdCount;
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LLoadCmdSize, 4);
-      LCardVal := MH_NOUNDEFS or MH_DYLDLINK or MH_TWOLEVEL or MH_PIE;
+      if AIsDylib then
+        LCardVal := MH_NOUNDEFS or MH_DYLDLINK or MH_TWOLEVEL
+      else
+        LCardVal := MH_NOUNDEFS or MH_DYLDLINK or MH_TWOLEVEL or MH_PIE;
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 0;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1540,14 +1816,33 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
 
-      LCardVal := LC_MAIN;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 24;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LVal := UInt64(LTextSectionFileOff) + LEntryOffset;
-      LOutStream.WriteBuffer(LVal, 8);
-      LVal := 0;
-      LOutStream.WriteBuffer(LVal, 8);
+      if AIsDylib then
+      begin
+        // LC_ID_DYLIB (dylib install name)
+        LCardVal := LC_ID_DYLIB;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LCardVal := LDylibCmdSize;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 24; // name offset
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 0;  // timestamp
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LOutStream.WriteBuffer(LCardVal, 4); // current_version
+        LOutStream.WriteBuffer(LCardVal, 4); // compatibility_version
+        WritePaddedCString(LIdName, Integer(LDylibCmdSize - 24));
+      end
+      else
+      begin
+        // LC_MAIN
+        LCardVal := LC_MAIN;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 24;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LVal := UInt64(LTextSectionFileOff) + LEntryOffset;
+        LOutStream.WriteBuffer(LVal, 8);
+        LVal := 0;
+        LOutStream.WriteBuffer(LVal, 8);
+      end;
 
       // LC_VERSION_MIN_MACOSX (match FPC; kernel may handle this better than LC_BUILD_VERSION)
       LCardVal := LC_VERSION_MIN_MACOSX;
@@ -1567,25 +1862,34 @@ begin
       CreateGUID(LUUID);
       LOutStream.WriteBuffer(LUUID, SizeOf(LUUID));
 
-      LCardVal := LC_LOAD_DYLINKER;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 32;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 12;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      WritePaddedCString('/usr/lib/dyld', 20);
+      if not AIsDylib then
+      begin
+        // Executables need LC_LOAD_DYLINKER. Shared libraries do not.
+        LCardVal := LC_LOAD_DYLINKER;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 32;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 12;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        WritePaddedCString('/usr/lib/dyld', 20);
+      end;
 
-      LCardVal := LC_LOAD_DYLIB;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 56;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 24;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LCardVal := 0;
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LOutStream.WriteBuffer(LCardVal, 4);
-      WritePaddedCString('/usr/lib/libSystem.B.dylib', 32);
+      // LC_LOAD_DYLIB entries (dependencies). Ordinals are assigned in this order.
+      for LI := 0 to LDylibNames.Count - 1 do
+      begin
+        LCardVal := LC_LOAD_DYLIB;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LNamePaddedSize := AlignUp8(Cardinal(Length(AnsiString(LDylibNames[LI])) + 1));
+        LCardVal := 24 + LNamePaddedSize;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 24; // name offset
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 0; // timestamp
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LOutStream.WriteBuffer(LCardVal, 4); // current_version
+        LOutStream.WriteBuffer(LCardVal, 4); // compatibility_version
+        WritePaddedCString(AnsiString(LDylibNames[LI]), Integer(LNamePaddedSize));
+      end;
 
       LCardVal := LC_DYLD_INFO_ONLY;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1598,12 +1902,24 @@ begin
       LCardVal := Length(LBindBytes);
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 0;
+      // weak_bind_off/size
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
+      // lazy_bind_off/size
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
-      LOutStream.WriteBuffer(LCardVal, 4);
-      LOutStream.WriteBuffer(LCardVal, 4);
+      // export_off/size
+      if AIsDylib and (Length(LExportBytes) > 0) then
+      begin
+        LOutStream.WriteBuffer(LExportOff, 4);
+        LCardVal := Length(LExportBytes);
+        LOutStream.WriteBuffer(LCardVal, 4);
+      end
+      else
+      begin
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LOutStream.WriteBuffer(LCardVal, 4);
+      end;
 
       LCardVal := LC_CODE_SIGNATURE;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -1641,6 +1957,12 @@ begin
         LOutStream.WriteBuffer(LByteVal, 1);
       if Length(LBindBytes) > 0 then
         LOutStream.WriteBuffer(LBindBytes[0], Length(LBindBytes));
+      if Length(LExportBytes) > 0 then
+      begin
+        while Cardinal(LOutStream.Position) < LExportOff do
+          LOutStream.WriteBuffer(LByteVal, 1);
+        LOutStream.WriteBuffer(LExportBytes[0], Length(LExportBytes));
+      end;
       for LI := 0 to LPadding - 1 do
         LOutStream.WriteBuffer(LByteVal, 1);
       for LI := 0 to LSignatureSize - 1 do
@@ -1663,6 +1985,8 @@ begin
     LStaticSymbolNames.Free();
     LStaticLibPaths.Free();
     LStaticImportIndices.Free();
+    LDylibOrdinals.Free();
+    LDylibNames.Free();
     LCondJumpFixups.Free();
     LLabelOffsets.Free();
     LJumpFixups.Free();

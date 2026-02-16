@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -3149,6 +3149,8 @@ begin
       SetExeResources(LTiger, 'Test_DLLGeneration.dll');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
+    else if LTiger.GetPlatform = tpMacOS64 then
+      LTiger.ImportDll('/usr/lib/libSystem.B.dylib', 'printf', [vtPointer], vtInt32, True)
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
@@ -3184,6 +3186,8 @@ begin
 
     if LTiger.GetPlatform = tpWin64 then
       LTiger.TargetDll(TPath.Combine(OutputPath(APlatform), 'Test_DLLGeneration.dll'))
+    else if LTiger.GetPlatform = tpMacOS64 then
+      LTiger.TargetDll(TPath.Combine(OutputPath(APlatform), 'libTest_DLLGeneration.dylib'))
     else
       LTiger.TargetDll(TPath.Combine(OutputPath(APlatform), 'libTest_DLLGeneration.so'));
 
@@ -3209,6 +3213,13 @@ begin
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
       LTiger.ImportDll('Test_DLLGeneration.dll', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
       LTiger.ImportDll('Test_DLLGeneration.dll', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
+    end
+    else if LTiger.GetPlatform = tpMacOS64 then
+    begin
+      LTiger.ImportDll('/usr/lib/libSystem.B.dylib', 'printf', [vtPointer], vtInt32, True);
+      // Load from same folder as executable
+      LTiger.ImportDll('@loader_path/libTest_DLLGeneration.dylib', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
+      LTiger.ImportDll('@loader_path/libTest_DLLGeneration.dylib', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
     end
     else
     begin
