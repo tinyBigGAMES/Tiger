@@ -11,8 +11,14 @@ procedure BuildLeakSanityForPlatform(Plat : TTigerPlatform);
 var
   LTiger: TTiger;
   LExitCode: Cardinal;
+  LPlatform : string;
 begin
-  WriteLn('Building macOS Apple Silicon leak sanity executable...');
+  case Plat of
+    tpWin64:   LPlatform := 'Windows x64';
+    tpLinux64: LPlatform := 'Linux x64';
+    tpMacOS64: LPlatform := 'MacOS ARM64';
+  end;
+  WriteLn('Building leak sanity executable for '+LPlatform);
   WriteLn('');
 
   LTiger := TTiger.Create(Plat);
@@ -48,12 +54,18 @@ begin
       WriteLn('');
       WriteLn('========================================');
       WriteLn('Build successful!');
-      WriteLn('Output file: output\\tests\\leaks\\leak_sanity_macos');
+      WriteLn('Output file: output\leak_test_'+sPlatform);
       WriteLn('');
       WriteLn('Next steps:');
-      WriteLn('1. Copy output\\tests\\leaks\\leak_sanity_macos to an Apple Silicon Mac');
-      WriteLn('2. In Terminal: chmod +x leak_sanity_macos');
-      WriteLn('3. Run: ./leak_sanity_macos');
+      if Plat in [tpLinux64, tpMacOS64] then
+      begin
+        WriteLn('1. Copy output\leak_sanity_macos to an Apple Silicon Mac');
+        WriteLn('2. In Terminal: chmod +x leak_test_'+sPlatform);
+        WriteLn('3. Run: ./leak_test_'+sPlatform);
+      end else
+      begin
+        WriteLn('1. Run: .\leak_test_'+sPlatform+' in a command line window');
+      end;
       WriteLn('Expected leak line: [Heap] Allocs: 1, Frees: 1, Leaked: 0');
       WriteLn('========================================');
     end

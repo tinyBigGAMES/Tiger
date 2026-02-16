@@ -182,6 +182,7 @@ var
   LGotVAddr, LSlotAddr: UInt64;
   LOfs12: Cardinal;
   LFrameSize, LLocalsSize, LMaxCallArgs, LOutgoingArgSpace: Cardinal;
+  LIncomingSpillSize: Cardinal;
   LStackFrameSize, LVariadicSize: Cardinal;
   LStaticImportIndices: TList<Integer>;
   LStaticSymbolNames: TStringList;
@@ -218,6 +219,7 @@ var
   LTargetReg: Byte;
   LDataHandle: TTigerDataHandle;
   LUUID: TGUID;
+
   procedure WriteFixedAnsi(const AText: AnsiString; const ASize: Integer);
   var
     LBuf: TBytes;
@@ -372,10 +374,28 @@ var
     LTextStream.WriteBuffer(AValue, 8);
   end;
 
-  // We spill up to 8 incoming integer/pointer args (x0-x7) into a fixed area.
-  // macOS arm64 has no shadow space; using positive FP offsets is unsafe.
+  // We spill incoming integer/pointer args (x0-x7) to [FP-8], [FP-16], ...
+  // Locals/temps must live *below* the spill area to avoid aliasing.
+  //
+  // IMPORTANT: Even if a function has fewer than 8 params, we still reserve a
+  // minimum spill area so that temps and locals can never overlap the top slots
+  // (e.g. [FP-8]) used to preserve x0..x7 across calls.
   const
-    PARAM_SPILL_SIZE = 64; // 8 regs * 8 bytes
+    MIN_PARAM_SPILL_SIZE = 64; // 8 regs * 8 bytes
+
+  function IncomingParamSpillSize(): Int32;
+  begin
+    // Only spill what we actually have (up to 8 regs), but treat it as a contiguous
+    // area under FP so locals/temps never overlap it.
+    Result := Int32(Min(Length(LFunc.Params), 8) * 8);
+  end;
+
+  function SpillBaseSize(): Int32;
+  begin
+    Result := IncomingParamSpillSize();
+    if Result < MIN_PARAM_SPILL_SIZE then
+      Result := MIN_PARAM_SPILL_SIZE;
+  end;
 
   function GetParamOffset(const AIndex: Integer): Int32;
   begin
@@ -388,7 +408,7 @@ var
     LOffset, LK: Integer;
   begin
     // Locals live below the param spill area.
-    LOffset := PARAM_SPILL_SIZE;
+    LOffset := SpillBaseSize();
     for LK := 0 to AIndex do
       LOffset := LOffset + LFunc.Locals[LK].LocalSize;
     Result := -Int32(LOffset);
@@ -399,10 +419,10 @@ var
     LOffset, LK: Integer;
   begin
     // Temps live below the locals area.
-    LOffset := PARAM_SPILL_SIZE;
+    LOffset := SpillBaseSize();
     for LK := 0 to High(LFunc.Locals) do
       LOffset := LOffset + LFunc.Locals[LK].LocalSize;
-    // Temp 0 at [FP-(PARAM_SPILL_SIZE + locals + 8)], etc.
+    // Temp 0 at [FP-(incoming_spill + locals + 8)], etc.
     LOffset := LOffset + (ATempIndex + 1) * 8;
     Result := -Int32(LOffset);
   end;
@@ -501,7 +521,8 @@ var
     LImm9: Cardinal;
   begin
     LImm9 := Cardinal(Int32(ADisp) and $1FF);
-    EmitARM64($F85F0000 or (LImm9 shl 12) or (REG_FP shl 5) or ARt);
+    // LDUR Xt, [Xn, #imm9] (unscaled, signed imm9). Base opcode must have imm9=0.
+    EmitARM64($F8400000 or (LImm9 shl 12) or (REG_FP shl 5) or ARt);
   end;
 
   procedure EmitSturFp(const ADisp: Int32; const ARt: Byte);
@@ -509,7 +530,8 @@ var
     LImm9: Cardinal;
   begin
     LImm9 := Cardinal(Int32(ADisp) and $1FF);
-    EmitARM64($F81F0000 or (LImm9 shl 12) or (REG_FP shl 5) or ARt);
+    // STUR Xt, [Xn, #imm9] (unscaled, signed imm9). Base opcode must have imm9=0.
+    EmitARM64($F8000000 or (LImm9 shl 12) or (REG_FP shl 5) or ARt);
   end;
 
   procedure EmitLdrFp(const ARt: Byte; const ADisp: Int32);
@@ -752,7 +774,7 @@ begin
       else
         LOutgoingArgSpace := 64;
       // Fixed param spill area (x0-x7) + locals + temps + outgoing arg space.
-      LStackFrameSize := PARAM_SPILL_SIZE + LLocalsSize + Cardinal(LFunc.TempCount) * 8 + LOutgoingArgSpace;
+      LStackFrameSize := LIncomingSpillSize + LLocalsSize + Cardinal(LFunc.TempCount) * 8 + LOutgoingArgSpace;
       if (LStackFrameSize mod 16) <> 0 then
         LStackFrameSize := (LStackFrameSize + 15) and (not 15);
 
