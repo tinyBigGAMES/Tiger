@@ -948,7 +948,9 @@ begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
               EmitARM64($EB00001F or (REG_X16 shl 16) or (REG_X0 shl 5));
-              EmitARM64($9A9F03E0 or (0 shl 12) or REG_X0);
+              // Produce a canonical boolean 0/1 in X0:
+              // CSET X0, EQ  ==  CSINC X0, XZR, XZR, NE  (invert condition)
+              EmitARM64($9A9F07E0 or ((0 xor 1) shl 12) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
           ikCmpNe:
@@ -956,7 +958,8 @@ begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
               EmitARM64($EB00001F or (REG_X16 shl 16) or (REG_X0 shl 5));
-              EmitARM64($9A9F03E0 or (1 shl 12) or REG_X0);
+              // CSET X0, NE  ==  CSINC X0, XZR, XZR, EQ
+              EmitARM64($9A9F07E0 or ((1 xor 1) shl 12) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
           ikCmpLt:
@@ -964,7 +967,8 @@ begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
               EmitARM64($EB00001F or (REG_X16 shl 16) or (REG_X0 shl 5));
-              EmitARM64($9A9F03E0 or ($0B shl 12) or REG_X0);
+              // CSET X0, LT  ==  CSINC X0, XZR, XZR, GE
+              EmitARM64($9A9F07E0 or (($0B xor 1) shl 12) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
           ikCmpLe:
@@ -972,7 +976,8 @@ begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
               EmitARM64($EB00001F or (REG_X16 shl 16) or (REG_X0 shl 5));
-              EmitARM64($9A9F03E0 or ($0D shl 12) or REG_X0);
+              // CSET X0, LE  ==  CSINC X0, XZR, XZR, GT
+              EmitARM64($9A9F07E0 or (($0D xor 1) shl 12) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
           ikCmpGt:
@@ -980,7 +985,8 @@ begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
               EmitARM64($EB00001F or (REG_X16 shl 16) or (REG_X0 shl 5));
-              EmitARM64($9A9F03E0 or ($0C shl 12) or REG_X0);
+              // CSET X0, GT  ==  CSINC X0, XZR, XZR, LE
+              EmitARM64($9A9F07E0 or (($0C xor 1) shl 12) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
           ikCmpGe:
@@ -988,7 +994,8 @@ begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
               EmitARM64($EB00001F or (REG_X16 shl 16) or (REG_X0 shl 5));
-              EmitARM64($9A9F03E0 or ($0A shl 12) or REG_X0);
+              // CSET X0, GE  ==  CSINC X0, XZR, XZR, LT
+              EmitARM64($9A9F07E0 or (($0A xor 1) shl 12) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
           ikCallIndirect:
