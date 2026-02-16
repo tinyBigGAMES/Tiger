@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -4647,7 +4647,7 @@ begin
     else
       LImportName := TTigerABIMangler.MangleFunctionWithLinkage(
         FImports[LI].FuncName, FImports[LI].ParamTypes, FImports[LI].Linkage);
-    FImportHandles[LI] := ABackend.GetImports().Add(FImports[LI].DllName, LImportName, FImports[LI].ReturnType, FImports[LI].IsStatic);
+    FImportHandles[LI] := ABackend.GetImports().Add(FImports[LI].DllName, LImportName, FImports[LI].ReturnType, FImports[LI].IsStatic, FImports[LI].IsVarArgs);
   end;
 
   //----------------------------------------------------------------------------

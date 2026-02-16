@@ -81,6 +81,8 @@ type
     function Add(const ADllName, AFuncName: string; const AReturnType: TTigerValueType): TTigerImportHandle; overload;
     function Add(const ADllName, AFuncName: string; const AReturnType: TTigerValueType;
       const AIsStatic: Boolean): TTigerImportHandle; overload;
+    function Add(const ADllName, AFuncName: string; const AReturnType: TTigerValueType;
+      const AIsStatic: Boolean; const AIsVariadic: Boolean): TTigerImportHandle; overload;
 
     procedure Clear();
     function GetEntry(const AHandle: TTigerImportHandle): TTigerImportEntry;
@@ -629,6 +631,13 @@ end;
 
 function TTigerImportBuilder.Add(const ADllName, AFuncName: string;
   const AReturnType: TTigerValueType; const AIsStatic: Boolean): TTigerImportHandle;
+begin
+  Result := Add(ADllName, AFuncName, AReturnType, AIsStatic, False);
+end;
+
+function TTigerImportBuilder.Add(const ADllName, AFuncName: string;
+  const AReturnType: TTigerValueType; const AIsStatic: Boolean;
+  const AIsVariadic: Boolean): TTigerImportHandle;
 var
   LEntry: TTigerImportEntry;
 begin
@@ -637,6 +646,7 @@ begin
   LEntry.IATOffset := 0;
   LEntry.ReturnType := AReturnType;
   LEntry.IsStatic := AIsStatic;
+  LEntry.IsVariadic := AIsVariadic;
 
   Result.Index := FEntries.Count;
   FEntries.Add(LEntry);
@@ -657,6 +667,8 @@ begin
     Result.FuncName := '';
     Result.IATOffset := 0;
     Result.ReturnType := vtVoid;
+    Result.IsStatic := False;
+    Result.IsVariadic := False;
   end;
 end;
 

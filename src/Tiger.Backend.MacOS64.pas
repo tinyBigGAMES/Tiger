@@ -167,6 +167,7 @@ var
   LImportFixups: TList<TPair<Cardinal, Integer>>;
   LDataFixups: TList<TPair<Cardinal, Integer>>;
   LGlobalFixups: TList<TPair<Cardinal, Integer>>;
+  LDataPageFixups: TList<Cardinal>;  // One ADRP per function that uses globals; targets __data base
   LLabelOffsets: TDictionary<Integer, Cardinal>;
   LJumpFixups: TList<TPair<Cardinal, Integer>>;
   LCondJumpFixups: TList<TPair<Cardinal, Integer>>;
@@ -181,7 +182,7 @@ var
   LGotVAddr, LSlotAddr: UInt64;
   LOfs12: Cardinal;
   LFrameSize, LLocalsSize, LMaxCallArgs, LOutgoingArgSpace: Cardinal;
-  LStackFrameSize: Cardinal;
+  LStackFrameSize, LVariadicSize: Cardinal;
   LStaticImportIndices: TList<Integer>;
   LStaticSymbolNames: TStringList;
   LStaticLibPaths: TStringList;
@@ -371,34 +372,39 @@ var
     LTextStream.WriteBuffer(AValue, 8);
   end;
 
+  // We spill up to 8 incoming integer/pointer args (x0-x7) into a fixed area.
+  // macOS arm64 has no shadow space; using positive FP offsets is unsafe.
+  const
+    PARAM_SPILL_SIZE = 64; // 8 regs * 8 bytes
+
   function GetParamOffset(const AIndex: Integer): Int32;
   begin
-    Result := 16 + AIndex * 8;
+    // Param 0 at [FP-8], param 1 at [FP-16], ...
+    Result := -Int32((AIndex + 1) * 8);
   end;
 
   function GetLocalOffset(const AIndex: Integer): Int32;
   var
     LOffset, LK: Integer;
   begin
-    LOffset := 16;
-    for LK := 0 to High(LFunc.Params) do
-      LOffset := LOffset + 8;
-    for LK := 0 to AIndex - 1 do
+    // Locals live below the param spill area.
+    LOffset := PARAM_SPILL_SIZE;
+    for LK := 0 to AIndex do
       LOffset := LOffset + LFunc.Locals[LK].LocalSize;
-    Result := -LOffset;
+    Result := -Int32(LOffset);
   end;
 
   function GetTempOffset(const ATempIndex: Integer): Int32;
   var
     LOffset, LK: Integer;
   begin
-    LOffset := 16;
-    for LK := 0 to High(LFunc.Params) do
-      LOffset := LOffset + 8;
+    // Temps live below the locals area.
+    LOffset := PARAM_SPILL_SIZE;
     for LK := 0 to High(LFunc.Locals) do
       LOffset := LOffset + LFunc.Locals[LK].LocalSize;
-    LOffset := LOffset + ATempIndex * 8;
-    Result := -LOffset;
+    // Temp 0 at [FP-(PARAM_SPILL_SIZE + locals + 8)], etc.
+    LOffset := LOffset + (ATempIndex + 1) * 8;
+    Result := -Int32(LOffset);
   end;
 
   procedure EmitARM64(const AInsn: Cardinal);
@@ -604,9 +610,19 @@ var
         end;
       okGlobal:
         begin
-          LGlobalFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), (AOp.DataHandle.Index shl 8) or AReg));
-          EmitAdrp(AReg, 0);
-          EmitARM64($91000000 or (0 shl 10) or (Cardinal(AReg) shl 5) or AReg);
+          // Emit ADRP to __data base (X16) before each load; all target same page, fixed up by LDataPageFixups.
+          // Using one ADRP per load avoids preserving X16 across intervening instructions (ikAdd etc. clobber it).
+          LDataPageFixups.Add(Cardinal(LTextStream.Position));
+          EmitAdrp(REG_X16, 0);
+          LDataHandle.Index := AOp.DataHandle.Index;
+          LByteOffset := LGlobals.GetEntry(LDataHandle).Offset;
+          if LByteOffset <= 4095 then
+            EmitARM64($91000000 or (Cardinal(LByteOffset) shl 10) or (REG_X16 shl 5) or AReg)
+          else
+          begin
+            EmitMovRegImm64(REG_X17, LByteOffset);
+            EmitARM64($8B000000 or (REG_X17 shl 16) or (REG_X16 shl 5) or AReg);
+          end;
         end;
     else
       EmitMovRegImm64(AReg, 0);
@@ -647,6 +663,7 @@ begin
   LImportFixups := TList<TPair<Cardinal, Integer>>.Create();
   LDataFixups := TList<TPair<Cardinal, Integer>>.Create();
   LGlobalFixups := TList<TPair<Cardinal, Integer>>.Create();
+  LDataPageFixups := TList<Cardinal>.Create();
   LJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LCondJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LLabelOffsets := TDictionary<Integer, Cardinal>.Create();
@@ -732,7 +749,8 @@ begin
         LOutgoingArgSpace := LMaxCallArgs * 8
       else
         LOutgoingArgSpace := 64;
-      LStackFrameSize := 16 + Cardinal(Length(LFunc.Params)) * 8 + LLocalsSize + Cardinal(LFunc.TempCount) * 8 + LOutgoingArgSpace;
+      // Fixed param spill area (x0-x7) + locals + temps + outgoing arg space.
+      LStackFrameSize := PARAM_SPILL_SIZE + LLocalsSize + Cardinal(LFunc.TempCount) * 8 + LOutgoingArgSpace;
       if (LStackFrameSize mod 16) <> 0 then
         LStackFrameSize := (LStackFrameSize + 15) and (not 15);
 
@@ -750,8 +768,25 @@ begin
         case LInstr.Kind of
           ikCallImport:
             begin
-              for LK := 0 to Min(Length(LInstr.Args) - 1, 7) do
-                LoadOperandToReg(LInstr.Args[LK], LK);
+              LEntry := LImports.GetEntryByIndex(LInstr.ImportTarget.Index);
+              if LEntry.IsVariadic and (Length(LInstr.Args) > 1) then
+              begin
+                // Darwin ARM64: variadic args go on stack at [SP], [SP+8], ...
+                // Allocate dedicated 16-byte-aligned slot to avoid overwriting frame
+                LVariadicSize := Cardinal(((Integer(Length(LInstr.Args) - 1) * 8 + 15) and (not 15)));
+                LoadOperandToReg(LInstr.Args[0], REG_X0);
+                EmitSubImm(REG_SP, REG_SP, LVariadicSize);
+                for LK := 1 to Length(LInstr.Args) - 1 do
+                begin
+                  LoadOperandToReg(LInstr.Args[LK], REG_X16);
+                  EmitStrX(REG_X16, REG_SP, Cardinal((LK - 1) * 8));
+                end;
+              end
+              else
+              begin
+                for LK := 0 to Min(Length(LInstr.Args) - 1, 7) do
+                  LoadOperandToReg(LInstr.Args[LK], LK);
+              end;
               if LHasStaticImports and (LStaticImportIndices.IndexOf(LInstr.ImportTarget.Index) >= 0) then
               begin
                 EmitBL(0);
@@ -764,6 +799,8 @@ begin
                 EmitARM64($F9400000 or (0 shl 10) or (REG_X16 shl 5) or REG_X16);
                 EmitBLR(REG_X16);
               end;
+              if LEntry.IsVariadic and (Length(LInstr.Args) > 1) then
+                EmitAddImm(REG_SP, REG_SP, LVariadicSize);
               if LInstr.Dest.IsValid() then
                 StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
@@ -954,7 +991,7 @@ begin
           ikAddressOf:
             begin
               if LInstr.Op1.LocalHandle.IsParam then
-                EmitAddImm(REG_X0, REG_FP, Cardinal(GetParamOffset(LInstr.Op1.LocalHandle.Index)))
+                EmitSubImm(REG_X0, REG_FP, Cardinal(-GetParamOffset(LInstr.Op1.LocalHandle.Index)))
               else
                 EmitSubImm(REG_X0, REG_FP, Cardinal(-GetLocalOffset(LInstr.Op1.LocalHandle.Index)));
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
@@ -1036,12 +1073,9 @@ begin
         if (LCallFixups[LI].Key + 4 <= Cardinal(Length(LTextBytes))) then
         begin
           LInstrIdx := Integer(Int64(LFuncOffsets[LK]) - Int64(LCallFixups[LI].Key));
-          LInstrIdx := LInstrIdx shr 2;
+          LInstrIdx := LInstrIdx div 4;  // Signed division; shr 2 is wrong for negative (logical shift)
           if (LInstrIdx >= -33554432) and (LInstrIdx <= 33554431) then
-          begin
-            LK := Cardinal(LInstrIdx) and $3FFFFFF;
-            PCardinal(@LTextBytes[LCallFixups[LI].Key])^ := $94000000 or LK;
-          end;
+            PCardinal(@LTextBytes[LCallFixups[LI].Key])^ := $94000000 or (Cardinal(LInstrIdx) and $3FFFFFF);
         end;
       end;
     end;
@@ -1053,7 +1087,7 @@ begin
         if (LJumpFixups[LI].Key + 4 <= Cardinal(Length(LTextBytes))) then
         begin
           LInstrIdx := Integer(Int64(LLabelOffset) - Int64(LJumpFixups[LI].Key));
-          LInstrIdx := LInstrIdx shr 2;
+          LInstrIdx := LInstrIdx div 4;  // Signed division for backward branches
           if (LInstrIdx >= -33554432) and (LInstrIdx <= 33554431) then
             PCardinal(@LTextBytes[LJumpFixups[LI].Key])^ := $14000000 or (Cardinal(LInstrIdx) and $3FFFFFF);
         end;
@@ -1067,7 +1101,7 @@ begin
         if (LCondJumpFixups[LI].Key + 4 <= Cardinal(Length(LTextBytes))) then
         begin
           LInstrIdx := Integer(Int64(LLabelOffset) - Int64(LCondJumpFixups[LI].Key));
-          LInstrIdx := LInstrIdx shr 2;
+          LInstrIdx := LInstrIdx div 4;  // Signed division for backward branches
           if (LInstrIdx >= -262144) and (LInstrIdx <= 262143) then
             PCardinal(@LTextBytes[LCondJumpFixups[LI].Key])^ := (PCardinal(@LTextBytes[LCondJumpFixups[LI].Key])^ and $FF00001F) or ((Cardinal(LInstrIdx) and $7FFFF) shl 5);
         end;
@@ -1140,6 +1174,18 @@ begin
           PCardinal(@LTextBytes[LGlobalFixups[LI].Key])^ := $90000000 or LTargetReg or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
           PCardinal(@LTextBytes[LGlobalFixups[LI].Key + 4])^ := $91000000 or (LOfs12 shl 10) or (Cardinal(LTargetReg) shl 5) or LTargetReg;
         end;
+      end;
+    end;
+
+    for LI := 0 to LDataPageFixups.Count - 1 do
+    begin
+      LSlotAddr := LSlide + UInt64(LSegDataFileOff);
+      LPageIndex := (Int64(LSlotAddr) shr 12) - (Int64(LSlide + UInt64(LTextSectionFileOff) + UInt64(LDataPageFixups[LI])) shr 12);
+      if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) and
+         (LDataPageFixups[LI] + 4 <= Cardinal(Length(LTextBytes))) then
+      begin
+        LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
+        PCardinal(@LTextBytes[LDataPageFixups[LI]])^ := $90000000 or REG_X16 or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
       end;
     end;
 
@@ -1567,6 +1613,7 @@ begin
     LLabelOffsets.Free();
     LJumpFixups.Free();
     LGlobalFixups.Free();
+    LDataPageFixups.Free();
     LDataFixups.Free();
     LImportFixups.Free();
     LCallFixups.Free();

@@ -188,6 +188,7 @@ type
     IATOffset: Cardinal;
     ReturnType: TTigerValueType;
     IsStatic: Boolean;
+    IsVariadic: Boolean;   // True for printf etc.; on Darwin ARM64, varargs go on stack
   end;
 
   { TTigerExportEntry }

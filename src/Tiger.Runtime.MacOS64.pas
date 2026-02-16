@@ -56,8 +56,7 @@ begin
   AIR.Func('Tiger_Halt', vtVoid, False, plC, False)
      .Param('AExitCode', vtInt32);
   if AOptLevel = 0 then
-    // printf with single arg (no variadic) works on macOS; write() may have wrong string address
-    AIR.Call('printf', [AIR.Str('[Heap] Allocs: 0, Frees: 0, Leaked: 0' + #10)]);
+    AIR.Call('Tiger_ReportLeaks', []);
   AIR.Call('_exit', [AIR.Get('AExitCode')])
   .EndFunc();
 end;
@@ -123,13 +122,27 @@ begin
      .Return(AIR.Invoke('realloc', [AIR.Get('APtr'), AIR.Get('ANewSize')]))
   .EndFunc();
 
+  // Tiger_AllocMem(ASize: UInt64): Pointer - zero-initialized via calloc (same as Linux)
+  AIR.Func('Tiger_AllocMem', vtPointer, False, plC, False)
+     .Param('ASize', vtUInt64)
+     .Local('LResult', vtPointer);
+
+  AIR.Assign('LResult', AIR.Invoke('calloc', [AIR.Int64(1), AIR.Get('ASize')]));
+
+  if AOptLevel = 0 then
+    AIR.Assign('Tiger_AllocCount', AIR.Add(AIR.Get('Tiger_AllocCount'), AIR.Int64(1)));
+
+  AIR.Return(AIR.Get('LResult'));
+  AIR.EndFunc();
+
+  // Tiger_ReportLeaks: same as Win/Linux - printf with real alloc/free/leak counts.
   if AOptLevel = 0 then
   begin
-    // Tiger_ReportLeaks: heap stats. Note: on macOS, calling this from Tiger_Halt
-    // hangs; we inline the write call in Tiger_Halt instead. Keep definition for
-    // SSA optimizer which may inject calls before main returns.
     AIR.Func('Tiger_ReportLeaks', vtVoid, False, plC, False);
-    AIR.Call('write', [AIR.Int64(1), AIR.Str('[Heap] Allocs: 0, Frees: 0, Leaked: 0' + #10), AIR.Int64(36)]);
+    AIR.Call('printf', [AIR.Str('[Heap] Allocs: %llu, Frees: %llu, Leaked: %lld' + #10),
+                        AIR.Get('Tiger_AllocCount'),
+                        AIR.Get('Tiger_FreeCount'),
+                        AIR.Sub(AIR.Get('Tiger_AllocCount'), AIR.Get('Tiger_FreeCount'))]);
     AIR.Return();
     AIR.EndFunc();
   end;
