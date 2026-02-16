@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -1459,13 +1459,29 @@ begin
         LExportSyms.Sorted := True;
         LExportSyms.Duplicates := dupIgnore;
 
+        // Mach-O/macOS: dyld prepends one underscore when resolving bind symbols (see
+        // Tiger.Runtime.MacOS64 "dyld adds leading underscore when resolving"). So the
+        // EXE's bind stream has "_Z6AddCppii" and dyld looks for "__Z6AddCppii" in the
+        // dylib. We must therefore always prepend '_' to the export symbol name so that
+        // C → "_AddC" and C++ (Itanium _Z...) → "__Z6AddCppii".
         for LI := 0 to LFuncCount - 1 do
         begin
           LFunc := LCode.GetFunc(LI);
           if LFunc.IsPublic then
           begin
-            // Mach-O symbols are underscore-prefixed (e.g. _AddC, __Z6AddCppii)
-            var LSym := '_' + LFunc.ExportName;
+            var LExportSymName: string;
+            if LFunc.Linkage = plC then
+              LExportSymName := LFunc.FuncName
+            else
+            begin
+              var LParamTypes: TArray<TTigerValueType>;
+              SetLength(LParamTypes, Length(LFunc.Params));
+              for LK := 0 to High(LFunc.Params) do
+                LParamTypes[LK] := LFunc.Params[LK].ParamType;
+              LExportSymName := TTigerABIMangler.MangleFunctionWithLinkage(
+                LFunc.FuncName, LParamTypes, LFunc.Linkage);
+            end;
+            var LSym := '_' + LExportSymName;
             // Address in export trie is vm-offset within the image.
             // We always place __text at PAGE_SIZE.
             var LAddr := UInt64(PAGE_SIZE) + UInt64(LFuncOffsets[LI]);
@@ -1478,7 +1494,9 @@ begin
         if LExportSyms.Count > 0 then
         begin
           // Root node: no terminal, N children. Each child label is the full symbol name.
-          // Child nodes are simple terminals with no children.
+          // Child nodes are simple terminals with no children. Offsets in the trie are
+          // relative to the start of the export trie; the first child must start at
+          // exactly the root's byte size or dyld can mis-parse (e.g. "re-export ordinal").
           var LChildNodes: array of TBytes;
           SetLength(LChildNodes, LExportSyms.Count);
           for LI := 0 to LExportSyms.Count - 1 do
@@ -1488,20 +1506,15 @@ begin
             LChildNodes[LI] := MakeTerminalNode(LVal);
           end;
 
-          // Compute root size and child offsets (iterative to account for uleb sizes).
           var LOffsets: array of Cardinal;
           SetLength(LOffsets, LExportSyms.Count);
-
           var LRootSize: Cardinal := 0;
           var LPrevRootSize: Cardinal := 0;
           repeat
             LPrevRootSize := LRootSize;
-            // terminalSize(0) uleb + childCount byte
             LRootSize := Cardinal(UlebLen(0)) + 1;
-            // add each child entry: label cstring + uleb(offset)
             for LI := 0 to LExportSyms.Count - 1 do
             begin
-              // compute provisional offset based on current root size + previous child sizes
               var LOff: Cardinal := LRootSize;
               for LK := 0 to LI - 1 do
                 Inc(LOff, Cardinal(Length(LChildNodes[LK])));
@@ -1511,21 +1524,49 @@ begin
             end;
           until (LRootSize = LPrevRootSize);
 
-          // Emit root
-          WriteUleb(LExportStream, 0);
-          var LChildCount: Byte := Byte(LExportSyms.Count);
-          LExportStream.WriteBuffer(LChildCount, 1);
-          for LI := 0 to LExportSyms.Count - 1 do
-          begin
-            var LLabel: AnsiString := AnsiString(LExportSyms[LI]);
-            if Length(LLabel) > 0 then
-              LExportStream.WriteBuffer(LLabel[1], Length(LLabel));
-            var LNull: Byte := 0;
-            LExportStream.WriteBuffer(LNull, 1);
-            WriteUleb(LExportStream, LOffsets[LI]);
+          // Build root into a temp stream so we use its exact size for the first child offset.
+          var LRootBuf: TMemoryStream;
+          LRootBuf := TMemoryStream.Create();
+          try
+            WriteUleb(LRootBuf, 0);
+            var LChildCount: Byte := Byte(LExportSyms.Count);
+            LRootBuf.WriteBuffer(LChildCount, 1);
+            for LI := 0 to LExportSyms.Count - 1 do
+            begin
+              var LLabel: AnsiString := AnsiString(LExportSyms[LI]);
+              if Length(LLabel) > 0 then
+                LRootBuf.WriteBuffer(LLabel[1], Length(LLabel));
+              var LNull: Byte := 0;
+              LRootBuf.WriteBuffer(LNull, 1);
+              WriteUleb(LRootBuf, LOffsets[LI]);
+            end;
+            var LRootActualSize: Cardinal := Cardinal(LRootBuf.Position);
+            if LRootActualSize <> LOffsets[0] then
+            begin
+              LOffsets[0] := LRootActualSize;
+              for LI := 1 to LExportSyms.Count - 1 do
+                LOffsets[LI] := LOffsets[LI - 1] + Cardinal(Length(LChildNodes[LI - 1]));
+              LRootBuf.Position := 0;
+              LRootBuf.Size := 0;
+              WriteUleb(LRootBuf, 0);
+              LRootBuf.WriteBuffer(LChildCount, 1);
+              for LI := 0 to LExportSyms.Count - 1 do
+              begin
+                var LLabel: AnsiString := AnsiString(LExportSyms[LI]);
+                if Length(LLabel) > 0 then
+                  LRootBuf.WriteBuffer(LLabel[1], Length(LLabel));
+                var LNull: Byte := 0;
+                LRootBuf.WriteBuffer(LNull, 1);
+                WriteUleb(LRootBuf, LOffsets[LI]);
+              end;
+            end;
+            LRootBuf.Position := 0;
+            if LRootBuf.Size > 0 then
+              LExportStream.CopyFrom(LRootBuf, LRootBuf.Size);
+          finally
+            LRootBuf.Free();
           end;
 
-          // Emit child nodes sequentially
           for LI := 0 to High(LChildNodes) do
             if Length(LChildNodes[LI]) > 0 then
               LExportStream.WriteBuffer(LChildNodes[LI][0], Length(LChildNodes[LI]));

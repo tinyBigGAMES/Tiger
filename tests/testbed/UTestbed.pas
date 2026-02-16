@@ -3250,6 +3250,7 @@ begin
         .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
         .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, DllMain' + #10)])
     else
+      // Dylib/so have no DllMain; only Windows DLL has that entry point (and it is not exported).
       LTiger
         .Call('printf', [LTiger.Str(#10 + 'Use "readelf -s libTest_DLLGeneration.so" to verify:' + #10)])
         .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
