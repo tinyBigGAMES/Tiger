@@ -546,8 +546,10 @@ var
       else
       begin
         EmitMovRegImm64(REG_X16, LOff);
-        EmitARM64($8B2063E0 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
-        EmitARM64($F9400000 or (REG_X16 shl 10) or (REG_X16 shl 5) or ARt);
+        // ADD X16, FP, X16
+        EmitARM64($8B000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+        // LDR ARt, [X16, #0]
+        EmitARM64($F9400000 or (REG_X16 shl 5) or ARt);
       end;
     end
     else if ADisp >= -256 then
@@ -555,7 +557,9 @@ var
     else
     begin
       EmitMovRegImm64(REG_X16, Cardinal(-ADisp));
-      EmitARM64($CB2063E0 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+      // SUB X16, FP, X16
+      EmitARM64($CB000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+      // LDR ARt, [X16, #0]
       EmitARM64($F9400000 or (REG_X16 shl 5) or ARt);
     end;
   end;
@@ -572,8 +576,10 @@ var
       else
       begin
         EmitMovRegImm64(REG_X16, LOff);
-        EmitARM64($8B2063E0 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
-        EmitARM64($F9000000 or (ARt shl 10) or (REG_X16 shl 5) or ARt);
+        // ADD X16, FP, X16
+        EmitARM64($8B000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+        // STR ARt, [X16, #0]
+        EmitARM64($F9000000 or (REG_X16 shl 5) or ARt);
       end;
     end
     else if ADisp >= -256 then
@@ -581,8 +587,10 @@ var
     else
     begin
       EmitMovRegImm64(REG_X16, Cardinal(-ADisp));
-      EmitARM64($CB2063E0 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
-      EmitARM64($F9000000 or (ARt shl 10) or (REG_X16 shl 5) or ARt);
+      // SUB X16, FP, X16
+      EmitARM64($CB000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+      // STR ARt, [X16, #0]
+      EmitARM64($F9000000 or (REG_X16 shl 5) or ARt);
     end;
   end;
 
@@ -660,7 +668,8 @@ var
     else
     begin
       EmitMovRegImm64(REG_X16, Cardinal(-GetTempOffset(ATempIndex)));
-      EmitARM64($CB3063E0 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+      // SUB X16, FP, X16
+      EmitARM64($CB000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
       EmitStrX(AReg, REG_X16, 0);
     end;
   end;
@@ -761,6 +770,11 @@ begin
       LFunc := LCode.GetFunc(LFuncIdx);
       LFuncOffsets.Add(LFuncIdx, Cardinal(LTextStream.Position));
 
+      // Reserve a fixed spill area under FP for x0-x7, even if unused.
+      // This must match the offset scheme in GetParamOffset/GetLocalOffset/GetTempOffset
+      // or locals/temps will alias outgoing arg space and/or clobber saved FP/LR.
+      LIncomingSpillSize := Cardinal(SpillBaseSize());
+
       LLocalsSize := 0;
       for LI := 0 to High(LFunc.Locals) do
         LLocalsSize := LLocalsSize + Cardinal(LFunc.Locals[LI].LocalSize);
@@ -793,13 +807,19 @@ begin
           ikCallImport:
             begin
               LEntry := LImports.GetEntryByIndex(LInstr.ImportTarget.Index);
-              if LEntry.IsVariadic and (Length(LInstr.Args) > 1) then
+              if LEntry.IsVariadic and (Length(LInstr.Args) > 0) then
               begin
-                // Darwin ARM64: variadic args go on stack at [SP], [SP+8], ...
-                // Allocate dedicated 16-byte-aligned slot to avoid overwriting frame
-                LVariadicSize := Cardinal(((Integer(Length(LInstr.Args) - 1) * 8 + 15) and (not 15)));
+                // macOS ARM64 (Darwin) variadic calling convention (as emitted by clang):
+                // - Fixed args are passed in registers as usual.
+                // - Variadic args are passed on the stack starting at [SP].
+                //
+                // For printf(const char* fmt, ...):
+                // - fmt goes in x0
+                // - all variadic args go at [SP + 0], [SP + 8], ...
+                //
+                // IMPORTANT: Do NOT adjust SP here. Our stack frame already reserves
+                // outgoing arg space (LOutgoingArgSpace) at the bottom of the frame.
                 LoadOperandToReg(LInstr.Args[0], REG_X0);
-                EmitSubImm(REG_SP, REG_SP, LVariadicSize);
                 for LK := 1 to Length(LInstr.Args) - 1 do
                 begin
                   LoadOperandToReg(LInstr.Args[LK], REG_X16);
@@ -808,8 +828,10 @@ begin
               end
               else
               begin
+                // Non-variadic (or no-arg) call: pass first 8 args in x0-x7.
                 for LK := 0 to Min(Length(LInstr.Args) - 1, 7) do
                   LoadOperandToReg(LInstr.Args[LK], LK);
+                // Overflow args for non-variadic are not currently supported on macOS backend.
               end;
               if LHasStaticImports and (LStaticImportIndices.IndexOf(LInstr.ImportTarget.Index) >= 0) then
               begin
@@ -823,8 +845,6 @@ begin
                 EmitARM64($F9400000 or (0 shl 10) or (REG_X16 shl 5) or REG_X16);
                 EmitBLR(REG_X16);
               end;
-              if LEntry.IsVariadic and (Length(LInstr.Args) > 1) then
-                EmitAddImm(REG_SP, REG_SP, LVariadicSize);
               if LInstr.Dest.IsValid() then
                 StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
@@ -906,21 +926,24 @@ begin
             begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
-              EmitARM64($8A200000 or (REG_X16 shl 16) or (REG_X0 shl 5) or REG_X0);
+              // AND X0, X0, X16
+              EmitARM64($8A000000 or (REG_X16 shl 16) or (REG_X0 shl 5) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
           ikBitOr:
             begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
-              EmitARM64($AA200000 or (REG_X16 shl 16) or (REG_X0 shl 5) or REG_X0);
+              // ORR X0, X0, X16
+              EmitARM64($AA000000 or (REG_X16 shl 16) or (REG_X0 shl 5) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
           ikBitXor:
             begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
-              EmitARM64($CA200000 or (REG_X16 shl 16) or (REG_X0 shl 5) or REG_X0);
+              // EOR X0, X0, X16
+              EmitARM64($CA000000 or (REG_X16 shl 16) or (REG_X0 shl 5) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
           ikBitNot:
