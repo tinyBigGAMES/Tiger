@@ -206,8 +206,9 @@ var
   LBindBytes: TBytes;
   LRebaseBytes: TBytes;
   LExportBytes: TBytes;
+  LSymtabBytes, LStrtabBytes: TBytes;
   LBindOff: Cardinal;
-  LExportOff: Cardinal;
+  LExportOff, LSymtabOff, LStrtabOff: Cardinal;
   LRebaseOff: Cardinal;
   LCodeLimit: Cardinal;
   LSignatureOffset: Cardinal;
@@ -1471,10 +1472,12 @@ begin
       LBindStream.Free();
     end;
 
-    // Build a minimal export trie for dylib outputs so executables can bind to
-    // our exported functions (AddC, mangled C++ exports, etc.).
+    // Build export trie for any image with public functions (dylib or executable),
+    // so executables expose exports (e.g. for nm -gU) and dylibs can be bound to.
+    // Also build LC_SYMTAB (symbol + string table) so nm -gU shows exported symbols.
     LExportBytes := nil;
-    if AIsDylib then
+    LSymtabBytes := nil;
+    LStrtabBytes := nil;
     begin
       var LExportSyms: TStringList;
       var LExportAddrs: TDictionary<string, UInt64>;
@@ -1606,6 +1609,65 @@ begin
             LExportStream.Position := 0;
             LExportStream.ReadBuffer(LExportBytes[0], LExportStream.Size);
           end;
+
+          // Build LC_SYMTAB (symbol table + string table) so nm -gU shows exports.
+          // nlist_64: n_strx (4), n_type (1), n_sect (1), n_desc (2), n_value (8) = 16 bytes.
+          // n_type = N_EXT ($01) or N_SECT ($0e) = $0f
+          var LStrtab: TMemoryStream;
+          var LSymtab: TMemoryStream;
+          var LStrOff: Cardinal;
+          var LNlist: array [0..15] of Byte;
+          LStrtab := TMemoryStream.Create();
+          LSymtab := TMemoryStream.Create();
+          try
+            LByteVal := 0;
+            LStrtab.WriteBuffer(LByteVal, 1);  // first byte 0 (empty string)
+            LStrOff := 1;
+            for LI := 0 to LExportSyms.Count - 1 do
+            begin
+              var LName: AnsiString := AnsiString(LExportSyms[LI]);
+              if not LExportAddrs.TryGetValue(LExportSyms[LI], LVal) then
+                LVal := 0;
+              // nlist_64: n_strx (offset into string table)
+              LNlist[0] := Byte(LStrOff);
+              LNlist[1] := Byte(LStrOff shr 8);
+              LNlist[2] := Byte(LStrOff shr 16);
+              LNlist[3] := Byte(LStrOff shr 24);
+              LNlist[4] := $0f;   // n_type = N_EXT | N_SECT
+              LNlist[5] := 1;    // n_sect = 1 (__text)
+              LNlist[6] := 0;    // n_desc
+              LNlist[7] := 0;
+              LNlist[8] := Byte(LVal);
+              LNlist[9] := Byte(LVal shr 8);
+              LNlist[10] := Byte(LVal shr 16);
+              LNlist[11] := Byte(LVal shr 24);
+              LNlist[12] := Byte(LVal shr 40);
+              LNlist[13] := Byte(LVal shr 48);
+              LNlist[14] := Byte(LVal shr 56);
+              LNlist[15] := Byte(LVal shr 56);  // n_value is 64-bit LE; top byte
+              LSymtab.WriteBuffer(LNlist[0], 16);
+              if Length(LName) > 0 then
+                LStrtab.WriteBuffer(LName[1], Length(LName));
+              LByteVal := 0;
+              LStrtab.WriteBuffer(LByteVal, 1);
+              Inc(LStrOff, Cardinal(Length(LName)) + 1);
+            end;
+            SetLength(LSymtabBytes, LSymtab.Size);
+            if LSymtab.Size > 0 then
+            begin
+              LSymtab.Position := 0;
+              LSymtab.ReadBuffer(LSymtabBytes[0], LSymtab.Size);
+            end;
+            SetLength(LStrtabBytes, LStrtab.Size);
+            if LStrtab.Size > 0 then
+            begin
+              LStrtab.Position := 0;
+              LStrtab.ReadBuffer(LStrtabBytes[0], LStrtab.Size);
+            end;
+          finally
+            LStrtab.Free();
+            LSymtab.Free();
+          end;
         end;
       finally
         LExportStream.Free();
@@ -1645,7 +1707,8 @@ begin
       LLoadCmdSize := 608 + LDylibCmdSize + 16 {LC_VERSION_MIN_MACOSX} + 24 {LC_UUID} +
                       (IfThen(AIsDylib, 0, 32)) {LC_LOAD_DYLINKER for exec only} +
                       LDylibCmdSizeTotal {LC_LOAD_DYLIB*} +
-                      48 {LC_DYLD_INFO_ONLY} + 16 {LC_CODE_SIGNATURE};
+                      48 {LC_DYLD_INFO_ONLY} + 16 {LC_CODE_SIGNATURE} +
+                      (IfThen(Length(LSymtabBytes) > 0, 24, 0)) {LC_SYMTAB};
       // Map Mach header inside __TEXT (canonical layout): __TEXT.fileoff = 0
       LSegTextFileOff := 0;
       // Place code at a page boundary after header/loadcmds.
@@ -1688,14 +1751,19 @@ begin
       end;
       LBindOff := LRebaseOff + Cardinal(Length(LRebaseBytes));
       LSegLinkEditFileOff := LRebaseOff;
-      // Place export trie (dylib only) immediately after bind opcodes.
+      // Place export trie (when present) immediately after bind opcodes, then symtab and strtab.
       LExportOff := LBindOff + Cardinal(Length(LBindBytes));
-      if (AIsDylib) and (Length(LExportBytes) > 0) then
-        LCodeLimit := LExportOff + Cardinal(Length(LExportBytes))
+      if Length(LExportBytes) > 0 then
+      begin
+        LSymtabOff := LExportOff + Cardinal(Length(LExportBytes));
+        LStrtabOff := LSymtabOff + Cardinal(Length(LSymtabBytes));
+        LCodeLimit := LStrtabOff + Cardinal(Length(LStrtabBytes));
+      end
       else
       begin
         LExportOff := 0;
-        LCodeLimit := LExportOff; // keep compiler quiet
+        LSymtabOff := 0;
+        LStrtabOff := 0;
         LCodeLimit := LBindOff + Cardinal(Length(LBindBytes));
       end;
       LSignatureOffset := AlignUp32(LCodeLimit, CODE_SIGNATURE_ALIGN);
@@ -1703,7 +1771,7 @@ begin
       LNumPages := (LSignatureOffset + PAGE_SIZE - 1) div PAGE_SIZE;
       LSignatureSize := CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + CODE_SIGNATURE_IDENTIFIER_SIZE + LNumPages * 32;
       LSegLinkEditFileSize := Cardinal(Length(LRebaseBytes)) + Cardinal(Length(LBindBytes)) +
-                              Cardinal(Length(LExportBytes)) + LPadding + LSignatureSize;
+                              Cardinal(Length(LExportBytes)) + Cardinal(Length(LSymtabBytes)) + Cardinal(Length(LStrtabBytes)) + LPadding + LSignatureSize;
       LSlide := SEG_TEXT_VADDR - UInt64(LSegTextFileOff);
 
       LCardVal := MH_MAGIC_64;
@@ -1719,11 +1787,11 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       // ncmds must match emitted load commands (see LLoadCmdSize comment).
       // 4 segments + (LC_MAIN or LC_ID_DYLIB) + LC_VERSION_MIN + LC_UUID +
-      // (LC_LOAD_DYLINKER for exec) + N*LC_LOAD_DYLIB + LC_DYLD_INFO + LC_CODE_SIGNATURE
+      // (LC_LOAD_DYLINKER for exec) + N*LC_LOAD_DYLIB + LC_DYLD_INFO + [LC_SYMTAB] + LC_CODE_SIGNATURE
       if AIsDylib then
-        LCmdCount := 9 + Cardinal(LDylibNames.Count)
+        LCmdCount := 9 + Cardinal(LDylibNames.Count) + (IfThen(Length(LSymtabBytes) > 0, 1, 0))
       else
-        LCmdCount := 10 + Cardinal(LDylibNames.Count);
+        LCmdCount := 10 + Cardinal(LDylibNames.Count) + (IfThen(Length(LSymtabBytes) > 0, 1, 0));
       LCardVal := LCmdCount;
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LLoadCmdSize, 4);
@@ -1979,7 +2047,7 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LOutStream.WriteBuffer(LCardVal, 4);
       // export_off/size
-      if AIsDylib and (Length(LExportBytes) > 0) then
+      if Length(LExportBytes) > 0 then
       begin
         LOutStream.WriteBuffer(LExportOff, 4);
         LCardVal := Length(LExportBytes);
@@ -1988,6 +2056,20 @@ begin
       else
       begin
         LOutStream.WriteBuffer(LCardVal, 4);
+        LOutStream.WriteBuffer(LCardVal, 4);
+      end;
+
+      if Length(LSymtabBytes) > 0 then
+      begin
+        LCardVal := LC_SYMTAB;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 24;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LOutStream.WriteBuffer(LSymtabOff, 4);
+        LCardVal := Length(LSymtabBytes) div 16;
+        LOutStream.WriteBuffer(LCardVal, 4);
+        LOutStream.WriteBuffer(LStrtabOff, 4);
+        LCardVal := Length(LStrtabBytes);
         LOutStream.WriteBuffer(LCardVal, 4);
       end;
 
@@ -2033,9 +2115,19 @@ begin
           LOutStream.WriteBuffer(LByteVal, 1);
         LOutStream.WriteBuffer(LExportBytes[0], Length(LExportBytes));
       end;
-      for LI := 0 to LPadding - 1 do
+      if Length(LSymtabBytes) > 0 then
+      begin
+        while Cardinal(LOutStream.Position) < LSymtabOff do
+          LOutStream.WriteBuffer(LByteVal, 1);
+        LOutStream.WriteBuffer(LSymtabBytes[0], Length(LSymtabBytes));
+        while Cardinal(LOutStream.Position) < LStrtabOff do
+          LOutStream.WriteBuffer(LByteVal, 1);
+        LOutStream.WriteBuffer(LStrtabBytes[0], Length(LStrtabBytes));
+      end;
+      // Avoid "0 to LPadding-1" when LPadding=0: Cardinal underflow makes bound 4294967295 and Inc(LI) overflows
+      for LI := 1 to LPadding do
         LOutStream.WriteBuffer(LByteVal, 1);
-      for LI := 0 to LSignatureSize - 1 do
+      for LI := 1 to LSignatureSize do
         LOutStream.WriteBuffer(LByteVal, 1);
 
       SetLength(Result, LOutStream.Size);
