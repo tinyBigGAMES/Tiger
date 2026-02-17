@@ -52,11 +52,14 @@ begin
   // Use _exit() instead of exit(): _exit() terminates immediately without running
   // atexit handlers. exit() can hang when libSystem's atexit handlers block.
   AIR.Import(LIB_SYSTEM, '_exit', [vtInt32], vtVoid, False);
+  // Flush stdio before _exit so Tiger_ReportLeaks (and any printf) is visible.
+  AIR.Import(LIB_SYSTEM, 'fflush', [vtPointer], vtInt32, False);
 
   AIR.Func('Tiger_Halt', vtVoid, False, plC, False)
      .Param('AExitCode', vtInt32);
   if AOptLevel = 0 then
     AIR.Call('Tiger_ReportLeaks', []);
+  AIR.Call('fflush', [AIR.Null()]);
   AIR.Call('_exit', [AIR.Get('AExitCode')])
   .EndFunc();
 end;
