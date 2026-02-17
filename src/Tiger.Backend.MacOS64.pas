@@ -1,4 +1,4 @@
-{===============================================================================
+﻿{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -265,6 +265,7 @@ var
   LLabelOffsets: TDictionary<Integer, Cardinal>;
   LJumpFixups: TList<TPair<Cardinal, Integer>>;
   LCondJumpFixups: TList<TPair<Cardinal, Integer>>;
+  LForwardJumpFixups: TList<TPair<Cardinal, Cardinal>>;  // (jump_offset, target_offset) for forward jumps
   LOutStream: TMemoryStream;
   LHeaderSize, LLoadCmdSize: Cardinal;
   LSegTextFileOff, LSegTextFileSize, LSegDataFileOff, LSegDataFileSize, LSegDataSegmentFileSize: Cardinal;
@@ -1183,6 +1184,7 @@ begin
   LFuncAddrFixups := TList<TPair<Cardinal, Integer>>.Create();
   LJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LCondJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
+  LForwardJumpFixups := TList<TPair<Cardinal, Cardinal>>.Create();  // (jump_offset, target_offset) for forward jumps
   LLabelOffsets := TDictionary<Integer, Cardinal>.Create();
   LTryBeginLabels := TDictionary<Integer, Integer>.Create();
   LExceptLabels := TDictionary<Integer, Integer>.Create();
@@ -1381,8 +1383,27 @@ begin
       if LStackFrameSize > 0 then
         EmitSubImm(REG_SP, REG_SP, LStackFrameSize);
 
-      for LI := 0 to Min(Length(LFunc.Params) - 1, 7) do
-        EmitStrFp(GetParamOffset(LI), LI);
+      if LFunc.IsVariadic then
+      begin
+        // For variadic functions: x0 = hidden count, x1-x7 = declared params or varargs
+        // Save ALL 8 registers so VaArgAt can access varargs uniformly
+        // Layout: [FP-8] = hidden count (x0), [FP-16] = x1, [FP-24] = x2, ..., [FP-72] = x7
+        EmitStrFp(-8, REG_X0);   // Hidden count at [FP-8]
+        EmitStrFp(-16, REG_X1);  // Position 1 (param 0 or vararg 0)
+        EmitStrFp(-24, REG_X2);  // Position 2 (param 1 or vararg 1)
+        EmitStrFp(-32, REG_X3);  // Position 3 (param 2 or vararg 2)
+        EmitStrFp(-40, REG_X4);  // Position 4 (param 3 or vararg 3)
+        EmitStrFp(-48, REG_X5);  // Position 5 (param 4 or vararg 4)
+        EmitStrFp(-56, REG_X6);  // Position 6 (param 5 or vararg 5)
+        EmitStrFp(-64, REG_X7);  // Position 7 (param 6 or vararg 6)
+        // Note: Position 8+ come from caller's stack, no register save needed
+      end
+      else
+      begin
+        // Non-variadic: save declared params only
+        for LI := 0 to Min(Length(LFunc.Params) - 1, 7) do
+          EmitStrFp(GetParamOffset(LI), LI);
+      end;
 
       if (not SEH_EMIT_DISABLED) and LFunc.IsEntryPoint and LHasSEH and (LInitExceptionsIdx >= 0) then
       begin
@@ -1747,6 +1768,86 @@ begin
             end;
           ikNop:
             ;
+          ikSyscall:
+            raise Exception.Create('Syscall instruction is not supported on macOS ARM64 (use libSystem instead)');
+          ikVaCount:
+            begin
+              // Load hidden vararg count from [FP-8] (always at fixed position for variadic functions)
+              if not LFunc.IsVariadic then
+                raise Exception.Create('VaCount can only be used in variadic functions');
+              EmitLdrFp(REG_X0, -8);
+              StoreTempFromReg(LInstr.Dest.Index, REG_X0);
+            end;
+          ikVaArgAt:
+            begin
+              // Load vararg at index from stack
+              // Layout: [FP-8] = hidden count
+              //         [FP-16] = position 1 (param 0 or vararg 0)
+              //         [FP-24] = position 2 (param 1 or vararg 1)
+              //         ...
+              //         [FP-72] = position 7 (param 6 or vararg 6)
+              //         Position 8+ come from caller's stack at [FP+16+(pos-8)*8]
+              //
+              // Calculate actual position = NumParams + 1 + index
+              // If position < 8: use [FP - (8 + position * 8)]
+              // If position >= 8: use [FP + 16 + (position - 8) * 8]
+              
+              if not LFunc.IsVariadic then
+                raise Exception.Create('VaArgAt can only be used in variadic functions');
+              
+              // Load index into X0
+              LoadOperandToReg(LInstr.Op1, REG_X0);
+              
+              // Add (NumParams + 1) to get actual position
+              // NumParams = Length(LFunc.Params) (declared params, not counting hidden count)
+              EmitAddImm(REG_X0, REG_X0, Cardinal(Length(LFunc.Params) + 1));
+              
+              // Now X0 = actual position
+              // Compare with 8 to determine which stack region
+              EmitMovRegImm64(REG_X16, 8);
+              EmitARM64($EB00001F or (REG_X16 shl 16) or (REG_X0 shl 5));  // CMP X0, X16
+              
+              // Save position in X17 for later use
+              EmitARM64($AA0003F1 or (REG_X0 shl 5) or REG_X17);  // MOV X17, X0
+              
+              // Calculate offset for register path: -(8 + pos * 8)
+              // X0 = position, compute offset in X16
+              EmitARM64($D37EF400 or (REG_X0 shl 5) or REG_X16);  // LSL X16, X0, #3 (pos * 8)
+              EmitAddImm(REG_X16, REG_X16, 8);                     // X16 = 8 + pos * 8
+              
+              // B.GE to stack args path (branch if position >= 8)
+              // B.cond encoding: [31:24]=0x54, [23:20]=cond (GE=0x0A), [19:5]=imm19, [4:0]=0x1E
+              var LBranchOffset := Cardinal(LTextStream.Position);
+              EmitARM64($540A001E);  // B.GE (placeholder offset=0, will be patched)
+              
+              // === Register arg path: [FP - (8 + pos * 8)] ===
+              // X16 has (8 + pos * 8), compute [FP - X16] and load
+              EmitARM64($CB1003F0 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);  // SUB X16, FP, X16
+              EmitLdrX(REG_X0, REG_X16, 0);                      // LDR X0, [X16]
+              
+              // Jump over stack path
+              var LSkipOffset := Cardinal(LTextStream.Position);
+              EmitARM64($14000000);  // B (placeholder, will be patched)
+              
+              // === Stack arg path: [FP + 16 + (pos - 8) * 8] ===
+              // Position 8 → [FP+16], Position 9 → [FP+24], etc.
+              // Restore position from X17
+              var LStackPathStart := Cardinal(LTextStream.Position);
+              EmitARM64($AA1103E0 or (REG_X17 shl 5) or REG_X0);  // MOV X0, X17
+              EmitARM64($D37EF400 or (REG_X0 shl 5) or REG_X0);    // LSL X0, X0, #3 (pos * 8)
+              EmitSubImm(REG_X0, REG_X0, 64);                      // X0 = pos * 8 - 64 (pos*8 - 8*8)
+              EmitAddImm(REG_X0, REG_FP, 16);                      // X0 = FP + 16 + (pos*8 - 64)
+              EmitLdrX(REG_X0, REG_X0, 0);                        // LDR X0, [X0]
+              
+              // Track forward jumps for patching after LTextBytes is created
+              var LRegisterPathSize := LStackPathStart - LBranchOffset - 4;  // Size of register path in bytes
+              var LStackPathSize := Cardinal(LTextStream.Position) - LStackPathStart;  // Size of stack path in bytes
+              LForwardJumpFixups.Add(TPair<Cardinal, Cardinal>.Create(LBranchOffset, LStackPathStart));
+              LForwardJumpFixups.Add(TPair<Cardinal, Cardinal>.Create(LSkipOffset, Cardinal(LTextStream.Position)));
+              
+              // Store result
+              StoreTempFromReg(LInstr.Dest.Index, REG_X0);
+            end;
         else
           ;
         end;
@@ -1826,14 +1927,39 @@ begin
 
     for LI := 0 to LCondJumpFixups.Count - 1 do
     begin
-      if LLabelOffsets.TryGetValue(LCondJumpFixups[LI].Value, LLabelOffset) then
+      if LCondJumpFixups[LI].Value >= 0 then  // Valid label index
       begin
-        if (LCondJumpFixups[LI].Key + 4 <= Cardinal(Length(LTextBytes))) then
+        if LLabelOffsets.TryGetValue(LCondJumpFixups[LI].Value, LLabelOffset) then
         begin
-          LInstrIdx := Integer(Int64(LLabelOffset) - Int64(LCondJumpFixups[LI].Key));
-          LInstrIdx := LInstrIdx div 4;  // Signed division for backward branches
-          if (LInstrIdx >= -262144) and (LInstrIdx <= 262143) then
-            PCardinal(@LTextBytes[LCondJumpFixups[LI].Key])^ := (PCardinal(@LTextBytes[LCondJumpFixups[LI].Key])^ and $FF00001F) or ((Cardinal(LInstrIdx) and $7FFFF) shl 5);
+          if (LCondJumpFixups[LI].Key + 4 <= Cardinal(Length(LTextBytes))) then
+          begin
+            LInstrIdx := Integer(Int64(LLabelOffset) - Int64(LCondJumpFixups[LI].Key));
+            LInstrIdx := LInstrIdx div 4;  // Signed division for backward branches
+            if (LInstrIdx >= -262144) and (LInstrIdx <= 262143) then
+              PCardinal(@LTextBytes[LCondJumpFixups[LI].Key])^ := (PCardinal(@LTextBytes[LCondJumpFixups[LI].Key])^ and $FF00001F) or ((Cardinal(LInstrIdx) and $7FFFF) shl 5);
+          end;
+        end;
+      end;
+    end;
+
+    // Patch forward jumps (for ikVaArgAt)
+    for LI := 0 to LForwardJumpFixups.Count - 1 do
+    begin
+      if (LForwardJumpFixups[LI].Key + 4 <= Cardinal(Length(LTextBytes))) and
+         (LForwardJumpFixups[LI].Value <= Cardinal(Length(LTextBytes))) then
+      begin
+        LInstrIdx := Integer(Int64(LForwardJumpFixups[LI].Value) - Int64(LForwardJumpFixups[LI].Key));
+        LInstrIdx := LInstrIdx div 4;  // Convert to instruction offset
+        if (LInstrIdx >= -262144) and (LInstrIdx <= 262143) then
+        begin
+          // Check if it's a conditional branch (B.GE) or unconditional (B)
+          var LIn := PCardinal(@LTextBytes[LForwardJumpFixups[LI].Key])^;
+          if (LIn and $FF000000) = $54000000 then
+            // Conditional branch: preserve condition and opcode bits [31:20] and [4:0], update offset [19:5]
+            PCardinal(@LTextBytes[LForwardJumpFixups[LI].Key])^ := (LIn and $FFF0001F) or ((Cardinal(LInstrIdx) and $7FFFF) shl 5)
+          else if (LIn and $FC000000) = $14000000 then
+            // Unconditional branch: update offset
+            PCardinal(@LTextBytes[LForwardJumpFixups[LI].Key])^ := $14000000 or (Cardinal(LInstrIdx) and $3FFFFFF);
         end;
       end;
     end;
@@ -2978,6 +3104,7 @@ begin
     LStaticImportIndices.Free();
     LDylibOrdinals.Free();
     LDylibNames.Free();
+    LForwardJumpFixups.Free();
     LCondJumpFixups.Free();
     LLabelOffsets.Free();
     LEndLabels.Free();
