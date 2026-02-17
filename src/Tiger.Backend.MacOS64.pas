@@ -798,8 +798,12 @@ var
 
   function GetParamOffset(const AIndex: Integer): Int32;
   begin
-    // Param 0 at [FP-8], param 1 at [FP-16], ...
-    Result := -Int32((AIndex + 1) * 8);
+    // Non-variadic: param 0 at [FP-8], param 1 at [FP-16], ...
+    // Variadic: [FP-8] = hidden count, param 0 at [FP-16], param 1 at [FP-24], ...
+    if LFunc.IsVariadic then
+      Result := -Int32((AIndex + 2) * 8)
+    else
+      Result := -Int32((AIndex + 1) * 8);
   end;
 
   function GetLocalOffset(const AIndex: Integer): Int32;
@@ -1870,9 +1874,10 @@ begin
               var LStackPathStart := Cardinal(LTextStream.Position);
               EmitARM64($AA1103E0 or (REG_X17 shl 5) or REG_X0);  // MOV X0, X17
               EmitARM64($D37EF400 or (REG_X0 shl 5) or REG_X0);    // LSL X0, X0, #3 (pos * 8)
-              EmitSubImm(REG_X0, REG_X0, 64);                      // X0 = pos * 8 - 64 (pos*8 - 8*8)
-              EmitAddImm(REG_X0, REG_FP, 16);                      // X0 = FP + 16 + (pos*8 - 64)
-              EmitLdrX(REG_X0, REG_X0, 0);                        // LDR X0, [X0]
+              EmitSubImm(REG_X0, REG_X0, 64);                      // X0 = (pos-8)*8
+              EmitAddImm(REG_X16, REG_FP, 16);                     // X16 = FP + 16 (base)
+              EmitARM64($8B000000 or (REG_X0 shl 16) or (REG_X16 shl 5) or REG_X16);  // ADD X16, X16, X0 → address
+              EmitLdrX(REG_X0, REG_X16, 0);                        // LDR X0, [X16]
               
               // Track forward jumps for patching after LTextBytes is created
               var LRegisterPathSize := LStackPathStart - LBranchOffset - 4;  // Size of register path in bytes
