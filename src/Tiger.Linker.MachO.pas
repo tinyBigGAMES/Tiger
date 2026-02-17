@@ -347,7 +347,8 @@ begin
           LSectSize := ReadU64(AData, LOff);
           LSectOffset := ReadU32(AData, LOff);
           LSectAlign := 1 shl ReadU32(AData, LOff);
-          Inc(LOff, 8);
+          // Skip reloff (4) + nreloc (4) + flags (4) + reserved1 (4) + reserved2 (4) + reserved3 (4)
+          // = 24 bytes total (section_64 is 80 bytes).
           Inc(LOff, 24);
 
           LSec.SectionName := LSectName;
@@ -683,7 +684,12 @@ end;
 procedure TTigerMachOLinker.CollectRelocations();
 begin
   FPendingRelocs.Clear();
-  FUnresolvedSymbols.Clear();
+  // IMPORTANT:
+  // Do not clear FUnresolvedSymbols here.
+  // Resolve() populates FUnresolvedSymbols with any missing symbols so callers
+  // (e.g. the macOS backend) can fail the build instead of emitting broken
+  // call stubs (e.g. `bl 0` / `bl .` infinite loops) when static symbols
+  // cannot be resolved.
 end;
 
 procedure TTigerMachOLinker.AddObjectFile(const APath: string);

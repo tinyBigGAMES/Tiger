@@ -37,7 +37,7 @@ type
   { TTigerMacOS64Backend }
   TTigerMacOS64Backend = class(TTigerBackend)
   private
-    function GenerateMachO(const AIsDylib: Boolean): TBytes;
+    function GenerateMachO(const AFileType: Cardinal; const AIsDylib: Boolean): TBytes;
     procedure EnsureOutputDir();
   protected
     procedure PreBuild(); override;
@@ -62,6 +62,7 @@ const
   MH_MAGIC_64    = $FEEDFACF;
   CPU_TYPE_ARM64 = $0100000C;
   CPU_SUBTYPE_ARM64_ALL = 0;
+  MH_OBJECT      = 1;
   MH_EXECUTE     = 2;
   MH_DYLIB       = 6;
   MH_NOUNDEFS    = $00000001;
@@ -83,12 +84,18 @@ const
   // Code signature blob (linker-signed ad-hoc)
   CSMAGIC_EMBEDDED_SIGNATURE = $FADE0CC0;
   CSMAGIC_CODEDIRECTORY = $FADE0C02;
+  CSMAGIC_REQUIREMENTS = $FADE0C01;
+  CSMAGIC_BLOBWRAPPER = $FADE0B01;
   CSSLOT_CODEDIRECTORY = 0;
+  CSSLOT_REQUIREMENTS = 2;
+  CSSLOT_ALTERNATE_CODEDIRECTORY = $1000;
+  CSSLOT_CMS_SIGNATURE = $10000;
   CS_CD_FLAG_ADHOC = $2;
   CS_CD_FLAG_LINKER_SIGNED = $20000;
+  CS_HASHTYPE_SHA1 = 1;
   CS_HASHTYPE_SHA256 = 2;
   CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE = 88;  // version 0x20400 layout (incl. scatter/team/codeLimit64/execSeg)
-  CODE_SIGNATURE_IDENTIFIER_SIZE = 1;   // minimal identifier (null byte) required by codesign
+  CODE_SIGNATURE_IDENTIFIER_MIN_SIZE = 1;   // minimal identifier (null byte) required by codesign
   CS_EXECSEG_MAIN_BINARY = $1;
   CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE = 20;
   CODE_SIGNATURE_ALIGN = 16;  // dataoff must be 16-byte aligned for codesign to accept
@@ -111,6 +118,15 @@ const
   SEGMENT_PAGE_SIZE = 16384;  // ARM64 macOS uses 16KB pages; segment fileoff/vmsize must be 16K aligned
   SEG_TEXT_VADDR = $0000000100000000;  // Canonical arm64 executable __TEXT base
   SEG_DATA_VADDR = $0000000100001000;  // Keep same vmaddr-fileoff slide across segments
+
+function Sha1FromUTF8String(const Str : string) : string;
+var
+  LSHA1 : THashSHA1;
+begin
+  LSHA1 := THashSHA1.Create;
+  LSHA1.Update(TEncoding.UTF8.GetBytes(Str));
+  Result := LSHA1.HashAsString;
+end;
 
 procedure TTigerMacOS64Backend.EnsureOutputDir();
 begin
@@ -135,14 +151,82 @@ begin
 end;
 
 function TTigerMacOS64Backend.BuildToMemory(): TBytes;
+  function MakeArHeaderField(const AValue: AnsiString; const AWidth: Integer): AnsiString;
+  begin
+    Result := AValue;
+    if Length(Result) > AWidth then
+      Result := Copy(Result, 1, AWidth);
+    while Length(Result) < AWidth do
+      Result := Result + ' ';
+  end;
+
+  function GenerateArArchiveSingleObject(const AMemberName: AnsiString; const AObjectBytes: TBytes): TBytes;
+  var
+    S: TMemoryStream;
+    LHeader: AnsiString;
+    LSizeStr: AnsiString;
+    LPad: Byte;
+  begin
+    Result := nil;
+    S := TMemoryStream.Create();
+    try
+      // Global header
+      LHeader := '!<arch>'#10;
+      if Length(LHeader) > 0 then
+        S.WriteBuffer(LHeader[1], Length(LHeader));
+
+      // Member header (BSD ar)
+      // name(16) mtime(12) uid(6) gid(6) mode(8) size(10) "`\n"(2)  = 60 bytes
+      // NOTE: Tiger.Linker.MachO only supports simple names; keep <= 16 bytes.
+      LSizeStr := AnsiString(IntToStr(Length(AObjectBytes)));
+      LHeader :=
+        MakeArHeaderField(AMemberName, 16) +
+        MakeArHeaderField('0', 12) +
+        MakeArHeaderField('0', 6) +
+        MakeArHeaderField('0', 6) +
+        MakeArHeaderField('100644', 8) +
+        MakeArHeaderField(LSizeStr, 10) +
+        '`'#10;
+      S.WriteBuffer(LHeader[1], Length(LHeader));
+
+      // Member data
+      if Length(AObjectBytes) > 0 then
+        S.WriteBuffer(AObjectBytes[0], Length(AObjectBytes));
+      // Pad to even
+      if (S.Size mod 2) <> 0 then
+      begin
+        LPad := 10;
+        S.WriteBuffer(LPad, 1);
+      end;
+
+      SetLength(Result, S.Size);
+      if S.Size > 0 then
+      begin
+        S.Position := 0;
+        S.ReadBuffer(Result[0], S.Size);
+      end;
+    finally
+      S.Free();
+    end;
+  end;
 begin
   case FOutputType of
     otExe:
-      Result := GenerateMachO(False);
+      Result := GenerateMachO(MH_EXECUTE, False);
     otDll:
-      Result := GenerateMachO(True);
-    otObj, otLib:
-      Result := nil;  // Phase 3/4
+      Result := GenerateMachO(MH_DYLIB, True);
+    otObj:
+      Result := GenerateMachO(MH_OBJECT, False);
+    otLib:
+    begin
+      // Emit a single-member BSD ar archive containing one Mach-O relocatable object.
+      // Keep the member name short (<=16) because Tiger.Linker.MachO ParseARLibrary
+      // only supports simple member names.
+      var LObj := GenerateMachO(MH_OBJECT, False);
+      // NOTE: Don't include a trailing '/' in the filename field; macOS `ar -x`
+      // treats it as a path separator and extraction fails.
+      Result := GenerateArArchiveSingleObject('tiger.o', LObj);
+    end;
   else
     Result := nil;
   end;
@@ -159,7 +243,7 @@ begin
   inherited Clear();
 end;
 
-function TTigerMacOS64Backend.GenerateMachO(const AIsDylib: Boolean): TBytes;
+function TTigerMacOS64Backend.GenerateMachO(const AFileType: Cardinal; const AIsDylib: Boolean): TBytes;
 var
   LCode: TTigerCodeBuilder;
   LData: TTigerDataBuilder;
@@ -253,6 +337,45 @@ var
   LFrameOffset: Cardinal;
   LGotStartOffset: Cardinal;
 
+  function AlignUp32Local(const AValue: Cardinal; const AAlignment: Cardinal): Cardinal;
+  begin
+    if AAlignment <= 1 then
+      Exit(AValue);
+    Result := (AValue + AAlignment - 1) and (not (AAlignment - 1));
+  end;
+
+  function BytesToHexLower(const ABytes: TBytes): string;
+  const
+    HEX: array[0..15] of Char = ('0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f');
+  var
+    I: Integer;
+  begin
+    SetLength(Result, Length(ABytes) * 2);
+    for I := 0 to Length(ABytes) - 1 do
+    begin
+      Result[I * 2 + 1] := HEX[(ABytes[I] shr 4) and $F];
+      Result[I * 2 + 2] := HEX[ABytes[I] and $F];
+    end;
+  end;
+
+  function MachOSymbolName(const AName: string): string;
+  begin
+    // Mach-O external symbol names are underscore-prefixed on Darwin toolchains.
+    if (AName <> '') and (AName[1] <> '_') then
+      Result := '_' + AName
+    else
+      Result := AName;
+  end;
+
+  function MachOStaticImportSymbolName(const AEntry: TTigerImportEntry): string;
+  begin
+    // IMPORTANT:
+    // At backend emit time, `TTigerIR.EmitTo` has already applied linkage-based
+    // mangling to the import name (plC = plain, plDefault = Itanium). So here we
+    // only need to apply Mach-O's leading '_' external symbol convention.
+    Result := MachOSymbolName(AEntry.FuncName);
+  end;
+
   procedure WriteFixedAnsi(const AText: AnsiString; const ASize: Integer);
   var
     LBuf: TBytes;
@@ -325,90 +448,302 @@ var
     PutU32BE(ABuf, AOffset + 4, Cardinal(AValue and $FFFFFFFF));
   end;
 
-  procedure BuildLinkerSignedSignature(const AData: TBytes; ACodeLimit, ANumPages, ASignatureSize: Cardinal; AExecSegBase, AExecSegLimit: UInt64; AExecSegFlags: Cardinal; var AOutSignature: TBytes);
+  procedure BuildLinkerSignedSignature(const AData: TBytes; ACodeLimit, ANumPages,
+    ASignatureSize: Cardinal; AExecSegBase, AExecSegLimit: UInt64;
+    AExecSegFlags: Cardinal; const AIncludeLinkerSignedFlag: Boolean;
+    const AIncludeCmsAndRequirements: Boolean; const AIdentifierBytes: TBytes;
+    var AOutSignature: TBytes);
   var
     LPageStream: TMemoryStream;
     LHashBytes: TBytes;
-    LCodeDirSize: Cardinal;
-    LHashOffset: Cardinal;
     LOff: Cardinal;
     LPageStart: Cardinal;
     LPageLen: Cardinal;
     LIdx: Integer;
+    LReqHashBytes: TBytes;
+
+    function HashStreamBytes(const AHashType: Byte; const AStream: TStream): TBytes;
+    begin
+      if AHashType = CS_HASHTYPE_SHA256 then
+        Exit(THashSHA2.GetHashBytes(AStream))
+      else
+        Exit(THashSHA1.GetHashBytes(AStream));
+    end;
+
+    function CodeDirectorySize(const AHashSize: Byte; const AIdentifierSize: Cardinal; const ASpecialSlots, ACodeSlots: Cardinal): Cardinal;
+    var
+      LHashStartLocal: Cardinal;
+    begin
+      // Total CodeDirectory size includes:
+      // - fixed header (CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE)
+      // - identifier bytes (CODE_SIGNATURE_IDENTIFIER_SIZE)
+      // - hash slots for special + code (ASpecialSlots + ACodeSlots) * hashSize
+      LHashStartLocal := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + AIdentifierSize;
+      Result := LHashStartLocal + (ASpecialSlots + ACodeSlots) * Cardinal(AHashSize);
+    end;
+
+    procedure EmitCodeDirectory(const AStart: Cardinal; const AHashType, AHashSize: Byte;
+      const AIdentifierSize: Cardinal;
+      const ASpecialSlots, ACodeSlots: Cardinal; const AFlags: Cardinal;
+      out AHashOffsetOut, ACodeHashOffsetOut, ACodeDirSizeOut: Cardinal);
+    var
+      LHashStartLocal: Cardinal;
+      LHashOffsetLocal: Cardinal;
+      LCodeHashOffsetLocal: Cardinal;
+      LCodeDirSizeLocal: Cardinal;
+      LWriteOff: Cardinal;
+    begin
+      // IMPORTANT: In Apple's CodeDirectory format, `hashOffset` points to the start
+      // of the *code* slot hashes. Special slot hashes live *before* hashOffset at:
+      //   hashOffset - nSpecialSlots * hashSize
+      // `hashOffset` is NOT the start of the full hash region.
+      LHashStartLocal := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + AIdentifierSize;
+      LHashOffsetLocal := LHashStartLocal + ASpecialSlots * Cardinal(AHashSize);
+      LCodeHashOffsetLocal := LHashOffsetLocal;
+      LCodeDirSizeLocal := LHashStartLocal + (ASpecialSlots + ACodeSlots) * Cardinal(AHashSize);
+
+      AHashOffsetOut := LHashOffsetLocal;
+      ACodeHashOffsetOut := LCodeHashOffsetLocal;
+      ACodeDirSizeOut := LCodeDirSizeLocal;
+
+      LWriteOff := AStart;
+      PutU32BE(AOutSignature, LWriteOff, CSMAGIC_CODEDIRECTORY);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, LCodeDirSizeLocal);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, $20400);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, AFlags);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, LHashOffsetLocal);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, ASpecialSlots);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, ACodeSlots);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, ACodeLimit);
+      Inc(LWriteOff, 4);
+      AOutSignature[LWriteOff] := AHashSize;
+      Inc(LWriteOff);
+      AOutSignature[LWriteOff] := AHashType;
+      Inc(LWriteOff);
+      AOutSignature[LWriteOff] := 0;
+      Inc(LWriteOff);
+      // pageSize is log2(PAGE_SIZE). We use 4KB pages for hashing => 12.
+      AOutSignature[LWriteOff] := 12;
+      // Advance past pageSize byte to the next u32 field (scatterOffset).
+      // DO NOT skip 3 bytes here; the next field starts immediately at offset 40.
+      Inc(LWriteOff);
+      PutU32BE(AOutSignature, LWriteOff, 0);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, 0);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, 0);
+      Inc(LWriteOff, 4);
+      PutU32BE(AOutSignature, LWriteOff, 0);
+      Inc(LWriteOff, 4);
+      PutU64BE(AOutSignature, LWriteOff, UInt64(ACodeLimit));
+      Inc(LWriteOff, 8);
+      PutU64BE(AOutSignature, LWriteOff, AExecSegBase);
+      Inc(LWriteOff, 8);
+      PutU64BE(AOutSignature, LWriteOff, AExecSegLimit);
+      Inc(LWriteOff, 8);
+      PutU64BE(AOutSignature, LWriteOff, UInt64(AExecSegFlags));
+
+      // Identifier bytes (must be consistent across all CodeDirectories)
+      if (AIdentifierSize > 0) and (Length(AIdentifierBytes) >= Integer(AIdentifierSize)) then
+        Move(AIdentifierBytes[0], AOutSignature[AStart + CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE], AIdentifierSize);
+    end;
   begin
     SetLength(AOutSignature, ASignatureSize);
     FillChar(AOutSignature[0], ASignatureSize, 0);
-    LHashOffset := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + CODE_SIGNATURE_IDENTIFIER_SIZE;
-    LCodeDirSize := LHashOffset + ANumPages * 32;
+
+    // SuperBlob header is 12 bytes + N * 8-byte index entries.
+    // Our legacy single-blob layout used CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE (=20) which is 12+1*8.
+    var LBlobCount: Cardinal;
+    var LSuperHdrSize: Cardinal;
+    var LReqSize: Cardinal;
+    var LCmsSize: Cardinal;
+    var LCdSha1Size: Cardinal := 0;
+    var LCdSha256Size: Cardinal := 0;
+    var LCdSha1Off: Cardinal := 0;
+    var LCdSha256Off: Cardinal := 0;
+    var LReqOff: Cardinal := 0;
+    var LCmsOff: Cardinal := 0;
+    var LSuperLen: Cardinal := 0;
+    var LSpecialSlots: Cardinal := 0;
+    var LHashOffSha1: Cardinal := 0;
+    var LCodeHashOffSha1: Cardinal := 0;
+    var LHashOffSha256: Cardinal := 0;
+    var LCodeHashOffSha256: Cardinal := 0;
+    var LFlags: Cardinal;
+    var LIdentifierSize: Cardinal;
+
+    LIdentifierSize := Cardinal(Length(AIdentifierBytes));
+    if LIdentifierSize < CODE_SIGNATURE_IDENTIFIER_MIN_SIZE then
+      LIdentifierSize := CODE_SIGNATURE_IDENTIFIER_MIN_SIZE;
+
+    if AIncludeCmsAndRequirements then
+    begin
+      // Static-linked binaries: match `codesign -s -` layout with sha1 + sha256 CodeDirectories.
+      LBlobCount := 4; // CodeDirectory(sha1) + Requirements + AlternateCodeDirectory(sha256) + CMS wrapper
+      LReqSize := 12;
+      LCmsSize := 8;
+      LSpecialSlots := 2; // Info.plist + Requirements (Info absent -> zero hash)
+      LCdSha1Size := CodeDirectorySize(20, LIdentifierSize, LSpecialSlots, ANumPages);
+      LCdSha256Size := CodeDirectorySize(32, LIdentifierSize, LSpecialSlots, ANumPages);
+    end
+    else
+    begin
+      LBlobCount := 1;
+      LReqSize := 0;
+      LCmsSize := 0;
+      LSpecialSlots := 0;
+      LCdSha256Size := CodeDirectorySize(32, LIdentifierSize, 0, ANumPages);
+    end;
+    LSuperHdrSize := 12 + LBlobCount * 8;
+    if AIncludeCmsAndRequirements then
+    begin
+      LCdSha1Off := LSuperHdrSize;
+      LReqOff := LCdSha1Off + LCdSha1Size;
+      LCdSha256Off := LReqOff + LReqSize;
+      LCmsOff := LCdSha256Off + LCdSha256Size;
+      LSuperLen := LCmsOff + LCmsSize;
+    end
+    else
+    begin
+      LCdSha256Off := LSuperHdrSize;
+      LSuperLen := LSuperHdrSize + LCdSha256Size;
+    end;
+
     LOff := 0;
     PutU32BE(AOutSignature, LOff, CSMAGIC_EMBEDDED_SIGNATURE);
     Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + LCodeDirSize);
+    PutU32BE(AOutSignature, LOff, LSuperLen);
     Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, 1);
+    PutU32BE(AOutSignature, LOff, LBlobCount);
     Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, CSSLOT_CODEDIRECTORY);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, CSMAGIC_CODEDIRECTORY);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, LCodeDirSize);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, $20400);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, CS_CD_FLAG_ADHOC or CS_CD_FLAG_LINKER_SIGNED);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, LHashOffset);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, 0);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, ANumPages);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, ACodeLimit);
-    Inc(LOff, 4);
-    AOutSignature[LOff] := 32;
-    Inc(LOff);
-    AOutSignature[LOff] := CS_HASHTYPE_SHA256;
-    Inc(LOff);
-    AOutSignature[LOff] := 0;
-    Inc(LOff);
-    AOutSignature[LOff] := 12;
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, 0);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, 0);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, 0);
-    Inc(LOff, 4);
-    PutU32BE(AOutSignature, LOff, 0);
-    Inc(LOff, 4);
-    PutU64BE(AOutSignature, LOff, UInt64(ACodeLimit));
-    Inc(LOff, 8);
-    PutU64BE(AOutSignature, LOff, AExecSegBase);
-    Inc(LOff, 8);
-    PutU64BE(AOutSignature, LOff, AExecSegLimit);
-    Inc(LOff, 8);
-    PutU64BE(AOutSignature, LOff, UInt64(AExecSegFlags));
-    AOutSignature[CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE] := 0;
+
     LPageStream := TMemoryStream.Create();
     try
-      for LIdx := 0 to ANumPages - 1 do
+      if AIncludeLinkerSignedFlag then
+        LFlags := CS_CD_FLAG_ADHOC or CS_CD_FLAG_LINKER_SIGNED
+      else
+        LFlags := CS_CD_FLAG_ADHOC;
+
+      if AIncludeCmsAndRequirements then
       begin
-        LPageStart := LIdx * PAGE_SIZE;
-        if LPageStart >= ACodeLimit then
-          Break;
-        LPageLen := PAGE_SIZE;
-        if LPageStart + LPageLen > ACodeLimit then
-          LPageLen := ACodeLimit - LPageStart;
+        // Index[0] = CodeDirectory (sha1)
+        PutU32BE(AOutSignature, LOff, CSSLOT_CODEDIRECTORY);
+        Inc(LOff, 4);
+        PutU32BE(AOutSignature, LOff, LCdSha1Off);
+        Inc(LOff, 4);
+        // Index[1] = Requirements
+        PutU32BE(AOutSignature, LOff, CSSLOT_REQUIREMENTS);
+        Inc(LOff, 4);
+        PutU32BE(AOutSignature, LOff, LReqOff);
+        Inc(LOff, 4);
+        // Index[2] = Alternate CodeDirectory (sha256)
+        PutU32BE(AOutSignature, LOff, CSSLOT_ALTERNATE_CODEDIRECTORY);
+        Inc(LOff, 4);
+        PutU32BE(AOutSignature, LOff, LCdSha256Off);
+        Inc(LOff, 4);
+        // Index[3] = CMS wrapper
+        PutU32BE(AOutSignature, LOff, CSSLOT_CMS_SIGNATURE);
+        Inc(LOff, 4);
+        PutU32BE(AOutSignature, LOff, LCmsOff);
+        Inc(LOff, 4);
+
+        // Emit CodeDirectories
+        EmitCodeDirectory(LCdSha1Off, CS_HASHTYPE_SHA1, 20, LIdentifierSize, LSpecialSlots, ANumPages, LFlags, LHashOffSha1, LCodeHashOffSha1, LCdSha1Size);
+        EmitCodeDirectory(LCdSha256Off, CS_HASHTYPE_SHA256, 32, LIdentifierSize, LSpecialSlots, ANumPages, LFlags, LHashOffSha256, LCodeHashOffSha256, LCdSha256Size);
+
+        // Requirements blob (empty superblob)
+        LOff := LReqOff;
+        PutU32BE(AOutSignature, LOff, CSMAGIC_REQUIREMENTS);
+        Inc(LOff, 4);
+        PutU32BE(AOutSignature, LOff, LReqSize);
+        Inc(LOff, 4);
+        PutU32BE(AOutSignature, LOff, 0); // count = 0
+
+        // CMS wrapper blob (empty)
+        LOff := LCmsOff;
+        PutU32BE(AOutSignature, LOff, CSMAGIC_BLOBWRAPPER);
+        Inc(LOff, 4);
+        PutU32BE(AOutSignature, LOff, LCmsSize);
+
+        // Special slot hashes:
+        // - slot -2 (Requirements) = hash(requirements blob)
+        // - slot -1 (Info.plist) absent -> all zeros (already)
         LPageStream.Clear();
-        LPageStream.WriteBuffer(AData[LPageStart], LPageLen);
+        LPageStream.WriteBuffer(AOutSignature[LReqOff], LReqSize);
         LPageStream.Position := 0;
-        LHashBytes := THashSHA2.GetHashBytes(LPageStream);
-        if Length(LHashBytes) >= 32 then
-          Move(LHashBytes[0], AOutSignature[CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + LHashOffset + Cardinal(LIdx) * 32], 32);
+        LReqHashBytes := HashStreamBytes(CS_HASHTYPE_SHA1, LPageStream);
+        if Length(LReqHashBytes) >= 20 then
+          // Special slot hashes live at (hashOffset - nSpecial*hashSize)
+          Move(LReqHashBytes[0], AOutSignature[LCdSha1Off + (LHashOffSha1 - LSpecialSlots * 20) + 0 * 20], 20);
+        LPageStream.Position := 0;
+        LReqHashBytes := HashStreamBytes(CS_HASHTYPE_SHA256, LPageStream);
+        if Length(LReqHashBytes) >= 32 then
+          Move(LReqHashBytes[0], AOutSignature[LCdSha256Off + (LHashOffSha256 - LSpecialSlots * 32) + 0 * 32], 32);
+
+        // Page hashes for sha1
+        for LIdx := 0 to ANumPages - 1 do
+        begin
+          LPageStart := Cardinal(LIdx) * PAGE_SIZE;
+          LPageLen := PAGE_SIZE;
+          if LPageStart + LPageLen > ACodeLimit then
+            LPageLen := ACodeLimit - LPageStart;
+          LPageStream.Clear();
+          if LPageLen > 0 then
+            LPageStream.WriteBuffer(AData[LPageStart], LPageLen);
+          LPageStream.Position := 0;
+          LHashBytes := HashStreamBytes(CS_HASHTYPE_SHA1, LPageStream);
+          if Length(LHashBytes) >= 20 then
+            Move(LHashBytes[0], AOutSignature[LCdSha1Off + LCodeHashOffSha1 + Cardinal(LIdx) * 20], 20);
+        end;
+        // Page hashes for sha256
+        for LIdx := 0 to ANumPages - 1 do
+        begin
+          LPageStart := Cardinal(LIdx) * PAGE_SIZE;
+          LPageLen := PAGE_SIZE;
+          if LPageStart + LPageLen > ACodeLimit then
+            LPageLen := ACodeLimit - LPageStart;
+          LPageStream.Clear();
+          if LPageLen > 0 then
+            LPageStream.WriteBuffer(AData[LPageStart], LPageLen);
+          LPageStream.Position := 0;
+          LHashBytes := HashStreamBytes(CS_HASHTYPE_SHA256, LPageStream);
+          if Length(LHashBytes) >= 32 then
+            Move(LHashBytes[0], AOutSignature[LCdSha256Off + LCodeHashOffSha256 + Cardinal(LIdx) * 32], 32);
+        end;
+      end
+      else
+      begin
+        // Index[0] = CodeDirectory (sha256)
+        PutU32BE(AOutSignature, LOff, CSSLOT_CODEDIRECTORY);
+        Inc(LOff, 4);
+        PutU32BE(AOutSignature, LOff, LCdSha256Off);
+        Inc(LOff, 4);
+
+        EmitCodeDirectory(LCdSha256Off, CS_HASHTYPE_SHA256, 32, LIdentifierSize, 0, ANumPages, LFlags, LHashOffSha256, LCodeHashOffSha256, LCdSha256Size);
+
+        for LIdx := 0 to ANumPages - 1 do
+        begin
+          LPageStart := Cardinal(LIdx) * PAGE_SIZE;
+          LPageLen := PAGE_SIZE;
+          if LPageStart + LPageLen > ACodeLimit then
+            LPageLen := ACodeLimit - LPageStart;
+          LPageStream.Clear();
+          if LPageLen > 0 then
+            LPageStream.WriteBuffer(AData[LPageStart], LPageLen);
+          LPageStream.Position := 0;
+          LHashBytes := HashStreamBytes(CS_HASHTYPE_SHA256, LPageStream);
+          if Length(LHashBytes) >= 32 then
+            Move(LHashBytes[0], AOutSignature[LCdSha256Off + LCodeHashOffSha256 + Cardinal(LIdx) * 32], 32);
+        end;
       end;
     finally
       LPageStream.Free();
@@ -802,12 +1137,32 @@ var
     end;
   end;
 
+  procedure WriteFixedAnsiObj(const LObjStream : TStream; const AText: AnsiString; const ASize: Integer);
+  var
+    LBuf: TBytes;
+    LCopyLen: Integer;
+  begin
+    SetLength(LBuf, ASize);
+    FillChar(LBuf[0], ASize, 0);
+    LCopyLen := Length(AText);
+    if LCopyLen > ASize then
+      LCopyLen := ASize;
+    if LCopyLen > 0 then
+      Move(AText[1], LBuf[0], LCopyLen);
+    LObjStream.WriteBuffer(LBuf[0], ASize);
+  end;
+
 begin
   Result := nil;
   LCode := GetCode();
   LData := GetData();
   LGlobals := GetGlobals();
   LImports := GetImports();
+
+  // Generate a UUID once per output image; used by LC_UUID and by the
+  // codesign-like identifier we embed for static-linked binaries.
+  CreateGUID(LUUID);
+
   LFuncCount := LCode.GetFuncCount();
   if LFuncCount = 0 then
   begin
@@ -891,7 +1246,7 @@ begin
       if LEntry.IsStatic then
       begin
         LStaticImportIndices.Add(LI);
-        LStaticSymbolNames.Add(LEntry.FuncName);
+        LStaticSymbolNames.Add(MachOStaticImportSymbolName(LEntry));
         LLibPath := LEntry.DllName;
         if TPath.GetExtension(LLibPath) = '' then
           LLibPath := LLibPath + '.a';
@@ -921,8 +1276,26 @@ begin
       LLinker := TTigerMachOLinker.Create();
       CopyStatusCallbackTo(LLinker);
       for LI := 0 to LStaticLibPaths.Count - 1 do
+      begin
+        if not TFile.Exists(LStaticLibPaths[LI]) then
+        begin
+          Status('Error: Static library not found: %s', [LStaticLibPaths[LI]]);
+          if Assigned(FErrors) then
+            FErrors.Add(esError, 'B050', 'Static library not found: %s', [LStaticLibPaths[LI]]);
+          Result := nil;
+          Exit;
+        end;
         LLinker.AddLibraryFile(LStaticLibPaths[LI]);
+      end;
       LLinker.Resolve(LStaticSymbolNames);
+      if LLinker.GetUnresolvedSymbols().Count > 0 then
+      begin
+        Status('Error: Static linker unresolved symbols: %s', [LLinker.GetUnresolvedSymbols().CommaText]);
+        if Assigned(FErrors) then
+          FErrors.Add(esError, 'B051', 'Static linker unresolved symbols: %s', [LLinker.GetUnresolvedSymbols().CommaText]);
+        Result := nil;
+        Exit;
+      end;
       LStaticResolved := LLinker.GetResolvedSymbols();
     end;
 
@@ -1406,7 +1779,11 @@ begin
             begin
               if (LStaticCallFixups[LI].Key + 4 <= Cardinal(Length(LTextBytes))) then
               begin
-                LInstrIdx := (Int64(LExternalTextBase) + Int64(LResolvedSym.OffsetInMerged) - Int64(LStaticCallFixups[LI].Key) - 4) shr 2;
+                // AArch64 BL immediate is relative to the *address of the branch
+                // instruction itself* (unlike some 32-bit ARM modes). Do NOT
+                // subtract 4 here, or we'll land one instruction early (often
+                // the preceding function's RET).
+                LInstrIdx := (Int64(LExternalTextBase) + Int64(LResolvedSym.OffsetInMerged) - Int64(LStaticCallFixups[LI].Key)) div 4;
                 if (LInstrIdx >= -33554432) and (LInstrIdx <= 33554431) then
                   PCardinal(@LTextBytes[LStaticCallFixups[LI].Key])^ := $94000000 or (Cardinal(LInstrIdx) and $3FFFFFF);
               end;
@@ -1579,6 +1956,244 @@ begin
     begin
       LGotStream.Position := 0;
       LGotStream.ReadBuffer(LGotBytes[0], LGotStream.Size);
+    end;
+
+    //-------------------------------------------------------------------------
+    // Relocatable object output (MH_OBJECT) — used for TargetObj and TargetLib.
+    // Emits a minimal Mach-O object with __text (+ optional __cstring/__data) and
+    // an LC_SYMTAB containing public symbols so Tiger.Linker.MachO can resolve
+    // them when linking a static .a.
+    //-------------------------------------------------------------------------
+    if AFileType = MH_OBJECT then
+    begin
+      var LObjStream := TMemoryStream.Create();
+      var LStrtab := TMemoryStream.Create();
+      var LSymtab := TMemoryStream.Create();
+      var LExportSyms := TStringList.Create();
+      var LExportOffsets := TDictionary<string, UInt64>.Create();
+      try
+        LExportSyms.CaseSensitive := True;
+        LExportSyms.Sorted := True;
+        LExportSyms.Duplicates := dupIgnore;
+
+        // Collect public symbols (section-relative offsets within __text)
+        for LI := 0 to LFuncCount - 1 do
+        begin
+          LFunc := LCode.GetFunc(LI);
+          if not LFunc.IsPublic then
+            Continue;
+
+          var LSymName: string;
+          if LFunc.Linkage = plC then
+            LSymName := LFunc.FuncName
+          else
+          begin
+            var LParamTypes: TArray<TTigerValueType>;
+            SetLength(LParamTypes, Length(LFunc.Params));
+            for LK := 0 to High(LFunc.Params) do
+              LParamTypes[LK] := LFunc.Params[LK].ParamType;
+            LSymName := TTigerABIMangler.MangleFunctionWithLinkage(LFunc.FuncName, LParamTypes, LFunc.Linkage);
+          end;
+          LSymName := MachOSymbolName(LSymName);
+          if LExportSyms.IndexOf(LSymName) < 0 then
+            LExportSyms.Add(LSymName);
+          LExportOffsets.AddOrSetValue(LSymName, UInt64(LFuncOffsets[LI]));
+        end;
+
+        // Build string table (first byte 0)
+        LByteVal := 0;
+        LStrtab.WriteBuffer(LByteVal, 1);
+        var LStrOff: Cardinal := 1;
+
+        // Build symbol table (nlist_64, 16 bytes each)
+        // n_type = N_EXT ($01) | N_SECT ($0e) = $0f
+        for LI := 0 to LExportSyms.Count - 1 do
+        begin
+          var LNameA: AnsiString := AnsiString(LExportSyms[LI]);
+          var LFuncOff: UInt64 := 0;
+          if not LExportOffsets.TryGetValue(LExportSyms[LI], LFuncOff) then
+            LFuncOff := 0;
+
+          // n_strx
+          LCardVal := LStrOff;
+          LSymtab.WriteBuffer(LCardVal, 4);
+          // n_type, n_sect
+          LByteVal := $0f;
+          LSymtab.WriteBuffer(LByteVal, 1);
+          LByteVal := 1; // __text is section #1
+          LSymtab.WriteBuffer(LByteVal, 1);
+          // n_desc
+          var LDesc: Word := 0;
+          LSymtab.WriteBuffer(LDesc, 2);
+          // n_value
+          LVal := LFuncOff;
+          LSymtab.WriteBuffer(LVal, 8);
+
+          // Append string
+          if Length(LNameA) > 0 then
+            LStrtab.WriteBuffer(LNameA[1], Length(LNameA));
+          LByteVal := 0;
+          LStrtab.WriteBuffer(LByteVal, 1);
+          Inc(LStrOff, Cardinal(Length(LNameA)) + 1);
+        end;
+
+        // Sections to emit
+        var LHaveCStr := Length(LCStringBytes) > 0;
+        var LHaveData := Length(LDataBytes) > 0;
+        var LNumSects: Cardinal := 1 + Ord(LHaveCStr) + Ord(LHaveData);
+
+        // Sizes and offsets
+        var LHeaderSizeObj: Cardinal := 32;
+        var LSegCmdSize: Cardinal := 72 + 80 * LNumSects;
+        var LSymCmdSize: Cardinal := 24;
+        var LCmdsSize: Cardinal := LSegCmdSize + LSymCmdSize;
+        var LDataStart: Cardinal := LHeaderSizeObj + LCmdsSize;
+
+        var LTextOffObj: Cardinal := AlignUp32Local(LDataStart, 16);
+        var LCStrOffObj: Cardinal := AlignUp32Local(LTextOffObj + Cardinal(Length(LTextBytes)), 1);
+        var LDataOffObj: Cardinal := AlignUp32Local(LCStrOffObj + Cardinal(Length(LCStringBytes)), 8);
+        var LEndOff: Cardinal := LDataOffObj + Cardinal(Length(LDataBytes));
+
+        var LSymOffObj: Cardinal := AlignUp32Local(LEndOff, 8);
+        var LStrOffObj: Cardinal := LSymOffObj + Cardinal(LSymtab.Size);
+
+        // mach_header_64
+        LObjStream.Clear();
+        LCardVal := MH_MAGIC_64;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LCardVal := CPU_TYPE_ARM64;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LCardVal := CPU_SUBTYPE_ARM64_ALL;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LCardVal := MH_OBJECT;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 2; // ncmds: LC_SEGMENT_64 + LC_SYMTAB
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LCardVal := LCmdsSize;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 0; // flags
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LCardVal := 0; // reserved
+        LObjStream.WriteBuffer(LCardVal, 4);
+
+        // LC_SEGMENT_64 (single segment containing all sections)
+        LCardVal := LC_SEGMENT_64;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LCardVal := LSegCmdSize;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        WriteFixedAnsiObj(LObjStream, AnsiString(SEG_TEXT), 16); // segname
+        LVal := 0; LObjStream.WriteBuffer(LVal, 8); // vmaddr
+        LVal := 0; LObjStream.WriteBuffer(LVal, 8); // vmsize
+        LVal := 0; LObjStream.WriteBuffer(LVal, 8); // fileoff
+        LVal := LEndOff; LObjStream.WriteBuffer(LVal, 8); // filesize
+        LCardVal := 7; LObjStream.WriteBuffer(LCardVal, 4); // maxprot rwx
+        LCardVal := 7; LObjStream.WriteBuffer(LCardVal, 4); // initprot rwx
+        LCardVal := LNumSects; LObjStream.WriteBuffer(LCardVal, 4); // nsects
+        LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4); // flags
+
+        // section_64 records (80 bytes each)
+        // __text
+        WriteFixedAnsiObj(LObjStream, AnsiString(SECT_TEXT), 16);
+        WriteFixedAnsiObj(LObjStream, AnsiString(SEG_TEXT), 16);
+        LVal := 0; LObjStream.WriteBuffer(LVal, 8); // addr
+        LVal := UInt64(Length(LTextBytes)); LObjStream.WriteBuffer(LVal, 8); // size
+        LObjStream.WriteBuffer(LTextOffObj, 4); // offset
+        LCardVal := 4; LObjStream.WriteBuffer(LCardVal, 4); // align (2^4 = 16)
+        LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4); // reloff
+        LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4); // nreloc
+        LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4); // flags
+        LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4); // reserved1
+        LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4); // reserved2
+        LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4); // reserved3
+
+        if LHaveCStr then
+        begin
+          WriteFixedAnsiObj(LObjStream, AnsiString(SECT_CSTRING), 16);
+          WriteFixedAnsiObj(LObjStream, AnsiString(SEG_TEXT), 16);
+          LVal := 0; LObjStream.WriteBuffer(LVal, 8);
+          LVal := UInt64(Length(LCStringBytes)); LObjStream.WriteBuffer(LVal, 8);
+          LObjStream.WriteBuffer(LCStrOffObj, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4); // align 1
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+        end;
+
+        if LHaveData then
+        begin
+          WriteFixedAnsiObj(LObjStream, AnsiString(SECT_DATA), 16);
+          WriteFixedAnsiObj(LObjStream, AnsiString(SEG_DATA), 16);
+          LVal := 0; LObjStream.WriteBuffer(LVal, 8);
+          LVal := UInt64(Length(LDataBytes)); LObjStream.WriteBuffer(LVal, 8);
+          LObjStream.WriteBuffer(LDataOffObj, 4);
+          LCardVal := 3; LObjStream.WriteBuffer(LCardVal, 4); // align 8
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+          LCardVal := 0; LObjStream.WriteBuffer(LCardVal, 4);
+        end;
+
+        // LC_SYMTAB
+        LCardVal := LC_SYMTAB;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LCardVal := LSymCmdSize;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LObjStream.WriteBuffer(LSymOffObj, 4);
+        LCardVal := LExportSyms.Count;
+        LObjStream.WriteBuffer(LCardVal, 4);
+        LObjStream.WriteBuffer(LStrOffObj, 4);
+        LCardVal := Cardinal(LStrtab.Size);
+        LObjStream.WriteBuffer(LCardVal, 4);
+
+        // Pad and write section data
+        LByteVal := 0;
+        while Cardinal(LObjStream.Position) < LTextOffObj do
+          LObjStream.WriteBuffer(LByteVal, 1);
+        if Length(LTextBytes) > 0 then
+          LObjStream.WriteBuffer(LTextBytes[0], Length(LTextBytes));
+        while Cardinal(LObjStream.Position) < LCStrOffObj do
+          LObjStream.WriteBuffer(LByteVal, 1);
+        if LHaveCStr then
+          LObjStream.WriteBuffer(LCStringBytes[0], Length(LCStringBytes));
+        while Cardinal(LObjStream.Position) < LDataOffObj do
+          LObjStream.WriteBuffer(LByteVal, 1);
+        if LHaveData then
+          LObjStream.WriteBuffer(LDataBytes[0], Length(LDataBytes));
+
+        while Cardinal(LObjStream.Position) < LSymOffObj do
+          LObjStream.WriteBuffer(LByteVal, 1);
+        if LSymtab.Size > 0 then
+        begin
+          LSymtab.Position := 0;
+          LObjStream.CopyFrom(LSymtab, LSymtab.Size);
+        end;
+        while Cardinal(LObjStream.Position) < LStrOffObj do
+          LObjStream.WriteBuffer(LByteVal, 1);
+        if LStrtab.Size > 0 then
+        begin
+          LStrtab.Position := 0;
+          LObjStream.CopyFrom(LStrtab, LStrtab.Size);
+        end;
+
+        SetLength(Result, LObjStream.Size);
+        if LObjStream.Size > 0 then
+        begin
+          LObjStream.Position := 0;
+          LObjStream.ReadBuffer(Result[0], LObjStream.Size);
+        end;
+        Exit;
+      finally
+        LExportOffsets.Free();
+        LExportSyms.Free();
+        LSymtab.Free();
+        LStrtab.Free();
+        LObjStream.Free();
+      end;
     end;
 
     LBindStream := TMemoryStream.Create();
@@ -1936,7 +2551,53 @@ begin
       LSignatureOffset := AlignUp32(LCodeLimit, CODE_SIGNATURE_ALIGN);
       LPadding := LSignatureOffset - LCodeLimit;
       LNumPages := (LSignatureOffset + PAGE_SIZE - 1) div PAGE_SIZE;
-      LSignatureSize := CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + CODE_SIGNATURE_IDENTIFIER_SIZE + LNumPages * 32;
+      // For static-linked binaries, the kernel rejects a \"minimal\" identifier
+      // (single NUL). Use a codesign-like identifier: <name>-<40 hex>.
+      var LIdentifierBytes: TBytes;
+      var LIdentifierSize: Cardinal;
+      var LExeName: string;
+      if LHasStaticImports then
+      begin
+        LExeName := ExtractFileName(FOutputPath);
+        if LExeName = '' then
+          LExeName := 'Tiger';
+        // Match `codesign -s -` style:
+        //   <name>-55554944<uuidhex>
+        // where 55554944 is ASCII 'UUID' in hex and <uuidhex> is the LC_UUID bytes.
+        var LUUIDBytes: TBytes;
+        SetLength(LUUIDBytes, SizeOf(LUUID));
+        Move(LUUID, LUUIDBytes[0], SizeOf(LUUID));
+        var LIdent: string := LExeName + '-55554944' + BytesToHexLower(LUUIDBytes);
+        // NUL-terminated, then pad to even length (matches what codesign tends to do)
+        var LIdentAnsi: AnsiString := AnsiString(LIdent);
+        SetLength(LIdentifierBytes, Length(LIdentAnsi) + 1);
+        if Length(LIdentAnsi) > 0 then
+          Move(LIdentAnsi[1], LIdentifierBytes[0], Length(LIdentAnsi));
+        LIdentifierBytes[Length(LIdentAnsi)] := 0;
+        if (Length(LIdentifierBytes) and 1) <> 0 then
+          SetLength(LIdentifierBytes, Length(LIdentifierBytes) + 1);
+      end
+      else
+      begin
+        SetLength(LIdentifierBytes, 1);
+        LIdentifierBytes[0] := 0;
+      end;
+      LIdentifierSize := Cardinal(Length(LIdentifierBytes));
+      if LHasStaticImports then
+      begin
+        // Static-linked EXEs: emit sha1 + sha256 CodeDirectories like `codesign -s -`.
+        // IMPORTANT: LC_CODE_SIGNATURE.datasize must match the embedded SuperBlob length exactly.
+        // If datasize is larger, the kernel treats the tail bytes as an \"attached\" (detached)
+        // signature and will reject the image if that trailing region isn't a valid blob.
+        const LSpecialSlots: Cardinal = 2;
+        var LSuperHdrSize: Cardinal := 12 + 4 * 8;
+        var LCodeDirSha1Size: Cardinal := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + LIdentifierSize + (LSpecialSlots + LNumPages) * 20;
+        var LCodeDirSha256Size: Cardinal := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + LIdentifierSize + (LSpecialSlots + LNumPages) * 32;
+        var LSuperLen: Cardinal := LSuperHdrSize + LCodeDirSha1Size + 12 + LCodeDirSha256Size + 8;
+        LSignatureSize := LSuperLen;
+      end
+      else
+        LSignatureSize := CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + LIdentifierSize + LNumPages * 32;
       LSegLinkEditFileSize := Cardinal(Length(LRebaseBytes)) + Cardinal(Length(LBindBytes)) +
                               Cardinal(Length(LExportBytes)) + Cardinal(Length(LSymtabBytes)) + Cardinal(Length(LStrtabBytes)) + LPadding + LSignatureSize;
       LSlide := SEG_TEXT_VADDR - UInt64(LSegTextFileOff);
@@ -1947,10 +2608,8 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := CPU_SUBTYPE_ARM64_ALL;
       LOutStream.WriteBuffer(LCardVal, 4);
-      if AIsDylib then
-        LCardVal := MH_DYLIB
-      else
-        LCardVal := MH_EXECUTE;
+      // mach_header_64 filetype
+      LCardVal := AFileType;
       LOutStream.WriteBuffer(LCardVal, 4);
       // ncmds must match emitted load commands (see LLoadCmdSize comment).
       // 4 segments + (LC_MAIN or LC_ID_DYLIB) + LC_VERSION_MIN + LC_UUID +
@@ -2164,7 +2823,6 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 24;
       LOutStream.WriteBuffer(LCardVal, 4);
-      CreateGUID(LUUID);
       LOutStream.WriteBuffer(LUUID, SizeOf(LUUID));
 
       if not AIsDylib then
@@ -2304,7 +2962,19 @@ begin
       LOutStream.Position := 0;
       LOutStream.ReadBuffer(Result[0], LOutStream.Size);
 
-      BuildLinkerSignedSignature(Result, LSignatureOffset, LNumPages, LSignatureSize, UInt64(LSegTextFileOff), UInt64(LTextMapSize), CS_EXECSEG_MAIN_BINARY, LSignatureBytes);
+      BuildLinkerSignedSignature(
+        Result,
+        LSignatureOffset,
+        LNumPages,
+        LSignatureSize,
+        UInt64(LSegTextFileOff),
+        UInt64(LTextMapSize),
+        CS_EXECSEG_MAIN_BINARY,
+        not LHasStaticImports,
+        LHasStaticImports,
+        LIdentifierBytes,
+        LSignatureBytes
+      );
       if Length(LSignatureBytes) = LSignatureSize then
         Move(LSignatureBytes[0], Result[LSignatureOffset], LSignatureSize);
     finally
