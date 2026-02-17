@@ -172,6 +172,7 @@ var
   LDataFixups: TList<TPair<Cardinal, Integer>>;
   LGlobalFixups: TList<TPair<Cardinal, Integer>>;
   LDataPageFixups: TList<Cardinal>;  // One ADRP per function that uses globals; targets __data base
+  LFuncAddrFixups: TList<TPair<Cardinal, Integer>>;  // Code offset -> (func index shl 8 or reg) for @func
   LLabelOffsets: TDictionary<Integer, Cardinal>;
   LJumpFixups: TList<TPair<Cardinal, Integer>>;
   LCondJumpFixups: TList<TPair<Cardinal, Integer>>;
@@ -692,6 +693,13 @@ var
             EmitARM64($8B000000 or (REG_X17 shl 16) or (REG_X16 shl 5) or AReg);
           end;
         end;
+      okFunc:
+        begin
+          // ADRP + ADD to get address of function in __text; patched in fixup pass.
+          LFuncAddrFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), (AOp.FuncHandle.Index shl 8) or AReg));
+          EmitAdrp(AReg, 0);
+          EmitARM64($91000000 or (0 shl 10) or (Cardinal(AReg) shl 5) or AReg);
+        end;
     else
       EmitMovRegImm64(AReg, 0);
     end;
@@ -800,6 +808,7 @@ begin
   LDataFixups := TList<TPair<Cardinal, Integer>>.Create();
   LGlobalFixups := TList<TPair<Cardinal, Integer>>.Create();
   LDataPageFixups := TList<Cardinal>.Create();
+  LFuncAddrFixups := TList<TPair<Cardinal, Integer>>.Create();
   LJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LCondJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LLabelOffsets := TDictionary<Integer, Cardinal>.Create();
@@ -1363,6 +1372,26 @@ begin
       begin
         LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
         PCardinal(@LTextBytes[LDataPageFixups[LI]])^ := $90000000 or REG_X16 or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
+      end;
+    end;
+
+    for LI := 0 to LFuncAddrFixups.Count - 1 do
+    begin
+      LByteOffset := LFuncAddrFixups[LI].Key;
+      LJ := LFuncAddrFixups[LI].Value;
+      LCardVal := Cardinal(LJ and $FF);
+      LJ := LJ shr 8;
+      if (LJ >= 0) and (LJ < LFuncCount) and (LFuncAddrFixups[LI].Key + 8 <= Cardinal(Length(LTextBytes))) then
+      begin
+        LSlotAddr := LSlide + UInt64(LTextSectionFileOff) + UInt64(LFuncOffsets[LJ]);
+        LPageIndex := (Int64(LSlotAddr) shr 12) - (Int64(LSlide + UInt64(LTextSectionFileOff) + UInt64(LByteOffset)) shr 12);
+        LOfs12 := LSlotAddr and $FFF;
+        if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) then
+        begin
+          LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
+          PCardinal(@LTextBytes[LByteOffset])^ := $90000000 or LCardVal or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
+          PCardinal(@LTextBytes[LByteOffset + 4])^ := $91000000 or (LOfs12 shl 10) or (LCardVal shl 5) or LCardVal;
+        end;
       end;
     end;
 
@@ -2033,6 +2062,7 @@ begin
     LJumpFixups.Free();
     LGlobalFixups.Free();
     LDataPageFixups.Free();
+    LFuncAddrFixups.Free();
     LDataFixups.Free();
     LImportFixups.Free();
     LCallFixups.Free();
