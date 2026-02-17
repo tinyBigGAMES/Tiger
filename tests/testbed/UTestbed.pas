@@ -3461,6 +3461,8 @@ begin
       SetExeResources(LTiger, 'Test_SEH.exe');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
+    else if LTiger.GetPlatform = tpMacOS64 then
+      LTiger.ImportDll('libSystem.B.dylib', 'printf', [vtPointer], vtInt32, True)
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 

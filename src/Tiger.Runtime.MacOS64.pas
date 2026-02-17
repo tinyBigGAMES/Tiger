@@ -427,12 +427,196 @@ begin
 end;
 
 //==============================================================================
-// TTigerMacOS64Runtime - Exceptions (stub for Phase 1)
+// TTigerMacOS64Runtime - Exceptions (signal-based, same approach as Linux64)
+// Uses pthread TLS, sigsetjmp/siglongjmp, and signal handlers for hardware
+// exceptions. Frame layout matches ARM64 sigjmp_buf size (196 bytes on Darwin).
 //==============================================================================
 
 procedure TTigerMacOS64Runtime.AddExceptions(const AIR: TTigerIR);
+const
+  // macOS/Darwin signal numbers (from signal.h)
+  SIGFPE  = 8;   // Floating point exception (includes div by zero)
+  SIGSEGV = 11;  // Segmentation fault
+  SIGILL  = 4;   // Illegal instruction
+  SIGBUS  = 10;  // Bus error (Darwin uses 10; Linux uses 7)
+
+  // Offsets within TigerExceptFrame (208 bytes total on ARM64 macOS)
+  FRAME_PREV     = 0;    // PrevFrame: Pointer (8 bytes)
+  FRAME_JMPBUF   = 8;    // JmpBuf: sigjmp_buf (196 bytes on Darwin ARM64; sizeof(sigjmp_buf)==196)
+  FRAME_TYPE     = 204;  // FrameType: Int32 (4 bytes) at 8+196
+  FRAME_SIZE     = 208;  // Total frame size (aligned to 16)
+
+  // sigaction structure size (Darwin ARM64: sa_handler/sa_sigaction + sa_mask + sa_flags + padding)
+  SIGACTION_SIZE = 64;
 begin
-  // macOS Unwind-based exception support can be added in Phase 5.
+  //----------------------------------------------------------------------------
+  // Import pthread TLS functions (libSystem.B.dylib)
+  //----------------------------------------------------------------------------
+  AIR.Import(LIB_SYSTEM, 'pthread_key_create', [vtPointer, vtPointer], vtInt32, False);
+  AIR.Import(LIB_SYSTEM, 'pthread_getspecific', [vtUInt32], vtPointer, False);
+  AIR.Import(LIB_SYSTEM, 'pthread_setspecific', [vtUInt32, vtPointer], vtInt32, False);
+
+  //----------------------------------------------------------------------------
+  // Import signal handling (dyld resolves to _sigsetjmp, _siglongjmp, _sigaction)
+  //----------------------------------------------------------------------------
+  AIR.Import(LIB_SYSTEM, 'sigaction', [vtInt32, vtPointer, vtPointer], vtInt32, False);
+  AIR.Import(LIB_SYSTEM, 'sigsetjmp', [vtPointer, vtInt32], vtInt32, False);
+  AIR.Import(LIB_SYSTEM, 'siglongjmp', [vtPointer, vtInt32], vtVoid, False);
+
+  //----------------------------------------------------------------------------
+  // Import string functions (for exception message copying)
+  //----------------------------------------------------------------------------
+  AIR.Import(LIB_SYSTEM, 'strlen', [vtPointer], vtUInt64, False);
+  // memcpy already imported in AddStrings
+
+  //----------------------------------------------------------------------------
+  // Global variables for TLS slot keys
+  //----------------------------------------------------------------------------
+  AIR.Global('Tiger_TlsExcChain', vtUInt32);
+  AIR.Global('Tiger_TlsExcCode', vtUInt32);
+  AIR.Global('Tiger_TlsExcMsg', vtUInt32);
+
+  //----------------------------------------------------------------------------
+  // Tiger_InitExceptions() - allocate TLS keys
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_InitExceptions', vtVoid, False, plC, False)
+     .Call('pthread_key_create', [AIR.AddrOf('Tiger_TlsExcChain'), AIR.Null()])
+     .Call('pthread_key_create', [AIR.AddrOf('Tiger_TlsExcCode'), AIR.Null()])
+     .Call('pthread_key_create', [AIR.AddrOf('Tiger_TlsExcMsg'), AIR.Null()])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_SignalHandler(ASigNum: Int32; AInfo: Pointer; AContext: Pointer)
+  // Called for hardware exceptions; jumps to current except frame.
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_SignalHandler', vtVoid, False, plC, False)
+     .Param('ASigNum', vtInt32)
+     .Param('AInfo', vtPointer)
+     .Param('AContext', vtPointer)
+     .Local('LFrame', vtPointer)
+     .Local('LJmpBuf', vtPointer)
+     .Call('Tiger_SetException', [AIR.Get('ASigNum'), AIR.Null()])
+     .Assign('LFrame', AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcChain')]))
+     .Assign('LJmpBuf', AIR.Add(AIR.Get('LFrame'), AIR.Int64(FRAME_JMPBUF)))
+     .Call('siglongjmp', [AIR.Get('LJmpBuf'), AIR.Int64(1)])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_InitSignals() - install signal handlers for hardware exceptions
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_InitSignals', vtVoid, False, plC, False)
+     .Local('LSigAction', vtPointer)
+     .Assign('LSigAction', AIR.Invoke('Tiger_GetMem', [AIR.Int64(SIGACTION_SIZE)]))
+     .Call('memset', [AIR.Get('LSigAction'), AIR.Int64(0), AIR.Int64(SIGACTION_SIZE)])
+     .AssignTo(AIR.Deref(AIR.Get('LSigAction'), vtPointer), AIR.FuncAddr('Tiger_SignalHandler'))
+     .Call('sigaction', [AIR.Int64(SIGFPE), AIR.Get('LSigAction'), AIR.Null()])
+     .Call('sigaction', [AIR.Int64(SIGSEGV), AIR.Get('LSigAction'), AIR.Null()])
+     .Call('sigaction', [AIR.Int64(SIGILL), AIR.Get('LSigAction'), AIR.Null()])
+     .Call('sigaction', [AIR.Int64(SIGBUS), AIR.Get('LSigAction'), AIR.Null()])
+     .Call('Tiger_FreeMem', [AIR.Get('LSigAction')])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_PushExceptFrame(AFrame: Pointer)
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_PushExceptFrame', vtVoid, False, plC, False)
+     .Param('AFrame', vtPointer)
+     .Local('LPrev', vtPointer)
+     .Assign('LPrev', AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcChain')]))
+     .AssignTo(AIR.Deref(AIR.Get('AFrame'), vtPointer), AIR.Get('LPrev'))
+     .Call('pthread_setspecific', [AIR.Get('Tiger_TlsExcChain'), AIR.Get('AFrame')])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_PopExceptFrame()
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_PopExceptFrame', vtVoid, False, plC, False)
+     .Local('LFrame', vtPointer)
+     .Local('LPrev', vtPointer)
+     .Assign('LFrame', AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcChain')]))
+     .Assign('LPrev', AIR.Deref(AIR.Get('LFrame'), vtPointer))
+     .Call('pthread_setspecific', [AIR.Get('Tiger_TlsExcChain'), AIR.Get('LPrev')])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_GetExceptFrame(): Pointer
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_GetExceptFrame', vtPointer, False, plC, False)
+     .Return(AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcChain')]))
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_SetException(ACode: Int32; AMsg: Pointer)
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_SetException', vtVoid, False, plC, False)
+     .Param('ACode', vtInt32)
+     .Param('AMsg', vtPointer)
+     .Local('LOldMsg', vtPointer)
+     .Local('LLen', vtUInt64)
+     .Local('LNewMsg', vtPointer)
+     .Assign('LOldMsg', AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcMsg')]))
+     .&If(AIR.Ne(AIR.Get('LOldMsg'), AIR.Null()))
+        .Call('Tiger_FreeMem', [AIR.Get('LOldMsg')])
+     .EndIf()
+     .&If(AIR.Ne(AIR.Get('AMsg'), AIR.Null()))
+        .Assign('LLen', AIR.Invoke('strlen', [AIR.Get('AMsg')]))
+        .Assign('LNewMsg', AIR.Invoke('Tiger_GetMem', [AIR.Add(AIR.Get('LLen'), AIR.Int64(1))]))
+        .Call('memcpy', [AIR.Get('LNewMsg'), AIR.Get('AMsg'), AIR.Add(AIR.Get('LLen'), AIR.Int64(1))])
+        .Call('pthread_setspecific', [AIR.Get('Tiger_TlsExcMsg'), AIR.Get('LNewMsg')])
+     .&Else()
+        .Call('pthread_setspecific', [AIR.Get('Tiger_TlsExcMsg'), AIR.Null()])
+     .EndIf()
+     .Call('pthread_setspecific', [AIR.Get('Tiger_TlsExcCode'), AIR.Get('ACode')])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_Raise(AMsg: Pointer)
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_Raise', vtVoid, False, plC, False)
+     .Param('AMsg', vtPointer)
+     .Local('LFrame', vtPointer)
+     .Local('LJmpBuf', vtPointer)
+     .Call('Tiger_SetException', [AIR.Int64(1), AIR.Get('AMsg')])
+     .Assign('LFrame', AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcChain')]))
+     .Assign('LJmpBuf', AIR.Add(AIR.Get('LFrame'), AIR.Int64(FRAME_JMPBUF)))
+     .Call('siglongjmp', [AIR.Get('LJmpBuf'), AIR.Int64(1)])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_RaiseCode(ACode: Int32; AMsg: Pointer)
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_RaiseCode', vtVoid, False, plC, False)
+     .Param('ACode', vtInt32)
+     .Param('AMsg', vtPointer)
+     .Local('LFrame', vtPointer)
+     .Local('LJmpBuf', vtPointer)
+     .Call('Tiger_SetException', [AIR.Get('ACode'), AIR.Get('AMsg')])
+     .Assign('LFrame', AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcChain')]))
+     .Assign('LJmpBuf', AIR.Add(AIR.Get('LFrame'), AIR.Int64(FRAME_JMPBUF)))
+     .Call('siglongjmp', [AIR.Get('LJmpBuf'), AIR.Int64(1)])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_GetExceptionCode(): Int32
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_GetExceptionCode', vtInt32, False, plC, False)
+     .Return(AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcCode')]))
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_GetExceptionMessage(): Pointer
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_GetExceptionMessage', vtPointer, False, plC, False)
+     .Return(AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcMsg')]))
+  .EndFunc();
 end;
 
 end.

@@ -102,6 +102,11 @@ const
   SECT_DATA = '__data';
   SECT_GOT = '__got';
 
+  // Exception handling: TigerExceptFrame size (Prev 8 + sigjmp_buf 196 + Type 4, aligned to 16)
+  MACOS64_EXCEPT_FRAME_SIZE = 208;
+  // Set True to disable all SEH emission (inits + try/end) to isolate bus fault; restore False for normal use
+  SEH_EMIT_DISABLED = False;
+
   PAGE_SIZE = 4096;
   SEGMENT_PAGE_SIZE = 16384;  // ARM64 macOS uses 16KB pages; segment fileoff/vmsize must be 16K aligned
   SEG_TEXT_VADDR = $0000000100000000;  // Canonical arm64 executable __TEXT base
@@ -236,6 +241,17 @@ var
   LDylibCmdSizeTotal: Cardinal;
   LDylibCmdSize: Cardinal;
   LNamePaddedSize: Cardinal;
+
+  LHasSEH: Boolean;
+  LPushExceptFrameIdx, LPopExceptFrameIdx, LGetExceptFrameIdx: Integer;
+  LInitExceptionsIdx, LInitSignalsIdx: Integer;
+  LRaiseCodeIdx: Integer;
+  LSigsetjmpIdx: Integer;
+  LTryBeginLabels, LExceptLabels, LFinallyLabels, LEndLabels: TDictionary<Integer, Integer>;
+  LExceptFrameSize, LExceptFrameBaseOffset: Cardinal;
+  LScopeIdx, LExceptLabelIdx: Integer;
+  LFrameOffset: Cardinal;
+  LGotStartOffset: Cardinal;
 
   procedure WriteFixedAnsi(const AText: AnsiString; const ASize: Integer);
   var
@@ -813,7 +829,10 @@ begin
   LJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LCondJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LLabelOffsets := TDictionary<Integer, Cardinal>.Create();
-
+  LTryBeginLabels := TDictionary<Integer, Integer>.Create();
+  LExceptLabels := TDictionary<Integer, Integer>.Create();
+  LFinallyLabels := TDictionary<Integer, Integer>.Create();
+  LEndLabels := TDictionary<Integer, Integer>.Create();
   LStaticImportIndices := TList<Integer>.Create();
   LStaticSymbolNames := TStringList.Create();
   LStaticLibPaths := TStringList.Create();
@@ -822,6 +841,14 @@ begin
   LStaticLibPaths.Duplicates := dupIgnore;
   LStaticCallFixups := TList<TPair<Cardinal, Integer>>.Create();
   LHasStaticImports := False;
+  LHasSEH := False;
+  LPushExceptFrameIdx := -1;
+  LPopExceptFrameIdx := -1;
+  LGetExceptFrameIdx := -1;
+  LInitExceptionsIdx := -1;
+  LInitSignalsIdx := -1;
+  LRaiseCodeIdx := -1;
+  LSigsetjmpIdx := -1;
   LLinker := nil;
   LDylibNames := TStringList.Create();
   LDylibNames.CaseSensitive := False;
@@ -829,6 +856,35 @@ begin
   LDylibNames.Duplicates := dupIgnore;
   LDylibOrdinals := TDictionary<string, Integer>.Create();
   try
+    // Exception handling: detect SEH and find runtime/import indices
+    for LI := 0 to LFuncCount - 1 do
+    begin
+      LFunc := LCode.GetFunc(LI);
+      if Length(LFunc.ExceptionScopes) > 0 then
+        LHasSEH := True;
+      if SameText(LFunc.FuncName, 'Tiger_PushExceptFrame') then
+        LPushExceptFrameIdx := LI
+      else if SameText(LFunc.FuncName, 'Tiger_PopExceptFrame') then
+        LPopExceptFrameIdx := LI
+      else if SameText(LFunc.FuncName, 'Tiger_GetExceptFrame') then
+        LGetExceptFrameIdx := LI
+      else if SameText(LFunc.FuncName, 'Tiger_InitExceptions') then
+        LInitExceptionsIdx := LI
+      else if SameText(LFunc.FuncName, 'Tiger_InitSignals') then
+        LInitSignalsIdx := LI
+      else if SameText(LFunc.FuncName, 'Tiger_RaiseCode') then
+        LRaiseCodeIdx := LI;
+    end;
+    for LI := 0 to LImports.GetCount() - 1 do
+    begin
+      LEntry := LImports.GetEntryByIndex(LI);
+      if SameText(LEntry.FuncName, 'sigsetjmp') then
+      begin
+        LSigsetjmpIdx := LI;
+        Break;
+      end;
+    end;
+
     for LI := 0 to LImports.GetCount() - 1 do
     begin
       LEntry := LImports.GetEntryByIndex(LI);
@@ -920,10 +976,32 @@ begin
         LOutgoingArgSpace := LMaxCallArgs * 8
       else
         LOutgoingArgSpace := 64;
-      // Fixed param spill area (x0-x7) + locals + temps + outgoing arg space.
-      LStackFrameSize := LIncomingSpillSize + LLocalsSize + Cardinal(LFunc.TempCount) * 8 + LOutgoingArgSpace;
+      LExceptFrameSize := Cardinal(Length(LFunc.ExceptionScopes)) * MACOS64_EXCEPT_FRAME_SIZE;
+      LExceptFrameBaseOffset := LIncomingSpillSize + LLocalsSize + Cardinal(LFunc.TempCount) * 8 + LOutgoingArgSpace;
+      if LExceptFrameSize > 0 then
+      begin
+        LExceptFrameBaseOffset := (LExceptFrameBaseOffset + 15) and (not 15);
+        LExceptFrameBaseOffset := LExceptFrameBaseOffset + 8;
+      end;
+      LStackFrameSize := LExceptFrameBaseOffset + LExceptFrameSize;
       if (LStackFrameSize mod 16) <> 0 then
         LStackFrameSize := (LStackFrameSize + 15) and (not 15);
+
+      LTryBeginLabels.Clear();
+      LExceptLabels.Clear();
+      LFinallyLabels.Clear();
+      LEndLabels.Clear();
+      for LJ := 0 to High(LFunc.ExceptionScopes) do
+      begin
+        if LFunc.ExceptionScopes[LJ].TryBeginLabel.IsValid() then
+          LTryBeginLabels.AddOrSetValue(LFunc.ExceptionScopes[LJ].TryBeginLabel.Index, LJ);
+        if LFunc.ExceptionScopes[LJ].ExceptLabel.IsValid() then
+          LExceptLabels.AddOrSetValue(LFunc.ExceptionScopes[LJ].ExceptLabel.Index, LJ);
+        if LFunc.ExceptionScopes[LJ].FinallyLabel.IsValid() then
+          LFinallyLabels.AddOrSetValue(LFunc.ExceptionScopes[LJ].FinallyLabel.Index, LJ);
+        if LFunc.ExceptionScopes[LJ].EndLabel.IsValid() then
+          LEndLabels.AddOrSetValue(LFunc.ExceptionScopes[LJ].EndLabel.Index, LJ);
+      end;
 
       EmitStpPre(REG_FP, REG_LR, REG_SP, -16);
       EmitARM64($910003E0 or (REG_SP shl 5) or REG_FP);
@@ -932,6 +1010,17 @@ begin
 
       for LI := 0 to Min(Length(LFunc.Params) - 1, 7) do
         EmitStrFp(GetParamOffset(LI), LI);
+
+      if (not SEH_EMIT_DISABLED) and LFunc.IsEntryPoint and LHasSEH and (LInitExceptionsIdx >= 0) then
+      begin
+        LCallFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), LInitExceptionsIdx));
+        EmitBL(0);
+      end;
+      if (not SEH_EMIT_DISABLED) and LFunc.IsEntryPoint and LHasSEH and (LInitSignalsIdx >= 0) then
+      begin
+        LCallFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), LInitSignalsIdx));
+        EmitBL(0);
+      end;
 
       for LInstrIdx := 0 to High(LFunc.Instructions) do
       begin
@@ -1043,6 +1132,15 @@ begin
             begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
+              if LHasSEH and (LRaiseCodeIdx >= 0) then
+              begin
+                EmitARM64($F1000000 or (REG_X16 shl 5) or 31);
+                EmitARM64($54000061 or ((3 and $7FFFF) shl 5));
+                EmitMovX(REG_X0, 42);
+                EmitMovX(REG_X1, 0);
+                LCallFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), LRaiseCodeIdx));
+                EmitBL(0);
+              end;
               EmitARM64($9BC07C00 or (REG_X16 shl 16) or (REG_X0 shl 5) or REG_X0);
               StoreTempFromReg(LInstr.Dest.Index, REG_X0);
             end;
@@ -1050,6 +1148,15 @@ begin
             begin
               LoadOperandToReg(LInstr.Op1, REG_X0);
               LoadOperandToReg(LInstr.Op2, REG_X16);
+              if LHasSEH and (LRaiseCodeIdx >= 0) then
+              begin
+                EmitARM64($F1000000 or (REG_X16 shl 5) or 31);
+                EmitARM64($54000061 or ((3 and $7FFFF) shl 5));
+                EmitMovX(REG_X0, 42);
+                EmitMovX(REG_X1, 0);
+                LCallFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), LRaiseCodeIdx));
+                EmitBL(0);
+              end;
               EmitARM64($AA0003E0 or (REG_X0 shl 5) or REG_X17);
               EmitARM64($9BC07C00 or (REG_X16 shl 16) or (REG_X0 shl 5) or REG_X0);
               EmitARM64($9B000000 or (REG_X16 shl 16) or (REG_X17 shl 10) or (REG_X0 shl 5) or REG_X17);
@@ -1185,7 +1292,66 @@ begin
             end;
           ikLabel:
             if LInstr.LabelTarget.IsValid() then
+            begin
               LLabelOffsets.AddOrSetValue((LFuncIdx shl 16) or LInstr.LabelTarget.Index, Cardinal(LTextStream.Position));
+
+              if (not SEH_EMIT_DISABLED) and LTryBeginLabels.TryGetValue(LInstr.LabelTarget.Index, LScopeIdx) then
+              begin
+                if LPushExceptFrameIdx < 0 then
+                  raise Exception.Create('Tiger_PushExceptFrame not found - exception handling runtime not linked');
+                if LSigsetjmpIdx < 0 then
+                  raise Exception.Create('sigsetjmp not imported - exception handling runtime not linked');
+                LFrameOffset := LExceptFrameBaseOffset + Cardinal(LScopeIdx) * MACOS64_EXCEPT_FRAME_SIZE;
+                if LFrameOffset <= 4095 then
+                  EmitSubImm(REG_X0, REG_FP, LFrameOffset)
+                else
+                begin
+                  EmitMovRegImm64(REG_X16, LFrameOffset);
+                  EmitARM64($CB000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X0);
+                end;
+                LCallFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), LPushExceptFrameIdx));
+                EmitBL(0);
+                if LFrameOffset + 8 <= 4095 then
+                  EmitSubImm(REG_X0, REG_FP, LFrameOffset - 8)
+                else
+                begin
+                  EmitMovRegImm64(REG_X16, LFrameOffset - 8);
+                  EmitARM64($CB000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X0);
+                end;
+                EmitMovX(REG_X1, 0);
+                if LHasStaticImports and (LStaticImportIndices.IndexOf(LSigsetjmpIdx) >= 0) then
+                begin
+                  EmitBL(0);
+                  LStaticCallFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position) - 4, LSigsetjmpIdx));
+                end
+                else
+                begin
+                  LImportFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), LSigsetjmpIdx));
+                  EmitAdrp(REG_X16, 0);
+                  EmitARM64($F9400000 or (0 shl 10) or (REG_X16 shl 5) or REG_X16);
+                  EmitBLR(REG_X16);
+                end;
+                if LFunc.ExceptionScopes[LScopeIdx].ExceptLabel.IsValid() then
+                  LExceptLabelIdx := LFunc.ExceptionScopes[LScopeIdx].ExceptLabel.Index
+                else if LFunc.ExceptionScopes[LScopeIdx].FinallyLabel.IsValid() then
+                  LExceptLabelIdx := LFunc.ExceptionScopes[LScopeIdx].FinallyLabel.Index
+                else
+                  LExceptLabelIdx := -1;
+                if LExceptLabelIdx >= 0 then
+                begin
+                  LCondJumpFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), (LFuncIdx shl 16) or LExceptLabelIdx));
+                  EmitARM64($35000000);
+                end;
+              end;
+
+              if (not SEH_EMIT_DISABLED) and LEndLabels.TryGetValue(LInstr.LabelTarget.Index, LScopeIdx) then
+              begin
+                if LPopExceptFrameIdx < 0 then
+                  raise Exception.Create('Tiger_PopExceptFrame not found - exception handling runtime not linked');
+                LCallFixups.Add(TPair<Cardinal, Integer>.Create(Cardinal(LTextStream.Position), LPopExceptFrameIdx));
+                EmitBL(0);
+              end;
+            end;
           ikJump:
             if LInstr.LabelTarget.IsValid() then
             begin
@@ -1308,16 +1474,17 @@ begin
     LSegDataFileOff := LTextMapSize;
     LSlide := SEG_TEXT_VADDR; // since __TEXT.fileoff = 0
 
+    LGotStartOffset := (Length(LDataBytes) + 7) and (not 7);
     for LI := 0 to LImportFixups.Count - 1 do
     begin
-      // GOT lives in __DATA right after globals.
-      LSlotAddr := LSlide + UInt64(LSegDataFileOff) + UInt64(Length(LDataBytes)) + UInt64(LImportFixups[LI].Value) * 8;
+      // GOT lives in __DATA after globals; align to 8 so LDR Xt,[Xn,#imm] reads correct slot.
+      LSlotAddr := LSlide + UInt64(LSegDataFileOff) + UInt64(LGotStartOffset) + UInt64(LImportFixups[LI].Value) * 8;
       LPageIndex := (Int64(LSlotAddr) shr 12) - (Int64(LSlide + UInt64(LTextSectionFileOff) + UInt64(LImportFixups[LI].Key)) shr 12);
       LOfs12 := (LSlotAddr and $FFF) div 8;
       if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) and
          (LImportFixups[LI].Key + 8 <= Cardinal(Length(LTextBytes))) then
       begin
-        LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
+        LAdrpImm := Cardinal((Int32(LPageIndex) + (1 shl 21)) and $1FFFFF);
         PCardinal(@LTextBytes[LImportFixups[LI].Key])^ := $90000000 or REG_X16 or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
         PCardinal(@LTextBytes[LImportFixups[LI].Key + 4])^ := $F9400000 or (LOfs12 shl 10) or (REG_X16 shl 5) or REG_X16;
       end;
@@ -1337,7 +1504,7 @@ begin
         if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) and
            (LDataFixups[LI].Key + 8 <= Cardinal(Length(LTextBytes))) then
         begin
-          LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
+          LAdrpImm := Cardinal((Int32(LPageIndex) + (1 shl 21)) and $1FFFFF);
           PCardinal(@LTextBytes[LDataFixups[LI].Key])^ := $90000000 or LTargetReg or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
           PCardinal(@LTextBytes[LDataFixups[LI].Key + 4])^ := $91000000 or (LOfs12 shl 10) or (Cardinal(LTargetReg) shl 5) or LTargetReg;
         end;
@@ -1357,7 +1524,7 @@ begin
         if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) and
            (LGlobalFixups[LI].Key + 8 <= Cardinal(Length(LTextBytes))) then
         begin
-          LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
+          LAdrpImm := Cardinal((Int32(LPageIndex) + (1 shl 21)) and $1FFFFF);
           PCardinal(@LTextBytes[LGlobalFixups[LI].Key])^ := $90000000 or LTargetReg or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
           PCardinal(@LTextBytes[LGlobalFixups[LI].Key + 4])^ := $91000000 or (LOfs12 shl 10) or (Cardinal(LTargetReg) shl 5) or LTargetReg;
         end;
@@ -1371,7 +1538,7 @@ begin
       if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) and
          (LDataPageFixups[LI] + 4 <= Cardinal(Length(LTextBytes))) then
       begin
-        LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
+        LAdrpImm := Cardinal((Int32(LPageIndex) + (1 shl 21)) and $1FFFFF);
         PCardinal(@LTextBytes[LDataPageFixups[LI]])^ := $90000000 or REG_X16 or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
       end;
     end;
@@ -1389,7 +1556,7 @@ begin
         LOfs12 := LSlotAddr and $FFF;
         if (LPageIndex >= -1048576) and (LPageIndex <= 1048575) then
         begin
-          LAdrpImm := Cardinal(Int32(LPageIndex) and $1FFFFF);
+          LAdrpImm := Cardinal((Int32(LPageIndex) + (1 shl 21)) and $1FFFFF);
           PCardinal(@LTextBytes[LByteOffset])^ := $90000000 or LCardVal or ((LAdrpImm and 3) shl 29) or (((LAdrpImm shr 2) and $7FFFF) shl 5);
           PCardinal(@LTextBytes[LByteOffset + 4])^ := $91000000 or (LOfs12 shl 10) or (LCardVal shl 5) or LCardVal;
         end;
@@ -1448,7 +1615,7 @@ begin
         // With __PAGEZERO + __TEXT preceding, __DATA is segment index 2.
         LByteVal := $72;
         LBindStream.WriteBuffer(LByteVal, 1);
-        LVal := Length(LDataBytes) + Cardinal(LI) * 8;
+        LVal := LGotStartOffset + Cardinal(LI) * 8;
         repeat
           LJ := LVal and $7F;
           LVal := LVal shr 7;
@@ -1680,7 +1847,7 @@ begin
     try
       LHeaderSize := 32;
       LSegTextFileSize := (Length(LTextBytes) + Length(LCStringBytes) + 15) and (not 15);
-      LSegDataFileSize := (Length(LDataBytes) + Length(LGotBytes) + 15) and (not 15);
+      LSegDataFileSize := (LGotStartOffset + Length(LGotBytes) + 15) and (not 15);
       // Compute load command sizes dynamically based on dylib names.
       // All LC_SEGMENT_64 must come first (dyld/kernel expect contiguous segments).
       LDylibCmdSizeTotal := 0;
@@ -1727,7 +1894,7 @@ begin
         LBindStream.WriteBuffer(LByteVal, 1);
         LByteVal := $22;  // opcode 2, segment 2 (__DATA) in low nibble; next is offset ULEB only
         LBindStream.WriteBuffer(LByteVal, 1);
-        LVal := UInt64(Length(LDataBytes)) + UInt64(Length(LGotBytes));
+        LVal := UInt64(LGotStartOffset) + UInt64(Length(LGotBytes));
         repeat
           LJ := LVal and $7F;
           LVal := LVal shr 7;
@@ -1917,11 +2084,11 @@ begin
       LOutStream.WriteBuffer(LCardVal, 4);
       WriteFixedAnsi('__got', 16);
       WriteFixedAnsi('__DATA', 16);
-      LVal := LSlide + UInt64(LSegDataFileOff) + UInt64(Length(LDataBytes));
+      LVal := LSlide + UInt64(LSegDataFileOff) + UInt64(LGotStartOffset);
       LOutStream.WriteBuffer(LVal, 8);
       LVal := Length(LGotBytes);
       LOutStream.WriteBuffer(LVal, 8);
-      LCardVal := LSegDataFileOff + Length(LDataBytes);
+      LCardVal := LSegDataFileOff + LGotStartOffset;
       LOutStream.WriteBuffer(LCardVal, 4);
       LCardVal := 0;
       LOutStream.WriteBuffer(LCardVal, 4);
@@ -2096,9 +2263,12 @@ begin
         LOutStream.WriteBuffer(LByteVal, 1);
       if Length(LDataBytes) > 0 then
         LOutStream.WriteBuffer(LDataBytes[0], Length(LDataBytes));
+      LK := LGotStartOffset - Length(LDataBytes);
+      for LI := 0 to LK - 1 do
+        LOutStream.WriteBuffer(LByteVal, 1);
       if Length(LGotBytes) > 0 then
         LOutStream.WriteBuffer(LGotBytes[0], Length(LGotBytes));
-      LK := LSegDataFileSize - Length(LDataBytes) - Length(LGotBytes);
+      LK := LSegDataFileSize - LGotStartOffset - Length(LGotBytes);
       for LI := 0 to LK - 1 do
         LOutStream.WriteBuffer(LByteVal, 1);
       while Cardinal(LOutStream.Position) < LRebaseOff do
@@ -2151,6 +2321,10 @@ begin
     LDylibNames.Free();
     LCondJumpFixups.Free();
     LLabelOffsets.Free();
+    LEndLabels.Free();
+    LFinallyLabels.Free();
+    LExceptLabels.Free();
+    LTryBeginLabels.Free();
     LJumpFixups.Free();
     LGlobalFixups.Free();
     LDataPageFixups.Free();
