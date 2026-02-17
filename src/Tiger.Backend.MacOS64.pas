@@ -2551,53 +2551,42 @@ begin
       LSignatureOffset := AlignUp32(LCodeLimit, CODE_SIGNATURE_ALIGN);
       LPadding := LSignatureOffset - LCodeLimit;
       LNumPages := (LSignatureOffset + PAGE_SIZE - 1) div PAGE_SIZE;
-      // For static-linked binaries, the kernel rejects a \"minimal\" identifier
-      // (single NUL). Use a codesign-like identifier: <name>-<40 hex>.
+      // Use the same signing structure for all emitted Mach-O images:
+      // - 2 CodeDirectories (sha1 + sha256)
+      // - empty Requirements blob
+      // - empty CMS wrapper blob
+      //
+      // Also use a codesign-like identifier:
+      //   <name>-55554944<uuidhex>
+      // where 55554944 is ASCII 'UUID' in hex and <uuidhex> are the LC_UUID bytes.
       var LIdentifierBytes: TBytes;
       var LIdentifierSize: Cardinal;
       var LExeName: string;
-      if LHasStaticImports then
-      begin
-        LExeName := ExtractFileName(FOutputPath);
-        if LExeName = '' then
-          LExeName := 'Tiger';
-        // Match `codesign -s -` style:
-        //   <name>-55554944<uuidhex>
-        // where 55554944 is ASCII 'UUID' in hex and <uuidhex> is the LC_UUID bytes.
-        var LUUIDBytes: TBytes;
-        SetLength(LUUIDBytes, SizeOf(LUUID));
-        Move(LUUID, LUUIDBytes[0], SizeOf(LUUID));
-        var LIdent: string := LExeName + '-55554944' + BytesToHexLower(LUUIDBytes);
-        // NUL-terminated, then pad to even length (matches what codesign tends to do)
-        var LIdentAnsi: AnsiString := AnsiString(LIdent);
-        SetLength(LIdentifierBytes, Length(LIdentAnsi) + 1);
-        if Length(LIdentAnsi) > 0 then
-          Move(LIdentAnsi[1], LIdentifierBytes[0], Length(LIdentAnsi));
-        LIdentifierBytes[Length(LIdentAnsi)] := 0;
-        if (Length(LIdentifierBytes) and 1) <> 0 then
-          SetLength(LIdentifierBytes, Length(LIdentifierBytes) + 1);
-      end
-      else
-      begin
-        SetLength(LIdentifierBytes, 1);
-        LIdentifierBytes[0] := 0;
-      end;
+      LExeName := ExtractFileName(FOutputPath);
+      if LExeName = '' then
+        LExeName := 'Tiger';
+      var LUUIDBytes: TBytes;
+      SetLength(LUUIDBytes, SizeOf(LUUID));
+      Move(LUUID, LUUIDBytes[0], SizeOf(LUUID));
+      var LIdent: string := LExeName + '-55554944' + BytesToHexLower(LUUIDBytes);
+      // NUL-terminated, then pad to even length (matches what codesign tends to do)
+      var LIdentAnsi: AnsiString := AnsiString(LIdent);
+      SetLength(LIdentifierBytes, Length(LIdentAnsi) + 1);
+      if Length(LIdentAnsi) > 0 then
+        Move(LIdentAnsi[1], LIdentifierBytes[0], Length(LIdentAnsi));
+      LIdentifierBytes[Length(LIdentAnsi)] := 0;
+      if (Length(LIdentifierBytes) and 1) <> 0 then
+        SetLength(LIdentifierBytes, Length(LIdentifierBytes) + 1);
       LIdentifierSize := Cardinal(Length(LIdentifierBytes));
-      if LHasStaticImports then
-      begin
-        // Static-linked EXEs: emit sha1 + sha256 CodeDirectories like `codesign -s -`.
-        // IMPORTANT: LC_CODE_SIGNATURE.datasize must match the embedded SuperBlob length exactly.
-        // If datasize is larger, the kernel treats the tail bytes as an \"attached\" (detached)
-        // signature and will reject the image if that trailing region isn't a valid blob.
-        const LSpecialSlots: Cardinal = 2;
-        var LSuperHdrSize: Cardinal := 12 + 4 * 8;
-        var LCodeDirSha1Size: Cardinal := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + LIdentifierSize + (LSpecialSlots + LNumPages) * 20;
-        var LCodeDirSha256Size: Cardinal := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + LIdentifierSize + (LSpecialSlots + LNumPages) * 32;
-        var LSuperLen: Cardinal := LSuperHdrSize + LCodeDirSha1Size + 12 + LCodeDirSha256Size + 8;
-        LSignatureSize := LSuperLen;
-      end
-      else
-        LSignatureSize := CODE_SIGNATURE_SUPERBLOB_HEADER_SIZE + CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + LIdentifierSize + LNumPages * 32;
+      // IMPORTANT: LC_CODE_SIGNATURE.datasize must match the embedded SuperBlob length exactly.
+      // If datasize is larger, the kernel treats the tail bytes as an "attached" (detached)
+      // signature and will reject the image if that trailing region isn't a valid blob.
+      const LSpecialSlots: Cardinal = 2;
+      var LSuperHdrSize: Cardinal := 12 + 4 * 8;
+      var LCodeDirSha1Size: Cardinal := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + LIdentifierSize + (LSpecialSlots + LNumPages) * 20;
+      var LCodeDirSha256Size: Cardinal := CODE_SIGNATURE_CODEDIRECTORY_HEADER_SIZE + LIdentifierSize + (LSpecialSlots + LNumPages) * 32;
+      var LSuperLen: Cardinal := LSuperHdrSize + LCodeDirSha1Size + 12 + LCodeDirSha256Size + 8;
+      LSignatureSize := LSuperLen;
       LSegLinkEditFileSize := Cardinal(Length(LRebaseBytes)) + Cardinal(Length(LBindBytes)) +
                               Cardinal(Length(LExportBytes)) + Cardinal(Length(LSymtabBytes)) + Cardinal(Length(LStrtabBytes)) + LPadding + LSignatureSize;
       LSlide := SEG_TEXT_VADDR - UInt64(LSegTextFileOff);
@@ -2970,8 +2959,8 @@ begin
         UInt64(LSegTextFileOff),
         UInt64(LTextMapSize),
         CS_EXECSEG_MAIN_BINARY,
-        not LHasStaticImports,
-        LHasStaticImports,
+        False, // no CS_CD_FLAG_LINKER_SIGNED
+        True,  // always include Requirements + CMS wrapper blobs
         LIdentifierBytes,
         LSignatureBytes
       );
