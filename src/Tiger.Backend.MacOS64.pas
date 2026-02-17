@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -113,6 +113,15 @@ const
   MACOS64_EXCEPT_FRAME_SIZE = 208;
   // Set True to disable all SEH emission (inits + try/end) to isolate bus fault; restore False for normal use
   SEH_EMIT_DISABLED = False;
+
+  // Darwin/macOS ARM64 syscall: x16 = number, x0-x5 = args, SVC #0x80, return in x0
+  // Map Linux x86_64 syscall numbers to Darwin (BSD) numbers for source compatibility
+  LINUX_SYS_READ  = 0;   // Linux x64 read
+  LINUX_SYS_WRITE = 1;   // Linux x64 write
+  LINUX_SYS_EXIT  = 60;  // Linux x64 exit
+  DARWIN_SYS_READ  = 3;  // Darwin read
+  DARWIN_SYS_WRITE = 4;  // Darwin write
+  DARWIN_SYS_EXIT  = 1;  // Darwin exit
 
   PAGE_SIZE = 4096;
   SEGMENT_PAGE_SIZE = 16384;  // ARM64 macOS uses 16KB pages; segment fileoff/vmsize must be 16K aligned
@@ -1769,7 +1778,33 @@ begin
           ikNop:
             ;
           ikSyscall:
-            raise Exception.Create('Syscall instruction is not supported on macOS ARM64 (use libSystem instead)');
+            begin
+              // macOS ARM64: x16 = syscall number, x0-x5 = args, SVC #0x80, return in x0
+              // Map Linux x86_64 syscall numbers to Darwin so Syscall(60, [code]) and Syscall(1, [fd,buf,len]) work
+              if Length(LInstr.Args) > 0 then
+                LoadOperandToReg(LInstr.Args[0], REG_X0);
+              if Length(LInstr.Args) > 1 then
+                LoadOperandToReg(LInstr.Args[1], REG_X1);
+              if Length(LInstr.Args) > 2 then
+                LoadOperandToReg(LInstr.Args[2], REG_X2);
+              if Length(LInstr.Args) > 3 then
+                LoadOperandToReg(LInstr.Args[3], REG_X3);
+              if Length(LInstr.Args) > 4 then
+                LoadOperandToReg(LInstr.Args[4], REG_X4);
+              if Length(LInstr.Args) > 5 then
+                LoadOperandToReg(LInstr.Args[5], REG_X5);
+              case LInstr.SyscallNr of
+                LINUX_SYS_READ:  EmitMovRegImm64(REG_X16, DARWIN_SYS_READ);
+                LINUX_SYS_WRITE: EmitMovRegImm64(REG_X16, DARWIN_SYS_WRITE);
+                LINUX_SYS_EXIT:  EmitMovRegImm64(REG_X16, DARWIN_SYS_EXIT);
+              else
+                EmitMovRegImm64(REG_X16, Cardinal(LInstr.SyscallNr));
+              end;
+              // SVC #0x80 — encoding: 11010100 000imm16 00001 -> 0xD4001001 for imm=0x80
+              EmitARM64($D4001001);
+              if LInstr.Dest.IsValid() then
+                StoreTempFromReg(LInstr.Dest.Index, REG_X0);
+            end;
           ikVaCount:
             begin
               // Load hidden vararg count from [FP-8] (always at fixed position for variadic functions)
