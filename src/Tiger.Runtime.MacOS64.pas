@@ -149,14 +149,261 @@ begin
 end;
 
 //==============================================================================
-// TTigerMacOS64Runtime - Strings (stub for Phase 1; full impl in Phase 2)
+// TTigerMacOS64Runtime - Strings (same layout as Linux/Win: TStringRec, refcount)
 //==============================================================================
 
 procedure TTigerMacOS64Runtime.AddStrings(const AIR: TTigerIR);
+var
+  LDeref: TTigerIRExpr;
 begin
+  AIR.Import(LIB_SYSTEM, 'memcpy', [vtPointer, vtPointer, vtUInt64], vtPointer, False);
+  AIR.Import(LIB_SYSTEM, 'memset', [vtPointer, vtInt32, vtUInt64], vtPointer, False);
+  AIR.Import(LIB_SYSTEM, 'memcmp', [vtPointer, vtPointer, vtUInt64], vtInt32, False);
+
   AddTypes(AIR);
-  // Full string runtime (Tiger_StrAlloc, Tiger_StrFree, etc.) can be added
-  // in Phase 2; for hello world we only need printf and exit.
+
+  AIR.Func('Tiger_StrAlloc', vtPointer, False, plC, False)
+     .Param('ACapacity', vtUInt64)
+     .Local('LRec', vtPointer)
+     .Local('LData', vtPointer)
+     .Assign('LRec', AIR.Invoke('Tiger_GetMem', [AIR.Int64(40)]))
+     .Assign('LData', AIR.Invoke('Tiger_GetMem', [AIR.Add(AIR.Get('ACapacity'), AIR.Int64(1))]));
+
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'RefCount'), AIR.Int64(1));
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'Length'), AIR.Int64(0));
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'Capacity'), AIR.Get('ACapacity'));
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'Data'), AIR.Get('LData'));
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'Data16'), AIR.Null());
+  AIR.Call('memset', [AIR.Get('LData'), AIR.Int64(0), AIR.Int64(1)])
+     .Return(AIR.Get('LRec'))
+  .EndFunc();
+
+  AIR.Func('Tiger_StrFree', vtVoid, False, plC, False)
+     .Param('AStr', vtPointer)
+     .Local('LData', vtPointer)
+     .Local('LData16', vtPointer)
+     .&If(AIR.Eq(AIR.Get('AStr'), AIR.Null()))
+        .Return()
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('AStr'), 'TStringRec');
+  AIR.Assign('LData16', AIR.GetField(LDeref, 'Data16'))
+     .&If(AIR.Ne(AIR.Get('LData16'), AIR.Null()))
+        .Call('Tiger_FreeMem', [AIR.Get('LData16')])
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('AStr'), 'TStringRec');
+  AIR.Assign('LData', AIR.GetField(LDeref, 'Data'))
+     .&If(AIR.Ne(AIR.Get('LData'), AIR.Null()))
+        .Call('Tiger_FreeMem', [AIR.Get('LData')])
+     .EndIf()
+     .Call('Tiger_FreeMem', [AIR.Get('AStr')])
+     .Return()
+  .EndFunc();
+
+  AIR.Func('Tiger_StrAddRef', vtVoid, False, plC, False)
+     .Param('AStr', vtPointer)
+     .Local('LRefCount', vtInt64)
+     .&If(AIR.Eq(AIR.Get('AStr'), AIR.Null()))
+        .Return()
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('AStr'), 'TStringRec');
+  AIR.Assign('LRefCount', AIR.GetField(LDeref, 'RefCount'))
+     .&If(AIR.Eq(AIR.Get('LRefCount'), AIR.Int64(-1)))
+        .Return()
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('AStr'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'RefCount'), AIR.Add(AIR.Get('LRefCount'), AIR.Int64(1)))
+     .Return()
+  .EndFunc();
+
+  AIR.Func('Tiger_StrRelease', vtVoid, False, plC, False)
+     .Param('AStr', vtPointer)
+     .Local('LRefCount', vtInt64)
+     .&If(AIR.Eq(AIR.Get('AStr'), AIR.Null()))
+        .Return()
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('AStr'), 'TStringRec');
+  AIR.Assign('LRefCount', AIR.GetField(LDeref, 'RefCount'))
+     .&If(AIR.Eq(AIR.Get('LRefCount'), AIR.Int64(-1)))
+        .Return()
+     .EndIf()
+     .Assign('LRefCount', AIR.Sub(AIR.Get('LRefCount'), AIR.Int64(1)));
+  LDeref := AIR.Deref(AIR.Get('AStr'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'RefCount'), AIR.Get('LRefCount'))
+     .&If(AIR.Eq(AIR.Get('LRefCount'), AIR.Int64(0)))
+        .Call('Tiger_StrFree', [AIR.Get('AStr')])
+     .EndIf()
+     .Return()
+  .EndFunc();
+
+  AIR.Func('Tiger_ReleaseOnDetach', vtVoid, False, plC, False)
+     .Param('AReason', vtInt32)
+     .Param('AStr', vtPointer)
+     .&If(AIR.Eq(AIR.Get('AReason'), AIR.Int32(0)))
+        .Call('Tiger_StrRelease', [AIR.Get('AStr')])
+     .EndIf()
+     .Return()
+  .EndFunc();
+
+  AIR.Func('Tiger_StrFromLiteral', vtPointer, False, plC, False)
+     .Param('AData', vtPointer)
+     .Param('ALen', vtUInt64)
+     .Local('LRec', vtPointer)
+     .Local('LData', vtPointer)
+     .Assign('LRec', AIR.Invoke('Tiger_StrAlloc', [AIR.Get('ALen')]));
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.Assign('LData', AIR.GetField(LDeref, 'Data'))
+     .Call('memcpy', [AIR.Get('LData'), AIR.Get('AData'), AIR.Get('ALen')]);
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'Length'), AIR.Get('ALen'))
+     .Call('memset', [AIR.Add(AIR.Get('LData'), AIR.Get('ALen')), AIR.Int64(0), AIR.Int64(1)])
+     .Return(AIR.Get('LRec'))
+  .EndFunc();
+
+  AIR.Func('Tiger_StrFromChar', vtPointer, False, plC, False)
+     .Param('AChar', vtUInt64)
+     .Local('LRec', vtPointer)
+     .Local('LData', vtPointer)
+     .Assign('LRec', AIR.Invoke('Tiger_StrAlloc', [AIR.Int64(1)]));
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.Assign('LData', AIR.GetField(LDeref, 'Data'))
+     .Call('memset', [AIR.Get('LData'), AIR.Get('AChar'), AIR.Int64(1)]);
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'Length'), AIR.Int64(1))
+     .Call('memset', [AIR.Add(AIR.Get('LData'), AIR.Int64(1)), AIR.Int64(0), AIR.Int64(1)])
+     .Return(AIR.Get('LRec'))
+  .EndFunc();
+
+  AIR.Func('Tiger_StrConcat', vtPointer, False, plC, False)
+     .Param('AStr1', vtPointer)
+     .Param('AStr2', vtPointer)
+     .Local('LLen1', vtUInt64)
+     .Local('LLen2', vtUInt64)
+     .Local('LTotalLen', vtUInt64)
+     .Local('LRec', vtPointer)
+     .Local('LData', vtPointer)
+     .Local('LData1', vtPointer)
+     .Local('LData2', vtPointer)
+     .&If(AIR.Eq(AIR.Get('AStr1'), AIR.Null()))
+        .Assign('LLen1', AIR.Int64(0))
+     .&Else();
+  LDeref := AIR.Deref(AIR.Get('AStr1'), 'TStringRec');
+  AIR.Assign('LLen1', AIR.GetField(LDeref, 'Length'))
+     .EndIf()
+     .&If(AIR.Eq(AIR.Get('AStr2'), AIR.Null()))
+        .Assign('LLen2', AIR.Int64(0))
+     .&Else();
+  LDeref := AIR.Deref(AIR.Get('AStr2'), 'TStringRec');
+  AIR.Assign('LLen2', AIR.GetField(LDeref, 'Length'))
+     .EndIf()
+     .Assign('LTotalLen', AIR.Add(AIR.Get('LLen1'), AIR.Get('LLen2')))
+     .Assign('LRec', AIR.Invoke('Tiger_StrAlloc', [AIR.Get('LTotalLen')]));
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.Assign('LData', AIR.GetField(LDeref, 'Data'))
+     .&If(AIR.Gt(AIR.Get('LLen1'), AIR.Int64(0)));
+  LDeref := AIR.Deref(AIR.Get('AStr1'), 'TStringRec');
+  AIR.Assign('LData1', AIR.GetField(LDeref, 'Data'))
+        .Call('memcpy', [AIR.Get('LData'), AIR.Get('LData1'), AIR.Get('LLen1')])
+     .EndIf()
+     .&If(AIR.Gt(AIR.Get('LLen2'), AIR.Int64(0)));
+  LDeref := AIR.Deref(AIR.Get('AStr2'), 'TStringRec');
+  AIR.Assign('LData2', AIR.GetField(LDeref, 'Data'))
+        .Call('memcpy', [AIR.Add(AIR.Get('LData'), AIR.Get('LLen1')), AIR.Get('LData2'), AIR.Get('LLen2')])
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('LRec'), 'TStringRec');
+  AIR.AssignTo(AIR.GetField(LDeref, 'Length'), AIR.Get('LTotalLen'))
+     .Call('memset', [AIR.Add(AIR.Get('LData'), AIR.Get('LTotalLen')), AIR.Int64(0), AIR.Int64(1)])
+     .Return(AIR.Get('LRec'))
+  .EndFunc();
+
+  AIR.Func('Tiger_StrAssign', vtVoid, False, plC, False)
+     .Param('ADest', vtPointer)
+     .Param('ASrc', vtPointer)
+     .Local('LOld', vtPointer)
+     .Assign('LOld', AIR.Deref(AIR.Get('ADest'), vtPointer))
+     .Call('Tiger_StrAddRef', [AIR.Get('ASrc')])
+     .AssignTo(AIR.Deref(AIR.Get('ADest'), vtPointer), AIR.Get('ASrc'))
+     .Call('Tiger_StrRelease', [AIR.Get('LOld')])
+     .Return()
+  .EndFunc();
+
+  AIR.Func('Tiger_StrLen', vtUInt64, False, plC, False)
+     .Param('AStr', vtPointer)
+     .&If(AIR.Eq(AIR.Get('AStr'), AIR.Null()))
+        .Return(AIR.Int64(0))
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('AStr'), 'TStringRec');
+  AIR.Return(AIR.GetField(LDeref, 'Length'))
+  .EndFunc();
+
+  AIR.Func('Tiger_StrCompare', vtInt64, False, plC, False)
+     .Param('AStr1', vtPointer)
+     .Param('AStr2', vtPointer)
+     .Local('LLen1', vtUInt64)
+     .Local('LLen2', vtUInt64)
+     .Local('LMinLen', vtUInt64)
+     .Local('LData1', vtPointer)
+     .Local('LData2', vtPointer)
+     .Local('LResult', vtInt32)
+     .&If(AIR.Eq(AIR.Get('AStr1'), AIR.Null()))
+        .&If(AIR.Eq(AIR.Get('AStr2'), AIR.Null()))
+           .Return(AIR.Int64(0))
+        .EndIf()
+        .Return(AIR.Int64(-1))
+     .EndIf()
+     .&If(AIR.Eq(AIR.Get('AStr2'), AIR.Null()))
+        .Return(AIR.Int64(1))
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('AStr1'), 'TStringRec');
+  AIR.Assign('LLen1', AIR.GetField(LDeref, 'Length'));
+  LDeref := AIR.Deref(AIR.Get('AStr2'), 'TStringRec');
+  AIR.Assign('LLen2', AIR.GetField(LDeref, 'Length'));
+  LDeref := AIR.Deref(AIR.Get('AStr1'), 'TStringRec');
+  AIR.Assign('LData1', AIR.GetField(LDeref, 'Data'));
+  LDeref := AIR.Deref(AIR.Get('AStr2'), 'TStringRec');
+  AIR.Assign('LData2', AIR.GetField(LDeref, 'Data'));
+  AIR.&If(AIR.Lt(AIR.Get('LLen1'), AIR.Get('LLen2')))
+       .Assign('LMinLen', AIR.Get('LLen1'))
+     .&Else()
+       .Assign('LMinLen', AIR.Get('LLen2'))
+     .EndIf();
+  AIR.Assign('LResult', AIR.Invoke('memcmp', [AIR.Get('LData1'), AIR.Get('LData2'), AIR.Get('LMinLen')]))
+     .&If(AIR.Lt(AIR.Get('LResult'), AIR.Int64(0)))
+        .Return(AIR.Int64(-1))
+     .EndIf()
+     .&If(AIR.Gt(AIR.Get('LResult'), AIR.Int64(0)))
+        .Return(AIR.Int64(1))
+     .EndIf()
+     .&If(AIR.Lt(AIR.Get('LLen1'), AIR.Get('LLen2')))
+        .Return(AIR.Int64(-1))
+     .EndIf()
+     .&If(AIR.Gt(AIR.Get('LLen1'), AIR.Get('LLen2')))
+        .Return(AIR.Int64(1))
+     .EndIf()
+     .Return(AIR.Int64(0))
+  .EndFunc();
+
+  AIR.Func('Tiger_StrData', vtPointer, False, plC, False)
+     .Param('AStr', vtPointer)
+     .&If(AIR.Eq(AIR.Get('AStr'), AIR.Null()))
+        .Return(AIR.Null())
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('AStr'), 'TStringRec');
+  AIR.Return(AIR.GetField(LDeref, 'Data'))
+  .EndFunc();
+
+  AIR.Func('Tiger_StrUtf16', vtPointer, False, plC, False)
+     .Param('AStr', vtPointer)
+     .&If(AIR.Eq(AIR.Get('AStr'), AIR.Null()))
+        .Return(AIR.Null())
+     .EndIf();
+  LDeref := AIR.Deref(AIR.Get('AStr'), 'TStringRec');
+  AIR.Return(AIR.GetField(LDeref, 'Data'))
+  .EndFunc();
 end;
 
 //==============================================================================
