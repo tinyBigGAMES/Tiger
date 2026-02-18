@@ -33,7 +33,8 @@ uses
   Tiger.Runtime,
   Tiger.Runtime.Win64,
   Tiger.Runtime.Linux64,
-  Tiger.Runtime.MacOS64;
+  Tiger.Runtime.MacOS64,
+  Tiger.JIT;
 
 //==============================================================================
 // TYPE ALIASES
@@ -109,6 +110,7 @@ type
   ///   </para>
   /// </remarks>
   TTigerLinkage = Tiger.Common.TTigerLinkage;
+  TTigerPlatform = Tiger.Common.TTigerTargetPlatform;
 
   /// <summary>
   ///   Opaque expression handle returned by expression-building methods.
@@ -266,6 +268,25 @@ type
   /// </remarks>
   TTigerOperand = Tiger.Types.TTigerOperand;
 
+  { TTigerJIT }
+  /// <summary>
+  ///   Base class for JIT (Just-In-Time) compiled code execution.
+  ///   Holds executable memory containing compiled machine code and provides
+  ///   methods to retrieve and invoke functions by name or pointer.
+  /// </summary>
+  /// <remarks>
+  ///   <para>
+  ///     TTigerJIT instances are created by <see cref="TTigerBackend.BuildJIT"/>
+  ///     and should be freed when no longer needed. The executable memory is
+  ///     automatically released when the object is destroyed.
+  ///   </para>
+  ///   <para>
+  ///     Platform-specific subclasses (TTigerJITWin64, TTigerJITLinux64) handle
+  ///     memory allocation and dynamic library loading.
+  ///   </para>
+  /// </remarks>
+  TTigerJIT = Tiger.JIT.TTigerJIT;
+
 //==============================================================================
 // ENUM VALUE CONSTANTS
 //==============================================================================
@@ -327,6 +348,14 @@ const
   /// <summary>Fatal error. Compilation is immediately aborted — no further diagnostics are emitted.</summary>
   esFatal   = Tiger.Errors.TErrorSeverity.esFatal;
 
+  //--- Platform ---------------------------------------------------------------
+
+  /// <summary>Windows x86-64 platform (PE/COFF, Microsoft x64 ABI).</summary>
+  tpWin64   = Tiger.Common.TTigerTargetPlatform.tpWin64;
+  /// <summary>Linux x86-64 platform (ELF, System V AMD64 ABI).</summary>
+  tpLinux64 = Tiger.Common.TTigerTargetPlatform.tpLinux64;
+  tpMacOS64 = Tiger.Common.TTigerTargetPlatform.tpMacOS64;
+
   //--- Version ----------------------------------------------------------------
 
   /// <summary>
@@ -341,24 +370,6 @@ const
   TIGER_VERSION_STR = Tiger.Common.TIGER_VERSION_STR;
 
 type
-  //============================================================================
-  // TTigerPlatform — Target Platform
-  //============================================================================
-
-  /// <summary>
-  ///   Target platform for code generation.
-  /// </summary>
-  /// <remarks>
-  ///   Selects the binary format, calling convention, and runtime stubs
-  ///   used during compilation. The default is <c>tpWin64</c> for backward
-  ///   compatibility.
-  /// </remarks>
-  TTigerPlatform = (
-    tpWin64,    // Windows x86-64 (PE/COFF, Microsoft x64 ABI)
-    tpLinux64,  // Linux x86-64 (ELF, System V AMD64 ABI)
-    tpMacOS64   // macOS ARM64 (Mach-O, Apple ARM64 ABI)
-  );
-
   //============================================================================
   // TTiger — Unified Compiler Facade
   //============================================================================
@@ -703,6 +714,37 @@ type
     /// </remarks>
     /// <seealso cref="Build"/>
     function BuildToMemory(): TBytes;
+
+    /// <summary>
+    ///   Compile to executable memory for JIT execution.
+    /// </summary>
+    /// <returns>
+    ///   A <see cref="TTigerJIT"/> instance containing the compiled code.
+    ///   The caller owns this instance and must free it when done.
+    /// </returns>
+    /// <remarks>
+    ///   <para>
+    ///     JIT compilation produces machine code in executable memory that
+    ///     can be called directly from Delphi without writing to disk.
+    ///   </para>
+    ///   <para>
+    ///     Use <see cref="TTigerJIT.GetSymbol"/> to obtain function pointers,
+    ///     or <see cref="TTigerJIT.Invoke"/> for dynamic invocation.
+    ///   </para>
+    /// </remarks>
+    /// <example>
+    ///   <code>
+    ///   LJIT := LTiger.BuildJIT();
+    ///   try
+    ///     Result := LJIT.Invoke('MyAdd', [10, 20]);
+    ///   finally
+    ///     LJIT.Free();
+    ///   end;
+    ///   </code>
+    /// </example>
+    /// <seealso cref="Build"/>
+    /// <seealso cref="BuildToMemory"/>
+    function BuildJIT(): TTigerJIT;
 
     /// <summary>
     ///   Reset the entire compiler state — clears all IR, backend data,
@@ -2588,6 +2630,49 @@ type
     function Neg(const AValue: TTigerExpr): TTigerExpr;
 
     //==========================================================================
+    // Expressions — Float Arithmetic
+    //==========================================================================
+
+    /// <summary>
+    ///   Float addition: result = ALeft + ARight (ADDSD).
+    /// </summary>
+    /// <param name="ALeft">Left float operand.</param>
+    /// <param name="ARight">Right float operand.</param>
+    /// <returns>An expression handle for the float sum.</returns>
+    function FAdd(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+
+    /// <summary>
+    ///   Float subtraction: result = ALeft - ARight (SUBSD).
+    /// </summary>
+    /// <param name="ALeft">Left float operand.</param>
+    /// <param name="ARight">Right float operand.</param>
+    /// <returns>An expression handle for the float difference.</returns>
+    function FSub(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+
+    /// <summary>
+    ///   Float multiplication: result = ALeft * ARight (MULSD).
+    /// </summary>
+    /// <param name="ALeft">Left float operand.</param>
+    /// <param name="ARight">Right float operand.</param>
+    /// <returns>An expression handle for the float product.</returns>
+    function FMul(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+
+    /// <summary>
+    ///   Float division: result = ALeft / ARight (DIVSD).
+    /// </summary>
+    /// <param name="ALeft">Left float operand (dividend).</param>
+    /// <param name="ARight">Right float operand (divisor).</param>
+    /// <returns>An expression handle for the float quotient.</returns>
+    function FDiv(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+
+    /// <summary>
+    ///   Float negation: result = -AValue (0.0 - AValue via SUBSD).
+    /// </summary>
+    /// <param name="AValue">Float operand to negate.</param>
+    /// <returns>An expression handle for the negated float value.</returns>
+    function FNeg(const AValue: TTigerExpr): TTigerExpr;
+
+    //==========================================================================
     // Expressions — Bitwise
     //==========================================================================
 
@@ -3006,7 +3091,8 @@ type
     /// <param name="ASet">Set expression to search.</param>
     /// <returns>A boolean expression (non-zero if the element is in the set).</returns>
     /// <seealso cref="SetLit"/>
-    function SetIn(const AElement: TTigerExpr; const ASet: TTigerExpr): TTigerExpr;
+    function SetIn(const AElement: TTigerExpr; const ASet: TTigerExpr): TTigerExpr; overload;
+    function SetIn(const AElement: TTigerExpr; const ASet: TTigerExpr; const ALowBound: Integer): TTigerExpr; overload;
 
     /// <summary>
     ///   Set equality: tests whether two sets contain exactly the same elements.
@@ -3625,6 +3711,28 @@ begin
 
   // Produce the binary in memory
   Result := FBackend.BuildToMemory();
+end;
+
+function TTiger.BuildJIT(): TTigerJIT;
+begin
+  case FPlatform of
+    tpWin64:   FBackend.Status('Platform: Win64');
+    tpLinux64: FBackend.Status('Platform: Linux64');
+  end;
+
+  // Strip any previously-injected runtime, then mark user code boundary
+  FIR.RestoreSnapshot();
+  FIR.SaveSnapshot();
+
+  // Note: For JIT, we skip runtime injection as the host process
+  // provides the execution environment. Users can call external
+  // functions via ImportDll.
+
+  // Emit IR to the backend
+  FIR.EmitTo(FBackend, FStatus.Callback, FStatus.UserData);
+
+  // Produce JIT-executable code in memory
+  Result := FBackend.BuildJIT();
 end;
 
 procedure TTiger.Reset();
@@ -4451,6 +4559,35 @@ begin
 end;
 
 //------------------------------------------------------------------------------
+// Expressions — Float Arithmetic
+//------------------------------------------------------------------------------
+
+function TTiger.FAdd(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+begin
+  Result := FIR.FAdd(ALeft, ARight);
+end;
+
+function TTiger.FSub(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+begin
+  Result := FIR.FSub(ALeft, ARight);
+end;
+
+function TTiger.FMul(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+begin
+  Result := FIR.FMul(ALeft, ARight);
+end;
+
+function TTiger.FDiv(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
+begin
+  Result := FIR.FDiv(ALeft, ARight);
+end;
+
+function TTiger.FNeg(const AValue: TTigerExpr): TTigerExpr;
+begin
+  Result := FIR.FNeg(AValue);
+end;
+
+//------------------------------------------------------------------------------
 // Expressions — Bitwise
 //------------------------------------------------------------------------------
 
@@ -4660,6 +4797,11 @@ end;
 function TTiger.SetIn(const AElement: TTigerExpr; const ASet: TTigerExpr): TTigerExpr;
 begin
   Result := FIR.SetIn(AElement, ASet);
+end;
+
+function TTiger.SetIn(const AElement: TTigerExpr; const ASet: TTigerExpr; const ALowBound: Integer): TTigerExpr;
+begin
+  Result := FIR.SetIn(AElement, ASet, ALowBound);
 end;
 
 function TTiger.SetEq(const ALeft: TTigerExpr; const ARight: TTigerExpr): TTigerExpr;
