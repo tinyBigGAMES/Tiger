@@ -272,6 +272,7 @@ var
   LDataPageFixups: TList<Cardinal>;  // One ADRP per function that uses globals; targets __data base
   LFuncAddrFixups: TList<TPair<Cardinal, Integer>>;  // Code offset -> (func index shl 8 or reg) for @func
   LLabelOffsets: TDictionary<Integer, Cardinal>;
+  LFloatTemps: TDictionary<Integer, Boolean>;
   LJumpFixups: TList<TPair<Cardinal, Integer>>;
   LCondJumpFixups: TList<TPair<Cardinal, Integer>>;
   LForwardJumpFixups: TList<TPair<Cardinal, Cardinal>>;  // (jump_offset, target_offset) for forward jumps
@@ -997,6 +998,59 @@ var
     end;
   end;
 
+  // LDR Dt / STR Dt (64-bit SIMD&FP) for [FP+disp]. Used for float temps/locals.
+  procedure EmitLdrFpD(const ADt: Byte; const ADisp: Int32);
+  var
+    LOff: Cardinal;
+  begin
+    if ADisp >= 0 then
+    begin
+      LOff := Cardinal(ADisp);
+      if (LOff <= 32760) and ((LOff and 7) = 0) then
+        EmitARM64($FD400000 or ((LOff div 8) shl 10) or (REG_FP shl 5) or ADt)
+      else
+      begin
+        EmitMovRegImm64(REG_X16, LOff);
+        EmitARM64($8B000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+        EmitARM64($FD400000 or (REG_X16 shl 5) or ADt);
+      end;
+    end
+    else if ADisp >= -256 then
+      EmitARM64($FC400000 or (Cardinal(Int32(ADisp) and $1FF) shl 12) or (REG_FP shl 5) or ADt)
+    else
+    begin
+      EmitMovRegImm64(REG_X16, Cardinal(-ADisp));
+      EmitARM64($CB000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+      EmitARM64($FD400000 or (REG_X16 shl 5) or ADt);
+    end;
+  end;
+
+  procedure EmitStrFpD(const ADisp: Int32; const ADt: Byte);
+  var
+    LOff: Cardinal;
+  begin
+    if ADisp >= 0 then
+    begin
+      LOff := Cardinal(ADisp);
+      if (LOff <= 32760) and ((LOff and 7) = 0) then
+        EmitARM64($FD000000 or ((LOff div 8) shl 10) or (REG_FP shl 5) or ADt)
+      else
+      begin
+        EmitMovRegImm64(REG_X16, LOff);
+        EmitARM64($8B000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+        EmitARM64($FD000000 or (REG_X16 shl 5) or ADt);
+      end;
+    end
+    else if ADisp >= -256 then
+      EmitARM64($FC000000 or (Cardinal(Int32(ADisp) and $1FF) shl 12) or (REG_FP shl 5) or ADt)
+    else
+    begin
+      EmitMovRegImm64(REG_X16, Cardinal(-ADisp));
+      EmitARM64($CB000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+      EmitARM64($FD000000 or (REG_X16 shl 5) or ADt);
+    end;
+  end;
+
   procedure EmitBL(const AOffset: Int32);
   var
     LImm26: Cardinal;
@@ -1151,6 +1205,63 @@ var
     end;
   end;
 
+  function IsFloatArg(const AOp: TTigerOperand): Boolean;
+  begin
+    case AOp.Kind of
+      okImmediate:
+        Result := AOp.ValueType in [vtFloat32, vtFloat64];
+      okTemp:
+        Result := LFloatTemps.ContainsKey(AOp.TempHandle.Index);
+      okLocal:
+        begin
+          if (AOp.LocalHandle.Index >= 0) and (AOp.LocalHandle.Index < Length(LFunc.Locals)) then
+            Result := LFunc.Locals[AOp.LocalHandle.Index].LocalType in [vtFloat32, vtFloat64]
+          else
+            Result := False;
+        end;
+    else
+      Result := False;
+    end;
+  end;
+
+  procedure LoadOperandToVReg(const AOp: TTigerOperand; const ADV: Byte);
+  var
+    LBits: UInt64;
+  begin
+    case AOp.Kind of
+      okImmediate:
+        begin
+          LBits := UInt64(PInt64(@AOp.ImmFloat)^);
+          EmitMovRegImm64(REG_X16, LBits);
+          EmitARM64($9E670000 or (REG_X16 shl 5) or ADV);
+        end;
+      okLocal:
+        if AOp.LocalHandle.IsParam then
+          EmitLdrFpD(ADV, GetParamOffset(AOp.LocalHandle.Index))
+        else
+          EmitLdrFpD(ADV, GetLocalOffset(AOp.LocalHandle.Index));
+      okTemp:
+        EmitLdrFpD(ADV, GetTempOffset(AOp.TempHandle.Index));
+    else
+      begin
+        LoadOperandToReg(AOp, REG_X16);
+        EmitARM64($9E670000 or (REG_X16 shl 5) or ADV);
+      end;
+    end;
+  end;
+
+  procedure StoreTempFromVReg(const ATempIndex: Integer; const ADV: Byte);
+  begin
+    if GetTempOffset(ATempIndex) >= -255 then
+      EmitStrFpD(GetTempOffset(ATempIndex), ADV)
+    else
+    begin
+      EmitMovRegImm64(REG_X16, Cardinal(-GetTempOffset(ATempIndex)));
+      EmitARM64($CB000000 or (REG_X16 shl 16) or (REG_FP shl 5) or REG_X16);
+      EmitARM64($FD000000 or (REG_X16 shl 5) or ADV);
+    end;
+  end;
+
   procedure WriteFixedAnsiObj(const LObjStream : TStream; const AText: AnsiString; const ASize: Integer);
   var
     LBuf: TBytes;
@@ -1199,6 +1310,7 @@ begin
   LCondJumpFixups := TList<TPair<Cardinal, Integer>>.Create();
   LForwardJumpFixups := TList<TPair<Cardinal, Cardinal>>.Create();  // (jump_offset, target_offset) for forward jumps
   LLabelOffsets := TDictionary<Integer, Cardinal>.Create();
+  LFloatTemps := TDictionary<Integer, Boolean>.Create();
   LTryBeginLabels := TDictionary<Integer, Integer>.Create();
   LExceptLabels := TDictionary<Integer, Integer>.Create();
   LFinallyLabels := TDictionary<Integer, Integer>.Create();
@@ -1429,6 +1541,22 @@ begin
         EmitBL(0);
       end;
 
+      LFloatTemps.Clear();
+      for LJ := 0 to High(LFunc.Instructions) do
+      begin
+        if LFunc.Instructions[LJ].Kind in [ikFAdd, ikFSub, ikFMul, ikFDiv, ikFNeg] then
+          LFloatTemps.AddOrSetValue(LFunc.Instructions[LJ].Dest.Index, True);
+        if (LFunc.Instructions[LJ].Kind = ikLoad) and (LFunc.Instructions[LJ].Op1.Kind = okLocal) then
+        begin
+          if (LFunc.Instructions[LJ].Op1.LocalHandle.Index >= 0) and
+             (LFunc.Instructions[LJ].Op1.LocalHandle.Index < Length(LFunc.Locals)) and
+             (LFunc.Locals[LFunc.Instructions[LJ].Op1.LocalHandle.Index].LocalType in [vtFloat32, vtFloat64]) then
+            LFloatTemps.AddOrSetValue(LFunc.Instructions[LJ].Dest.Index, True);
+        end;
+        if (LFunc.Instructions[LJ].Kind = ikLoadPtr) and LFunc.Instructions[LJ].MemIsFloat then
+          LFloatTemps.AddOrSetValue(LFunc.Instructions[LJ].Dest.Index, True);
+      end;
+
       for LInstrIdx := 0 to High(LFunc.Instructions) do
       begin
         LInstr := LFunc.Instructions[LInstrIdx];
@@ -1503,16 +1631,40 @@ begin
             end;
           ikStore:
             begin
-              LoadOperandToReg(LInstr.Op2, REG_X0);
-              if LInstr.Op1.LocalHandle.IsParam then
-                EmitStrFp(GetParamOffset(LInstr.Op1.LocalHandle.Index), REG_X0)
+              if IsFloatArg(LInstr.Op2) then
+              begin
+                LoadOperandToVReg(LInstr.Op2, 0);
+                if LInstr.Op1.LocalHandle.IsParam then
+                  EmitStrFpD(GetParamOffset(LInstr.Op1.LocalHandle.Index), 0)
+                else
+                  EmitStrFpD(GetLocalOffset(LInstr.Op1.LocalHandle.Index), 0);
+              end
               else
-                EmitStrFp(GetLocalOffset(LInstr.Op1.LocalHandle.Index), REG_X0);
+              begin
+                LoadOperandToReg(LInstr.Op2, REG_X0);
+                if LInstr.Op1.LocalHandle.IsParam then
+                  EmitStrFp(GetParamOffset(LInstr.Op1.LocalHandle.Index), REG_X0)
+                else
+                  EmitStrFp(GetLocalOffset(LInstr.Op1.LocalHandle.Index), REG_X0);
+              end;
             end;
           ikLoad:
             begin
-              LoadOperandToReg(LInstr.Op1, REG_X0);
-              StoreTempFromReg(LInstr.Dest.Index, REG_X0);
+              if (LInstr.Op1.Kind = okLocal) and (LInstr.Op1.LocalHandle.Index >= 0) and
+                 (LInstr.Op1.LocalHandle.Index < Length(LFunc.Locals)) and
+                 (LFunc.Locals[LInstr.Op1.LocalHandle.Index].LocalType in [vtFloat32, vtFloat64]) then
+              begin
+                if LInstr.Op1.LocalHandle.IsParam then
+                  EmitLdrFpD(0, GetParamOffset(LInstr.Op1.LocalHandle.Index))
+                else
+                  EmitLdrFpD(0, GetLocalOffset(LInstr.Op1.LocalHandle.Index));
+                StoreTempFromVReg(LInstr.Dest.Index, 0);
+              end
+              else
+              begin
+                LoadOperandToReg(LInstr.Op1, REG_X0);
+                StoreTempFromReg(LInstr.Dest.Index, REG_X0);
+              end;
             end;
           ikAdd:
             begin
@@ -1568,6 +1720,42 @@ begin
               EmitARM64($9BC07C00 or (REG_X16 shl 16) or (REG_X0 shl 5) or REG_X0);
               EmitARM64($9B000000 or (REG_X16 shl 16) or (REG_X17 shl 10) or (REG_X0 shl 5) or REG_X17);
               StoreTempFromReg(LInstr.Dest.Index, REG_X17);
+            end;
+          ikFAdd:
+            begin
+              LoadOperandToVReg(LInstr.Op1, 0);
+              LoadOperandToVReg(LInstr.Op2, 1);
+              EmitARM64($1E602800 or (1 shl 16) or (0 shl 5) or 0);
+              StoreTempFromVReg(LInstr.Dest.Index, 0);
+            end;
+          ikFSub:
+            begin
+              LoadOperandToVReg(LInstr.Op1, 0);
+              LoadOperandToVReg(LInstr.Op2, 1);
+              EmitARM64($1E603800 or (1 shl 16) or (0 shl 5) or 0);
+              StoreTempFromVReg(LInstr.Dest.Index, 0);
+            end;
+          ikFMul:
+            begin
+              LoadOperandToVReg(LInstr.Op1, 0);
+              LoadOperandToVReg(LInstr.Op2, 1);
+              EmitARM64($1E600800 or (1 shl 16) or (0 shl 5) or 0);
+              StoreTempFromVReg(LInstr.Dest.Index, 0);
+            end;
+          ikFDiv:
+            begin
+              LoadOperandToVReg(LInstr.Op1, 0);
+              LoadOperandToVReg(LInstr.Op2, 1);
+              EmitARM64($1E601800 or (1 shl 16) or (0 shl 5) or 0);
+              StoreTempFromVReg(LInstr.Dest.Index, 0);
+            end;
+          ikFNeg:
+            begin
+              // Negate: 0.0 - value
+              LoadOperandToVReg(LInstr.Op1, 0); // Op1 = 0.0
+              LoadOperandToVReg(LInstr.Op2, 1); // Op2 = value
+              EmitARM64($1E603800 or (1 shl 16) or (0 shl 5) or 0); // FSUB D0, D0, D1
+              StoreTempFromVReg(LInstr.Dest.Index, 0);
             end;
           ikBitAnd:
             begin
@@ -3146,6 +3334,7 @@ begin
     LDylibNames.Free();
     LForwardJumpFixups.Free();
     LCondJumpFixups.Free();
+    LFloatTemps.Free();
     LLabelOffsets.Free();
     LEndLabels.Free();
     LFinallyLabels.Free();

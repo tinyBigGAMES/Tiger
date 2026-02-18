@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -5947,8 +5947,13 @@ begin
     end
     else if AValue.Kind = okImmediate then
     begin
-      // Create a temp for immediate value - use add with 0
-      Result := ABackend.GetCode.OpAdd(AValue, Int64(0));
+      // Create a temp for immediate value.
+      // NOTE: Float immediates must be materialized via float ops; using OpAdd would
+      // treat ImmFloat as ImmInt (0) and break constant-folded float expressions.
+      if AValue.ValueType in [vtFloat32, vtFloat64] then
+        Result := ABackend.GetCode.OpFAdd(AValue, TTigerOperand.FromImm(Double(0.0)))
+      else
+        Result := ABackend.GetCode.OpAdd(AValue, Int64(0));
       AVarTemps.AddOrSetValue(LVarKey, Result);
     end
     else if AValue.Kind = okData then
