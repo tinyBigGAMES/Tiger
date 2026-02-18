@@ -10,7 +10,7 @@
 
 ## What is Tiger? 
 
-**Tiger** is a Delphi-hosted compiler infrastructure that lets you programmatically generate native x86-64 binaries for Windows and Linux — executables, shared libraries, static libraries, and object files — entirely from code. There is no source language to parse. Instead, you construct programs using a fluent Delphi API: define types, declare functions, emit statements and expressions, and call `Build`. Tiger handles SSA-based IR generation, optimization, machine code emission, PE/ELF linking, and resource embedding.
+**Tiger** is a Delphi-hosted compiler infrastructure that lets you programmatically generate native binaries for Windows (x86-64), Linux (x86-64), and macOS (Apple Silicon ARM64) — executables, shared libraries, static libraries, and object files — entirely from code. There is no source language to parse. Instead, you construct programs using a fluent Delphi API: define types, declare functions, emit statements and expressions, and call `Build`. Tiger handles SSA-based IR generation, optimization, machine code emission, PE/ELF linking, and resource embedding.
 
 ```delphi
 LTiger := TTiger.Create(tpWin64);
@@ -46,10 +46,10 @@ Tiger requires only a single `uses Tiger;` clause. There are no external depende
 
 - 🔧 **Programmatic API** — Build native binaries entirely from Delphi code, no parser needed
 - ⚡ **Fluent interface** — Chainable method calls for clean, readable program construction
-- 🎯 **Native binaries** — Generates real x86-64 machine code for Windows and Linux, not bytecode or interpreted output
-- 🌐 **Cross-platform** — Target Windows (PE/COFF) or Linux (ELF) from the same Delphi codebase
-- 🔗 **External imports** — Call Windows APIs, Linux libc, or any shared library function directly
-- 📦 **Static linking** — Produce and consume `.lib`/`.obj` (Windows) or `.a`/`.o` (Linux) files
+- 🎯 **Native binaries** — Generates real machine code: x86-64 for Windows/Linux, ARM64 for macOS (Apple Silicon), not bytecode or interpreted output
+- 🌐 **Cross-platform** — Target Windows (PE/COFF), Linux (ELF), or macOS (Mach-O) from the same Delphi codebase
+- 🔗 **External imports** — Call Windows APIs, Linux libc, libSystem on macOS, or any shared library function directly
+- 📦 **Static linking** — Produce and consume `.lib`/`.obj` (Windows), `.a`/`.o` (Linux/macOS) files
 - 🎛️ **Multiple outputs** — Build executables, DLLs/shared objects, static libraries, or object files
 - 🧬 **Rich type system** — Records, unions, arrays, enums, sets, pointers, and function pointer types
 - 🔀 **Record inheritance** — Extend records with base type fields and correct ABI layout
@@ -57,7 +57,7 @@ Tiger requires only a single `uses Tiger;` clause. There are no external depende
 - 📊 **Fixed and dynamic arrays** — Compile-time sized arrays and runtime-managed dynamic arrays
 - 🔢 **Set types** — Pascal-style sets with membership, union, intersection, and difference operations
 - 🧠 **SSA optimizer** — Constant folding, copy propagation, common subexpression elimination, dead code elimination
-- ⚠️ **Exception handling** — try/except/finally with platform-native mechanisms (Windows SEH, Linux signals)
+- ⚠️ **Exception handling** — try/except/finally with platform-native mechanisms (Windows SEH, Linux signals; macOS Unwind planned)
 - 🔌 **Variadic functions** — Native Tiger varargs with `VaCount` and `VaArg` intrinsics
 - 🔄 **Function overloading** — Multiple functions with the same name resolved by parameter signature
 - 🏷️ **Version info** — Embed metadata and icons in Windows executables
@@ -135,7 +135,14 @@ LTiger := TTiger.Create(tpWin64);
 
 // Target Linux
 LTiger := TTiger.Create(tpLinux64);
+
+// Target macOS (Apple Silicon ARM64)
+LTiger := TTiger.Create(tpMacOS64);
 ```
+
+### Building for macOS (Apple Silicon)
+
+Tiger can generate **Mach-O** executables for macOS on Apple Silicon (ARM64). Use `tpMacOS64` when creating the compiler. The runtime uses **libSystem.B.dylib** for `printf`, `exit`, `malloc`, and `free`; no extra imports are needed for basic console programs. Build from Delphi (on Windows or Mac); the output is a Mach-O binary with no extension. Copy it to an Apple Silicon Mac and run it in Terminal (e.g. `chmod +x hello && ./hello`). Static linking against `.a` archives and dynamic linking via `ImportDll` (e.g. `libSystem.B.dylib`) are supported. Exception handling (Unwind) on macOS is planned for a future release.
 
 ### Platform-Specific Imports
 

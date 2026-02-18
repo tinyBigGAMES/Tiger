@@ -1,4 +1,4 @@
-{===============================================================================
+﻿{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -393,7 +393,7 @@ function SysVComputeArgLocations(
 var
   LI: Integer;
   LIntRegIndex: Integer;
-  LSSERegIndex: Integer;
+  //LSSERegIndex: Integer;
   LStackOffset: Integer;
   LClassification: TSysVClassification;
   LLocation: TSysVArgLocation;
@@ -407,7 +407,7 @@ begin
   else
     LIntRegIndex := 0;
 
-  LSSERegIndex := 0;
+  //LSSERegIndex := 0;
   LStackOffset := 0;
 
   for LI := 0 to High(AArgSizes) do

@@ -81,6 +81,8 @@ type
     function Add(const ADllName, AFuncName: string; const AReturnType: TTigerValueType): TTigerImportHandle; overload;
     function Add(const ADllName, AFuncName: string; const AReturnType: TTigerValueType;
       const AIsStatic: Boolean): TTigerImportHandle; overload;
+    function Add(const ADllName, AFuncName: string; const AReturnType: TTigerValueType;
+      const AIsStatic: Boolean; const AIsVariadic: Boolean): TTigerImportHandle; overload;
 
     procedure Clear();
     function GetEntry(const AHandle: TTigerImportHandle): TTigerImportEntry;
@@ -206,6 +208,11 @@ type
     function OpMul(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
     function OpDiv(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
     function OpMod(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
+    function OpFAdd(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
+    function OpFSub(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
+    function OpFMul(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
+    function OpFDiv(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
+    function OpFNeg(const AValue: TTigerOperand): TTigerTempHandle;
 
     //--------------------------------------------------------------------------
     // Bitwise
@@ -257,8 +264,8 @@ type
     //--------------------------------------------------------------------------
     function Store(const ADest: TTigerLocalHandle; const AValue: TTigerOperand): TTigerCodeBuilder;
     function Load(const ASrc: TTigerLocalHandle): TTigerTempHandle;
-    function StorePtr(const APtr, AValue: TTigerOperand): TTigerCodeBuilder;
-    function LoadPtr(const APtr: TTigerOperand): TTigerTempHandle;
+    function StorePtr(const APtr, AValue: TTigerOperand; const AMemSize: Integer = 0; const AMemIsFloat: Boolean = False): TTigerCodeBuilder;
+    function LoadPtr(const APtr: TTigerOperand; const AMemSize: Integer = 0; const AMemIsFloat: Boolean = False): TTigerTempHandle;
     function AddressOf(const ALocal: TTigerLocalHandle): TTigerTempHandle;
 
     //--------------------------------------------------------------------------
@@ -629,6 +636,13 @@ end;
 
 function TTigerImportBuilder.Add(const ADllName, AFuncName: string;
   const AReturnType: TTigerValueType; const AIsStatic: Boolean): TTigerImportHandle;
+begin
+  Result := Add(ADllName, AFuncName, AReturnType, AIsStatic, False);
+end;
+
+function TTigerImportBuilder.Add(const ADllName, AFuncName: string;
+  const AReturnType: TTigerValueType; const AIsStatic: Boolean;
+  const AIsVariadic: Boolean): TTigerImportHandle;
 var
   LEntry: TTigerImportEntry;
 begin
@@ -637,6 +651,7 @@ begin
   LEntry.IATOffset := 0;
   LEntry.ReturnType := AReturnType;
   LEntry.IsStatic := AIsStatic;
+  LEntry.IsVariadic := AIsVariadic;
 
   Result.Index := FEntries.Count;
   FEntries.Add(LEntry);
@@ -657,6 +672,8 @@ begin
     Result.FuncName := '';
     Result.IATOffset := 0;
     Result.ReturnType := vtVoid;
+    Result.IsStatic := False;
+    Result.IsVariadic := False;
   end;
 end;
 
@@ -804,7 +821,7 @@ function TTigerCodeBuilder.BeginProc(
 var
   LFunc: TTigerFuncInfo;
 begin
-  FillChar(LFunc, SizeOf(LFunc), 0);
+  LFunc := Default(TTigerFuncInfo);
   LFunc.FuncName := AName;
   LFunc.IsEntryPoint := AIsEntryPoint;
   LFunc.IsDllEntry := AIsDllEntry;
@@ -1041,7 +1058,7 @@ function TTigerCodeBuilder.MarkLabel(const ALabel: TTigerLabelHandle): TTigerCod
 var
   LInstr: TTigerInstruction;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikLabel;
   LInstr.LabelTarget := ALabel;
   AddInstr(LInstr);
@@ -1087,7 +1104,7 @@ var
   LInstr: TTigerInstruction;
   LI: Integer;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCallImport;
   LInstr.ImportTarget := AImport;
   LInstr.Dest := TTigerTempHandle.Invalid();
@@ -1110,7 +1127,7 @@ var
   LInstr: TTigerInstruction;
   LI: Integer;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCall;
   LInstr.FuncTarget := AFunc;
   LInstr.Dest := TTigerTempHandle.Invalid();
@@ -1135,7 +1152,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCallImport;
   LInstr.ImportTarget := AImport;
   LInstr.Dest := Result;
@@ -1159,7 +1176,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCall;
   LInstr.FuncTarget := AFunc;
   LInstr.Dest := Result;
@@ -1181,7 +1198,7 @@ var
   LInstr: TTigerInstruction;
   LI: Integer;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCallIndirect;
   LInstr.Op1 := AFuncPtr;  // Function pointer operand
   LInstr.Dest := TTigerTempHandle.Invalid();
@@ -1206,7 +1223,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCallIndirect;
   LInstr.Op1 := AFuncPtr;  // Function pointer operand
   LInstr.Dest := Result;
@@ -1227,7 +1244,7 @@ begin
 
   LFuncHandle.Index := AFuncIndex;
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikLoad;  // Will be resolved as LEA to function address
   LInstr.Dest := Result;
   LInstr.Op1 := TTigerOperand.FromFunc(LFuncHandle);
@@ -1239,7 +1256,7 @@ function TTigerCodeBuilder.Return(): TTigerCodeBuilder;
 var
   LInstr: TTigerInstruction;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikReturn;
   AddInstr(LInstr);
   Result := Self;
@@ -1249,7 +1266,7 @@ function TTigerCodeBuilder.Return(const AValue: TTigerOperand): TTigerCodeBuilde
 var
   LInstr: TTigerInstruction;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikReturnValue;
   LInstr.Op1 := AValue;
   AddInstr(LInstr);
@@ -1262,7 +1279,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikAdd;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1276,7 +1293,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikSub;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1290,7 +1307,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikMul;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1304,7 +1321,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikDiv;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1318,11 +1335,81 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikMod;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
   LInstr.Op2 := ARight;
+  AddInstr(LInstr);
+end;
+
+function TTigerCodeBuilder.OpFAdd(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
+var
+  LInstr: TTigerInstruction;
+begin
+  Result := AllocTemp();
+
+  LInstr := Default(TTigerInstruction);
+  LInstr.Kind := ikFAdd;
+  LInstr.Dest := Result;
+  LInstr.Op1 := ALeft;
+  LInstr.Op2 := ARight;
+  AddInstr(LInstr);
+end;
+
+function TTigerCodeBuilder.OpFSub(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
+var
+  LInstr: TTigerInstruction;
+begin
+  Result := AllocTemp();
+
+  LInstr := Default(TTigerInstruction);
+  LInstr.Kind := ikFSub;
+  LInstr.Dest := Result;
+  LInstr.Op1 := ALeft;
+  LInstr.Op2 := ARight;
+  AddInstr(LInstr);
+end;
+
+function TTigerCodeBuilder.OpFMul(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
+var
+  LInstr: TTigerInstruction;
+begin
+  Result := AllocTemp();
+
+  LInstr := Default(TTigerInstruction);
+  LInstr.Kind := ikFMul;
+  LInstr.Dest := Result;
+  LInstr.Op1 := ALeft;
+  LInstr.Op2 := ARight;
+  AddInstr(LInstr);
+end;
+
+function TTigerCodeBuilder.OpFDiv(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
+var
+  LInstr: TTigerInstruction;
+begin
+  Result := AllocTemp();
+
+  LInstr := Default(TTigerInstruction);
+  LInstr.Kind := ikFDiv;
+  LInstr.Dest := Result;
+  LInstr.Op1 := ALeft;
+  LInstr.Op2 := ARight;
+  AddInstr(LInstr);
+end;
+
+function TTigerCodeBuilder.OpFNeg(const AValue: TTigerOperand): TTigerTempHandle;
+var
+  LInstr: TTigerInstruction;
+begin
+  Result := AllocTemp();
+
+  LInstr := Default(TTigerInstruction);
+  LInstr.Kind := ikFNeg;
+  LInstr.Dest := Result;
+  LInstr.Op1 := TTigerOperand.FromImm(Double(0.0));
+  LInstr.Op2 := AValue;
   AddInstr(LInstr);
 end;
 
@@ -1332,7 +1419,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikBitAnd;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1346,7 +1433,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikBitOr;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1360,7 +1447,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikBitXor;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1374,7 +1461,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikBitNot;
   LInstr.Dest := Result;
   LInstr.Op1 := AValue;
@@ -1387,7 +1474,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikShl;
   LInstr.Dest := Result;
   LInstr.Op1 := AValue;
@@ -1401,7 +1488,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikShr;
   LInstr.Dest := Result;
   LInstr.Op1 := AValue;
@@ -1415,7 +1502,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCmpEq;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1429,7 +1516,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCmpNe;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1443,7 +1530,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCmpLt;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1457,7 +1544,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCmpLe;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1471,7 +1558,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCmpGt;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1485,7 +1572,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikCmpGe;
   LInstr.Dest := Result;
   LInstr.Op1 := ALeft;
@@ -1507,7 +1594,7 @@ begin
   // Create temp with the bit pattern as immediate
   Result := AllocTemp();
   
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikBitOr;  // Use OR with 0 to load immediate
   LInstr.Dest := Result;
   LInstr.Op1 := TTigerOperand.FromImm(0);
@@ -1541,8 +1628,13 @@ var
   LAdjustedElement: TTigerTempHandle;
   LMask: TTigerTempHandle;
   LAndResult: TTigerTempHandle;
+  LMemberResult: TTigerTempHandle;
+  LNotNeg: TTigerTempHandle;
+  LInRange: TTigerTempHandle;
+  LBoundsOk: TTigerTempHandle;
 begin
   // Test if element is in set: ((1 << (element - lowbound)) AND set) <> 0
+  // With bounds check: adjusted must be in [0..63] to avoid SHL wrap-around
   
   // Adjust element by lowbound if needed
   if ALowBound <> 0 then
@@ -1553,6 +1645,11 @@ begin
     LAdjustedElement := OpAdd(AElement, TTigerOperand.FromImm(0));
   end;
   
+  // Bounds check: adjusted >= 0 AND adjusted < 64
+  LNotNeg := CmpGe(TTigerOperand.FromTemp(LAdjustedElement), TTigerOperand.FromImm(0));
+  LInRange := CmpLt(TTigerOperand.FromTemp(LAdjustedElement), TTigerOperand.FromImm(64));
+  LBoundsOk := OpAnd(TTigerOperand.FromTemp(LNotNeg), TTigerOperand.FromTemp(LInRange));
+  
   // Create mask: 1 << adjustedElement
   LMask := OpShl(TTigerOperand.FromImm(1), TTigerOperand.FromTemp(LAdjustedElement));
   
@@ -1560,7 +1657,10 @@ begin
   LAndResult := OpAnd(TTigerOperand.FromTemp(LMask), ASet);
   
   // Compare with 0 (result is 1 if in set, 0 if not)
-  Result := CmpNe(TTigerOperand.FromTemp(LAndResult), TTigerOperand.FromImm(0));
+  LMemberResult := CmpNe(TTigerOperand.FromTemp(LAndResult), TTigerOperand.FromImm(0));
+  
+  // Final result: membership AND bounds check
+  Result := OpAnd(TTigerOperand.FromTemp(LMemberResult), TTigerOperand.FromTemp(LBoundsOk));
 end;
 
 function TTigerCodeBuilder.OpSetEq(const ALeft, ARight: TTigerOperand): TTigerTempHandle;
@@ -1599,7 +1699,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikVaCount;
   LInstr.Dest := Result;
   AddInstr(LInstr);
@@ -1611,7 +1711,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikVaArgAt;
   LInstr.Dest := Result;
   LInstr.Op1 := AIndex;                          // Index expression
@@ -1625,7 +1725,7 @@ var
   LInstr: TTigerInstruction;
   LI: Integer;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikSyscall;
   LInstr.SyscallNr := ANr;
   LInstr.Dest := TTigerTempHandle.Invalid();
@@ -1646,7 +1746,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikSyscall;
   LInstr.SyscallNr := ANr;
   LInstr.Dest := Result;
@@ -1662,7 +1762,7 @@ function TTigerCodeBuilder.Store(const ADest: TTigerLocalHandle; const AValue: T
 var
   LInstr: TTigerInstruction;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikStore;
   LInstr.Op1 := TTigerOperand.FromLocal(ADest);
   LInstr.Op2 := AValue;
@@ -1676,35 +1776,39 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikLoad;
   LInstr.Dest := Result;
   LInstr.Op1 := TTigerOperand.FromLocal(ASrc);
   AddInstr(LInstr);
 end;
 
-function TTigerCodeBuilder.StorePtr(const APtr, AValue: TTigerOperand): TTigerCodeBuilder;
+function TTigerCodeBuilder.StorePtr(const APtr, AValue: TTigerOperand; const AMemSize: Integer; const AMemIsFloat: Boolean): TTigerCodeBuilder;
 var
   LInstr: TTigerInstruction;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikStorePtr;
   LInstr.Op1 := APtr;
   LInstr.Op2 := AValue;
+  LInstr.MemSize := AMemSize;
+  LInstr.MemIsFloat := AMemIsFloat;
   AddInstr(LInstr);
   Result := Self;
 end;
 
-function TTigerCodeBuilder.LoadPtr(const APtr: TTigerOperand): TTigerTempHandle;
+function TTigerCodeBuilder.LoadPtr(const APtr: TTigerOperand; const AMemSize: Integer; const AMemIsFloat: Boolean): TTigerTempHandle;
 var
   LInstr: TTigerInstruction;
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikLoadPtr;
   LInstr.Dest := Result;
   LInstr.Op1 := APtr;
+  LInstr.MemSize := AMemSize;
+  LInstr.MemIsFloat := AMemIsFloat;
   AddInstr(LInstr);
 end;
 
@@ -1714,7 +1818,7 @@ var
 begin
   Result := AllocTemp();
 
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikAddressOf;
   LInstr.Dest := Result;
   LInstr.Op1 := TTigerOperand.FromLocal(ALocal);
@@ -1725,7 +1829,7 @@ function TTigerCodeBuilder.Jump(const ALabel: TTigerLabelHandle): TTigerCodeBuil
 var
   LInstr: TTigerInstruction;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikJump;
   LInstr.LabelTarget := ALabel;
   AddInstr(LInstr);
@@ -1736,7 +1840,7 @@ function TTigerCodeBuilder.JumpIf(const ACond: TTigerOperand; const ALabel: TTig
 var
   LInstr: TTigerInstruction;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikJumpIf;
   LInstr.Op1 := ACond;
   LInstr.LabelTarget := ALabel;
@@ -1748,7 +1852,7 @@ function TTigerCodeBuilder.JumpIfNot(const ACond: TTigerOperand; const ALabel: T
 var
   LInstr: TTigerInstruction;
 begin
-  FillChar(LInstr, SizeOf(LInstr), 0);
+  LInstr := Default(TTigerInstruction);
   LInstr.Kind := ikJumpIfNot;
   LInstr.Op1 := ACond;
   LInstr.LabelTarget := ALabel;
@@ -1766,7 +1870,7 @@ begin
   if (AIndex >= 0) and (AIndex < FFunctions.Count) then
     Result := FFunctions[AIndex]
   else
-    FillChar(Result, SizeOf(Result), 0);
+    Result := Default(TTigerFuncInfo);
 end;
 
 function TTigerCodeBuilder.GetFuncHandle(const AName: string): TTigerFuncHandle;

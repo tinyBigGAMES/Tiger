@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -18,6 +18,7 @@ interface
 uses
   System.SysUtils,
   System.Generics.Collections,
+  System.Generics.Defaults,
   Tiger.Utils,
   Tiger.Common,
   Tiger.Errors,
@@ -81,7 +82,8 @@ type
     sokGlobal,        // Global variable reference
     sokImport,        // Import function reference
     sokFunc,          // Local function reference
-    sokBlock          // Basic block reference (for jumps)
+    sokBlock,         // Basic block reference (for jumps)
+    sokLocalIndex     // Local variable by index (for direct stack access)
   );
 
   //============================================================================
@@ -97,6 +99,7 @@ type
     ImportIndex: Integer;
     FuncIndex: Integer;
     BlockIndex: Integer;
+    LocalIndex: Integer;   // For sokLocalIndex - local variable by index
     FieldName: string;     // For sikFieldAddr - stores field name
     ElementSize: Integer;  // For sikIndexAddr - stores element size
     BitWidth: Integer;     // For bit field operations
@@ -111,6 +114,7 @@ type
     class function FromImport(const AIndex: Integer): TTigerSSAOperand; static;
     class function FromFunc(const AIndex: Integer): TTigerSSAOperand; static;
     class function FromBlock(const AIndex: Integer): TTigerSSAOperand; static;
+    class function FromLocalIndex(const AIndex: Integer): TTigerSSAOperand; static;
     
     function IsValid(): Boolean;
     function ToString(): string;
@@ -128,6 +132,12 @@ type
     sikDiv,           // dest := op1 / op2
     sikMod,           // dest := op1 mod op2
     sikNeg,           // dest := -op1
+    // Float arithmetic
+    sikFAdd,          // dest := float(op1 + op2)
+    sikFSub,          // dest := float(op1 - op2)
+    sikFMul,          // dest := float(op1 * op2)
+    sikFDiv,          // dest := float(op1 / op2)
+    sikFNeg,          // dest := float(-op1)
     
     // Bitwise
     sikBitAnd,        // dest := op1 and op2
@@ -231,6 +241,9 @@ type
     VaArgType: TTigerValueType;  // Type to read vararg as
     // For sikSyscall / sikSyscallAssign
     SyscallNr: Integer;          // Linux syscall number
+    // For sized memory access (field loads/stores)
+    MemSize: Integer;            // 0=default 8 bytes, 1/2/4/8=explicit size
+    MemIsFloat: Boolean;         // True for float32/float64 field access
   end;
 
   //============================================================================
@@ -483,6 +496,7 @@ type
     FStrReleaseFuncIdx: Integer;  // Index of Pax_StrRelease function for string cleanup
     FReportLeaksFuncIdx: Integer;  // Index of Pax_ReportLeaks function (debug only)
     FReleaseOnDetachFuncIdx: Integer;  // Index of Tiger_ReleaseOnDetach for DLL cleanup
+    FExpressionCache: TDictionary<Integer, TTigerSSAVar>;  // Cache for converted expressions per function
     
     // Internal conversion helpers
     procedure ConvertStatements(
@@ -506,6 +520,7 @@ type
       const AOp: TTigerSSAOperand;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     ): TTigerOperand;
     function StoreSSAVar(
@@ -513,30 +528,35 @@ type
       const AValue: TTigerOperand;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     ): TTigerTempHandle;
     procedure EmitCall(
       const AInstr: TTigerSSAInstr;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     );
     function EmitCallWithResult(
       const AInstr: TTigerSSAInstr;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     ): TTigerTempHandle;
     procedure EmitIndirectCall(
       const AInstr: TTigerSSAInstr;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     );
     function EmitIndirectCallWithResult(
       const AInstr: TTigerSSAInstr;
       const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
       const AVarTemps: TDictionary<string, TTigerTempHandle>;
+      const AVarOperands: TDictionary<string, TTigerOperand>;
       const ABackend: TTigerBackend
     ): TTigerTempHandle;
     
@@ -712,6 +732,13 @@ begin
   Result.BlockIndex := AIndex;
 end;
 
+class function TTigerSSAOperand.FromLocalIndex(const AIndex: Integer): TTigerSSAOperand;
+begin
+  Result := Default(TTigerSSAOperand);
+  Result.Kind := sokLocalIndex;
+  Result.LocalIndex := AIndex;
+end;
+
 function TTigerSSAOperand.IsValid(): Boolean;
 begin
   Result := Kind <> sokNone;
@@ -721,13 +748,20 @@ function TTigerSSAOperand.ToString(): string;
 begin
   case Kind of
     sokNone: Result := 'none';
-    sokImmediate: Result := IntToStr(ImmInt);
+    sokImmediate:
+    begin
+      if ImmFloat <> 0.0 then
+        Result := FloatToStr(ImmFloat)
+      else
+        Result := IntToStr(ImmInt);
+    end;
     sokVar: Result := Var_.ToString();
     sokData: Result := Format('data_%d', [DataIndex]);
     sokGlobal: Result := Format('global_%d', [GlobalIndex]);
     sokImport: Result := Format('import_%d', [ImportIndex]);
     sokFunc: Result := Format('func_%d', [FuncIndex]);
     sokBlock: Result := Format('block_%d', [BlockIndex]);
+    sokLocalIndex: Result := Format('local_%d', [LocalIndex]);
   else
     Result := '?';
   end;
@@ -1179,6 +1213,9 @@ var
   LVal2: Int64;
   LResult: Int64;
   LChanged: Boolean;
+  LF1: Double;
+  LF2: Double;
+  LFResult: Double;
 begin
   // Iterate all blocks and instructions
   for LBlockIdx := 0 to AFunc.GetBlockCount() - 1 do
@@ -1321,6 +1358,56 @@ begin
           LBlock.SetInstruction(LInstrIdx, LInstr);
         end;
       end;
+
+      // Float constant folding
+      if (not LChanged) and
+         (LInstr.Op1.Kind = sokImmediate) and
+         (LInstr.Op2.Kind = sokImmediate) and
+         (LInstr.Kind in [sikFAdd, sikFSub, sikFMul, sikFDiv, sikFNeg]) then
+      begin
+        LF1 := LInstr.Op1.ImmFloat;
+        LF2 := LInstr.Op2.ImmFloat;
+        LFResult := 0.0;
+
+        case LInstr.Kind of
+          sikFAdd:
+            begin
+              LFResult := LF1 + LF2;
+              LChanged := True;
+            end;
+          sikFSub:
+            begin
+              LFResult := LF1 - LF2;
+              LChanged := True;
+            end;
+          sikFMul:
+            begin
+              LFResult := LF1 * LF2;
+              LChanged := True;
+            end;
+          sikFDiv:
+            begin
+              if LF2 <> 0.0 then
+              begin
+                LFResult := LF1 / LF2;
+                LChanged := True;
+              end;
+            end;
+          sikFNeg:
+            begin
+              LFResult := -LF1;
+              LChanged := True;
+            end;
+        end;
+
+        if LChanged then
+        begin
+          LInstr.Kind := sikAssign;
+          LInstr.Op1 := TTigerSSAOperand.FromImm(LFResult);
+          LInstr.Op2 := TTigerSSAOperand.None();
+          LBlock.SetInstruction(LInstrIdx, LInstr);
+        end;
+      end;
     end;
   end;
 end;
@@ -1340,13 +1427,13 @@ var
   LInstrIdx: Integer;
   LBlock: TTigerSSABlock;
   LInstr: TTigerSSAInstr;
-  LConstants: TDictionary<string, Int64>;  // Maps var name to constant value
+  LConstants: TDictionary<string, TTigerSSAOperand>;  // Maps var name to constant operand
   LVarKey: string;
-  LConstVal: Int64;
+  LConstOp: TTigerSSAOperand;
   LChanged: Boolean;
   LArgIdx: Integer;
 begin
-  LConstants := TDictionary<string, Int64>.Create();
+  LConstants := TDictionary<string, TTigerSSAOperand>.Create();
   try
     // Pass 1: Collect all variables that are assigned constant values
     for LBlockIdx := 0 to AFunc.GetBlockCount() - 1 do
@@ -1363,7 +1450,7 @@ begin
            (LInstr.Op1.Kind = sokImmediate) then
         begin
           LVarKey := LInstr.Dest.ToString();
-          LConstants.AddOrSetValue(LVarKey, LInstr.Op1.ImmInt);
+          LConstants.AddOrSetValue(LVarKey, LInstr.Op1);
         end;
       end;
     end;
@@ -1382,9 +1469,9 @@ begin
         if (LInstr.Op1.Kind = sokVar) then
         begin
           LVarKey := LInstr.Op1.Var_.ToString();
-          if LConstants.TryGetValue(LVarKey, LConstVal) then
+          if LConstants.TryGetValue(LVarKey, LConstOp) then
           begin
-            LInstr.Op1 := TTigerSSAOperand.FromImm(LConstVal);
+            LInstr.Op1 := LConstOp;
             LChanged := True;
           end;
         end;
@@ -1393,9 +1480,9 @@ begin
         if (LInstr.Op2.Kind = sokVar) then
         begin
           LVarKey := LInstr.Op2.Var_.ToString();
-          if LConstants.TryGetValue(LVarKey, LConstVal) then
+          if LConstants.TryGetValue(LVarKey, LConstOp) then
           begin
-            LInstr.Op2 := TTigerSSAOperand.FromImm(LConstVal);
+            LInstr.Op2 := LConstOp;
             LChanged := True;
           end;
         end;
@@ -1406,9 +1493,9 @@ begin
           if LInstr.CallArgs[LArgIdx].Kind = sokVar then
           begin
             LVarKey := LInstr.CallArgs[LArgIdx].Var_.ToString();
-            if LConstants.TryGetValue(LVarKey, LConstVal) then
+            if LConstants.TryGetValue(LVarKey, LConstOp) then
             begin
-              LInstr.CallArgs[LArgIdx] := TTigerSSAOperand.FromImm(LConstVal);
+              LInstr.CallArgs[LArgIdx] := LConstOp;
               LChanged := True;
             end;
           end;
@@ -1661,6 +1748,7 @@ begin
         
         // Only handle binary arithmetic/comparison ops
         if not (LInstr.Kind in [sikAdd, sikSub, sikMul, sikDiv, sikMod,
+                                sikFAdd, sikFSub, sikFMul, sikFDiv,
                                 sikBitAnd, sikBitOr, sikBitXor, sikShl, sikShr,
                                 sikCmpEq, sikCmpNe, sikCmpLt, sikCmpLe, sikCmpGt, sikCmpGe]) then
           Continue;
@@ -1717,17 +1805,133 @@ var
   LGlobal: TTigerIR.TIRGlobal;
   LManagedLocals: TList<Integer>;  // Indices of managed non-param locals
   LManagedGlobals: TList<Integer>; // Indices of managed globals
+  LManagedTemps: TDictionary<string, TTigerSSAVar>;  // Temps from string-returning calls
+  LTempLastUse: TDictionary<string, Integer>;  // Temp name -> instruction index of last use
   LReleaseInstr: TTigerSSAInstr;
   LLoadInstr: TTigerSSAInstr;
   LFuncIdx: Integer;
+  LTargetFuncIdx: Integer;
+  LTargetFunc: TTigerIR.TIRFunc;
   LI: Integer;
+  LJ: Integer;
   LIsEntryPoint: Boolean;
   LIsDllEntry: Boolean;
+  LIsNoReturnCall: Boolean;
   LReleaseOnDetachFuncIdx: Integer;
   LReasonVar: TTigerSSAVar;
   LParamCount: Integer;
+  LTempName: string;
+  LTempVar: TTigerSSAVar;
+  LUsedVar: string;
+  LInsertions: TList<TPair<Integer, TTigerSSAVar>>;
+  LPair: TPair<Integer, TTigerSSAVar>;
 begin
-  // Collect managed locals that are NOT parameters
+  // Get function index for Tiger_StrRelease
+  LFuncIdx := -1;
+  if Assigned(FSSABuilder) then
+    LFuncIdx := FSSABuilder.GetStrReleaseFuncIdx();
+    
+  //----------------------------------------------------------------------------
+  // Phase 1: Release managed temps after their last use
+  //----------------------------------------------------------------------------
+  if (LFuncIdx >= 0) and Assigned(FIR) then
+  begin
+    for LBlockIdx := 0 to AFunc.GetBlockCount() - 1 do
+    begin
+      LBlock := AFunc.GetBlock(LBlockIdx);
+      LManagedTemps := TDictionary<string, TTigerSSAVar>.Create();
+      LTempLastUse := TDictionary<string, Integer>.Create();
+      try
+        // First pass: find managed temps and their last use in this block
+        for LInstrIdx := 0 to LBlock.GetInstructionCount() - 1 do
+        begin
+          LInstr := LBlock.GetInstruction(LInstrIdx);
+          
+          // Check if this is a call that returns a managed string
+          if (LInstr.Kind = sikCallAssign) and (LInstr.CallTarget.Kind = sokFunc) then
+          begin
+            LTargetFuncIdx := LInstr.CallTarget.FuncIndex;
+            if (LTargetFuncIdx >= 0) and (LTargetFuncIdx < FIR.GetFunctionCount()) then
+            begin
+              LTargetFunc := FIR.GetFunction(LTargetFuncIdx);
+              // Runtime string functions return vtPtr but are actually managed strings
+              if (LTargetFunc.FuncName = 'Tiger_StrFromLiteral') or
+                 (LTargetFunc.FuncName = 'Tiger_StrConcat') or
+                 (LTargetFunc.FuncName = 'Tiger_StrFromChar') then
+              begin
+                // This call returns a string - track the dest temp
+                LTempName := LInstr.Dest.BaseName + '_' + IntToStr(LInstr.Dest.Version);
+                LManagedTemps.AddOrSetValue(LTempName, LInstr.Dest);
+              end;
+            end;
+          end;
+          
+          // Track uses of managed temps in operands
+          if LInstr.Op1.Kind = sokVar then
+          begin
+            LUsedVar := LInstr.Op1.Var_.BaseName + '_' + IntToStr(LInstr.Op1.Var_.Version);
+            if LManagedTemps.ContainsKey(LUsedVar) then
+              LTempLastUse.AddOrSetValue(LUsedVar, LInstrIdx);
+          end;
+          if LInstr.Op2.Kind = sokVar then
+          begin
+            LUsedVar := LInstr.Op2.Var_.BaseName + '_' + IntToStr(LInstr.Op2.Var_.Version);
+            if LManagedTemps.ContainsKey(LUsedVar) then
+              LTempLastUse.AddOrSetValue(LUsedVar, LInstrIdx);
+          end;
+          for LJ := 0 to Length(LInstr.CallArgs) - 1 do
+          begin
+            if LInstr.CallArgs[LJ].Kind = sokVar then
+            begin
+              LUsedVar := LInstr.CallArgs[LJ].Var_.BaseName + '_' + IntToStr(LInstr.CallArgs[LJ].Var_.Version);
+              if LManagedTemps.ContainsKey(LUsedVar) then
+                LTempLastUse.AddOrSetValue(LUsedVar, LInstrIdx);
+            end;
+          end;
+        end;
+        
+        // Second pass: collect insertions (process in reverse order to preserve indices)
+        LInsertions := TList<TPair<Integer, TTigerSSAVar>>.Create();
+        try
+          for LTempName in LTempLastUse.Keys do
+          begin
+            if LManagedTemps.TryGetValue(LTempName, LTempVar) then
+              LInsertions.Add(TPair<Integer, TTigerSSAVar>.Create(LTempLastUse[LTempName], LTempVar));
+          end;
+          
+          // Sort by instruction index descending (insert from end to start)
+          LInsertions.Sort(
+            TComparer<TPair<Integer, TTigerSSAVar>>.Construct(
+              function(const ALeft, ARight: TPair<Integer, TTigerSSAVar>): Integer
+              begin
+                Result := ARight.Key - ALeft.Key;
+              end
+            )
+          );
+          
+          // Insert releases after last use
+          for LPair in LInsertions do
+          begin
+            LReleaseInstr := Default(TTigerSSAInstr);
+            LReleaseInstr.Kind := sikCall;
+            LReleaseInstr.CallTarget := TTigerSSAOperand.FromFunc(LFuncIdx);
+            SetLength(LReleaseInstr.CallArgs, 1);
+            LReleaseInstr.CallArgs[0] := TTigerSSAOperand.FromVar(LPair.Value);
+            LBlock.InsertInstructionAt(LPair.Key + 1, LReleaseInstr);
+          end;
+        finally
+          LInsertions.Free();
+        end;
+      finally
+        LTempLastUse.Free();
+        LManagedTemps.Free();
+      end;
+    end;
+  end;
+  
+  //----------------------------------------------------------------------------
+  // Phase 2: Collect managed locals and globals for cleanup at return
+  //----------------------------------------------------------------------------
   LManagedLocals := TList<Integer>.Create();
   LManagedGlobals := TList<Integer>.Create();
   try
@@ -1779,24 +1983,36 @@ begin
       begin
         LInstr := LBlock.GetInstruction(LInstrIdx);
         
-        // Check for return instructions
-        if LInstr.Kind in [sikReturn, sikReturnValue] then
+        // Check for return instructions OR noreturn calls (block ends with call, no successors)
+        LIsNoReturnCall := (LInstr.Kind = sikCall) and
+                           (LBlock.GetSuccessorCount() = 0) and
+                           (LInstrIdx = LBlock.GetInstructionCount() - 1);
+        
+        if (LInstr.Kind in [sikReturn, sikReturnValue]) or LIsNoReturnCall then
         begin
-          // Insert Pax_StrRelease calls for each managed local BEFORE the return
+          // Insert Tiger_StrRelease calls for each managed local BEFORE the return/noreturn call
           for LI := 0 to LManagedLocals.Count - 1 do
           begin
             LLocal := AFunc.GetLocal(LManagedLocals[LI]);
             
-            // Create call to Pax_StrRelease(localVar)
+            // Load the local value first (bypasses SSA versioning to get actual stack value)
+            LLoadInstr := Default(TTigerSSAInstr);
+            LLoadInstr.Kind := sikLoad;
+            LLoadInstr.Dest := AFunc.NewVersion('_t');
+            LLoadInstr.Op1 := TTigerSSAOperand.FromLocalIndex(LManagedLocals[LI]);
+            LBlock.InsertInstructionAt(LInstrIdx, LLoadInstr);
+            Inc(LInstrIdx);
+            
+            // Create call to Tiger_StrRelease(loadedValue)
             LReleaseInstr := Default(TTigerSSAInstr);
             LReleaseInstr.Kind := sikCall;
             LReleaseInstr.CallTarget := TTigerSSAOperand.FromFunc(LFuncIdx);
             SetLength(LReleaseInstr.CallArgs, 1);
-            LReleaseInstr.CallArgs[0] := TTigerSSAOperand.FromVar(AFunc.CurrentVersion(LLocal.LocalName));
+            LReleaseInstr.CallArgs[0] := TTigerSSAOperand.FromVar(LLoadInstr.Dest);
             
             // Insert before the return instruction
             LBlock.InsertInstructionAt(LInstrIdx, LReleaseInstr);
-            Inc(LInstrIdx);  // Skip past the inserted instruction
+            Inc(LInstrIdx);
           end;
           
           // For entry points, also release managed globals
@@ -1828,7 +2044,8 @@ begin
             // Call Tiger_ReportLeaks after all cleanup (debug mode only)
             // Only for EXE entry points, not DLL entries (DllMain fires on
             // both ATTACH and DETACH, which would produce duplicate reports)
-            if Assigned(FSSABuilder) and (FSSABuilder.GetReportLeaksFuncIdx() >= 0) then
+            // Skip if the noreturn call is Tiger_Halt (it already calls ReportLeaks)
+            if Assigned(FSSABuilder) and (FSSABuilder.GetReportLeaksFuncIdx() >= 0) and (not LIsNoReturnCall) then
             begin
               LReleaseInstr := Default(TTigerSSAInstr);
               LReleaseInstr.Kind := sikCall;
@@ -1918,6 +2135,7 @@ begin
   FFunctions := TObjectList<TTigerSSAFunc>.Create(True);
   FCurrentFuncIndex := -1;
   FPasses := TObjectList<TTigerSSAPass>.Create(True);
+  FExpressionCache := TDictionary<Integer, TTigerSSAVar>.Create();
   
   // Add default optimization passes (order matters!)
   // Level 1: Constant propagation, constant folding, DCE
@@ -1932,6 +2150,7 @@ end;
 
 destructor TTigerSSABuilder.Destroy();
 begin
+  FExpressionCache.Free();
   FPasses.Free();
   FFunctions.Free();
   
@@ -2027,6 +2246,9 @@ begin
     LSSAFunc.CreateBlock('entry');
     LSSAFunc.SetCurrentBlock(0);
     
+    // Clear expression cache for this function
+    FExpressionCache.Clear();
+    
     // Convert statements to SSA
     ConvertStatements(AIR, LI, LSSAFunc);
     
@@ -2090,6 +2312,10 @@ var
   LDestExprNode: TTigerIR.TIRExprNode;
   LObjectExpr: TTigerIR.TIRExprNode;
   LBlockStack: TStack<Integer>;  // Stack of block indices for control flow
+  LForVarStack: TStack<string>;   // Stack of for-loop variable names
+  LForDownToStack: TStack<Boolean>; // Stack of for-loop direction flags
+  LForVar: string;
+  LIsDownTo: Boolean;
   LThenBlock: Integer;
   LElseBlock: Integer;
   LEndBlock: Integer;
@@ -2121,6 +2347,8 @@ var
 begin
   LFunc := AIR.GetFunction(AFuncIndex);
   LBlockStack := TStack<Integer>.Create();
+  LForVarStack := TStack<string>.Create();
+  LForDownToStack := TStack<Boolean>.Create();
   try
     for LI := 0 to LFunc.Stmts.Count - 1 do
     begin
@@ -2272,11 +2500,14 @@ begin
                 end
                 else
                 begin
-                  // Normal field: direct store
+                  // Normal field: direct store (sized for sub-register fields)
                   LInstr := Default(TTigerSSAInstr);
                   LInstr.Kind := sikStore;
                   LInstr.Op1 := TTigerSSAOperand.FromVar(LTempVar);
                   LInstr.Op2 := TTigerSSAOperand.FromVar(LExprVar);
+                  LInstr.MemSize := LDestExprNode.FieldSize;
+                  LInstr.MemIsFloat := LDestExprNode.ResultType.IsPrimitive and
+                    (LDestExprNode.ResultType.Primitive in [vtFloat32, vtFloat64]);
                   ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
                 end;
               end
@@ -2317,11 +2548,14 @@ begin
                 LInstr.Op2.ElementSize := LDestExprNode.ElementSize;
                 ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
                 
-                // Store value to element address
+                // Store value to element address (sized to element)
                 LInstr := Default(TTigerSSAInstr);
                 LInstr.Kind := sikStore;
                 LInstr.Op1 := TTigerSSAOperand.FromVar(LTempVar);
                 LInstr.Op2 := TTigerSSAOperand.FromVar(LExprVar);
+                LInstr.MemSize := LDestExprNode.ElementSize;
+                LInstr.MemIsFloat := LDestExprNode.ResultType.IsPrimitive and
+                  (LDestExprNode.ResultType.Primitive in [vtFloat32, vtFloat64]);
                 ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
               end
               else if (LDestExprNode.Kind = TTigerIR.TIRExprKind.ekUnary) and 
@@ -2664,13 +2898,121 @@ begin
           
         TTigerIR.TIRStmtKind.skForBegin:
           begin
-            // TODO: Implement for loop conversion
-            // Similar to while but with init and increment
+            LCurrentBlockId := ASSAFunc.GetCurrentBlock().GetBlockId();
+            
+            // Evaluate from and to expressions in current block (before loop)
+            LExprVar := ConvertExpression(AIR, LStmt.ForFrom, ASSAFunc);
+            LRightVar := ConvertExpression(AIR, LStmt.ForTo, ASSAFunc);
+            
+            // Assign loop variable = from value
+            LDestVar := ASSAFunc.NewVersion(LStmt.ForVar);
+            LInstr := Default(TTigerSSAInstr);
+            LInstr.Kind := sikAssign;
+            LInstr.Dest := LDestVar;
+            LInstr.Op1 := TTigerSSAOperand.FromVar(LExprVar);
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+            
+            // Create header, body, and end blocks
+            LLoopBlock := ASSAFunc.CreateBlock('for_header');
+            LBodyBlock := ASSAFunc.CreateBlock('for_body');
+            LEndBlock := ASSAFunc.CreateBlock('for_end');
+            
+            // Add edge: current -> header
+            ASSAFunc.GetBlock(LCurrentBlockId).AddSuccessor(LLoopBlock);
+            ASSAFunc.GetBlock(LLoopBlock).AddPredecessor(LCurrentBlockId);
+            
+            // Jump to header
+            LInstr := Default(TTigerSSAInstr);
+            LInstr.Kind := sikJump;
+            LInstr.Op1 := TTigerSSAOperand.FromBlock(LLoopBlock);
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+            
+            // Switch to header block: emit comparison
+            ASSAFunc.SetCurrentBlock(LLoopBlock);
+            
+            // Compare loop variable with to-value
+            LCondVar := ASSAFunc.NewVersion('_t');
+            LInstr := Default(TTigerSSAInstr);
+            if not LStmt.ForDownTo then
+              LInstr.Kind := sikCmpLe   // forVar <= to (ascending)
+            else
+              LInstr.Kind := sikCmpGe;  // forVar >= to (descending)
+            LInstr.Dest := LCondVar;
+            LInstr.Op1 := TTigerSSAOperand.FromVar(ASSAFunc.CurrentVersion(LStmt.ForVar));
+            LInstr.Op2 := TTigerSSAOperand.FromVar(LRightVar);
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+            
+            // Add edges: header -> body (true), header -> end (false)
+            ASSAFunc.GetBlock(LLoopBlock).AddSuccessor(LBodyBlock);
+            ASSAFunc.GetBlock(LLoopBlock).AddSuccessor(LEndBlock);
+            ASSAFunc.GetBlock(LBodyBlock).AddPredecessor(LLoopBlock);
+            ASSAFunc.GetBlock(LEndBlock).AddPredecessor(LLoopBlock);
+            
+            // Branch: if condition true -> body, else -> end
+            LInstr := Default(TTigerSSAInstr);
+            LInstr.Kind := sikJumpIf;
+            LInstr.Op1 := TTigerSSAOperand.FromVar(LCondVar);
+            LInstr.Op2 := TTigerSSAOperand.FromBlock(LBodyBlock);
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+            
+            // Fall through to end
+            LInstr := Default(TTigerSSAInstr);
+            LInstr.Kind := sikJump;
+            LInstr.Op1 := TTigerSSAOperand.FromBlock(LEndBlock);
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+            
+            // Push blocks and loop info for ForEnd
+            LBlockStack.Push(LEndBlock);
+            LBlockStack.Push(LLoopBlock);
+            LForVarStack.Push(LStmt.ForVar);
+            LForDownToStack.Push(LStmt.ForDownTo);
+            
+            // Continue in body block
+            ASSAFunc.SetCurrentBlock(LBodyBlock);
           end;
           
         TTigerIR.TIRStmtKind.skForEnd:
           begin
-            // TODO: Implement for loop end
+            LCurrentBlockId := ASSAFunc.GetCurrentBlock().GetBlockId();
+            
+            // Pop loop info
+            LLoopBlock := LBlockStack.Pop();
+            LEndBlock := LBlockStack.Pop();
+            LForVar := LForVarStack.Pop();
+            LIsDownTo := LForDownToStack.Pop();
+            
+            // Increment (or decrement) loop variable
+            LTempVar := ASSAFunc.NewVersion('_t');
+            LInstr := Default(TTigerSSAInstr);
+            if not LIsDownTo then
+              LInstr.Kind := sikAdd
+            else
+              LInstr.Kind := sikSub;
+            LInstr.Dest := LTempVar;
+            LInstr.Op1 := TTigerSSAOperand.FromVar(ASSAFunc.CurrentVersion(LForVar));
+            LInstr.Op2 := TTigerSSAOperand.FromImm(Int64(1));
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+            
+            // Assign new version of loop variable
+            LDestVar := ASSAFunc.NewVersion(LForVar);
+            LInstr := Default(TTigerSSAInstr);
+            LInstr.Kind := sikAssign;
+            LInstr.Dest := LDestVar;
+            LInstr.Op1 := TTigerSSAOperand.FromVar(LTempVar);
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+            
+            // Add edge: body -> header (back edge)
+            ASSAFunc.GetBlock(LCurrentBlockId).AddSuccessor(LLoopBlock);
+            ASSAFunc.GetBlock(LLoopBlock).AddPredecessor(LCurrentBlockId);
+            
+            // Jump back to header
+            LInstr := Default(TTigerSSAInstr);
+            LInstr.Kind := sikJump;
+            LInstr.Op1 := TTigerSSAOperand.FromBlock(LLoopBlock);
+            ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+            
+            // Continue in end block
+            ASSAFunc.SetCurrentBlock(LEndBlock);
           end;
           
         TTigerIR.TIRStmtKind.skRepeatBegin:
@@ -3073,6 +3415,8 @@ begin
       end;
     end;
   finally
+    LForDownToStack.Free();
+    LForVarStack.Free();
     LBlockStack.Free();
   end;
 end;
@@ -3203,6 +3547,10 @@ begin
     Exit;
   end;
   
+  // Check cache first - if already converted, return cached result
+  if FExpressionCache.TryGetValue(AExprIndex, Result) then
+    Exit;
+  
   LExpr := AIR.GetExpression(AExprIndex);
   
   case LExpr.Kind of
@@ -3297,6 +3645,10 @@ begin
           TTigerIR.TIROpKind.opMul:    LInstr.Kind := sikMul;
           TTigerIR.TIROpKind.opDiv:    LInstr.Kind := sikDiv;
           TTigerIR.TIROpKind.opMod:    LInstr.Kind := sikMod;
+          TTigerIR.TIROpKind.opFAdd:   LInstr.Kind := sikFAdd;
+          TTigerIR.TIROpKind.opFSub:   LInstr.Kind := sikFSub;
+          TTigerIR.TIROpKind.opFMul:   LInstr.Kind := sikFMul;
+          TTigerIR.TIROpKind.opFDiv:   LInstr.Kind := sikFDiv;
           TTigerIR.TIROpKind.opBitAnd: LInstr.Kind := sikBitAnd;
           TTigerIR.TIROpKind.opBitOr:  LInstr.Kind := sikBitOr;
           TTigerIR.TIROpKind.opBitXor: LInstr.Kind := sikBitXor;
@@ -3321,6 +3673,25 @@ begin
           TTigerIR.TIROpKind.opSetSuperset: LInstr.Kind := sikSetSuperset;
         else
           LInstr.Kind := sikNop;
+        end;
+        
+        // Extract LowBound for SetIn
+        if LExpr.Op = TTigerIR.TIROpKind.opSetIn then
+        begin
+          // Prefer explicit LowBound from IR expression (set by TigerLang codegen)
+          if LExpr.SetLowBound <> 0 then
+            LInstr.SetLowBound := LExpr.SetLowBound
+          else
+          begin
+            // Fallback: infer from right operand's set type
+            var LRightExpr := AIR.GetExpression(LExpr.Right);
+            if (not LRightExpr.ResultType.IsPrimitive) and (LRightExpr.ResultType.TypeIndex >= 0) then
+            begin
+              var LTypeEntry := AIR.GetTypeEntry(LRightExpr.ResultType.TypeIndex);
+              if LTypeEntry.Kind = TTigerIR.TIRTypeKind.tkSet then
+                LInstr.SetLowBound := LTypeEntry.SetType.LowBound;
+            end;
+          end;
         end;
         
         ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
@@ -3458,6 +3829,7 @@ begin
           
           case LExpr.Op of
             TTigerIR.TIROpKind.opNeg:    LInstr.Kind := sikNeg;
+            TTigerIR.TIROpKind.opFNeg:   LInstr.Kind := sikFNeg;
             TTigerIR.TIROpKind.opBitNot: LInstr.Kind := sikBitNot;
             TTigerIR.TIROpKind.opNot:    LInstr.Kind := sikBitNot;
             TTigerIR.TIROpKind.opDeref:  LInstr.Kind := sikLoad;
@@ -3658,15 +4030,23 @@ begin
         LInstr.Op2.FieldName := LExpr.FieldName;
         ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
         
-        // Load value from field address
-        LLeftVar := LResultVar;
-        LResultVar := ASSAFunc.NewVersion('_t');
-        
-        LInstr := Default(TTigerSSAInstr);
-        LInstr.Kind := sikLoad;
-        LInstr.Dest := LResultVar;
-        LInstr.Op1 := TTigerSSAOperand.FromVar(LLeftVar);
-        ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+        // For composite (embedded struct) fields, the fieldaddr result IS the
+        // address we need for chaining further field accesses - do NOT load.
+        // Only load for primitive fields to get the actual scalar value.
+        if LExpr.ResultType.IsPrimitive then
+        begin
+          LLeftVar := LResultVar;
+          LResultVar := ASSAFunc.NewVersion('_t');
+          
+          LInstr := Default(TTigerSSAInstr);
+          LInstr.Kind := sikLoad;
+          LInstr.Dest := LResultVar;
+          LInstr.Op1 := TTigerSSAOperand.FromVar(LLeftVar);
+          LInstr.MemSize := LExpr.FieldSize;
+          LInstr.MemIsFloat := LExpr.ResultType.IsPrimitive and
+            (LExpr.ResultType.Primitive in [vtFloat32, vtFloat64]);
+          ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+        end;
         
         // If bit field, extract the bits
         if LExpr.BitWidth > 0 then
@@ -3739,15 +4119,23 @@ begin
         LInstr.Op2.ElementSize := LExpr.ElementSize;  // Use pre-computed element size
         ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
         
-        // Load value from element address
-        LLeftVar := LResultVar;
-        LResultVar := ASSAFunc.NewVersion('_t');
-        
-        LInstr := Default(TTigerSSAInstr);
-        LInstr.Kind := sikLoad;
-        LInstr.Dest := LResultVar;
-        LInstr.Op1 := TTigerSSAOperand.FromVar(LLeftVar);
-        ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+        // For composite (embedded array/record) elements, the indexaddr result IS
+        // the address we need for chaining further indexing — do NOT load.
+        // Only load for primitive elements to get the actual scalar value.
+        if LExpr.ResultType.IsPrimitive then
+        begin
+          // Load scalar value from element address
+          LLeftVar := LResultVar;
+          LResultVar := ASSAFunc.NewVersion('_t');
+          
+          LInstr := Default(TTigerSSAInstr);
+          LInstr.Kind := sikLoad;
+          LInstr.Dest := LResultVar;
+          LInstr.Op1 := TTigerSSAOperand.FromVar(LLeftVar);
+          LInstr.MemSize := LExpr.ElementSize;
+          LInstr.MemIsFloat := LExpr.ResultType.Primitive in [vtFloat32, vtFloat64];
+          ASSAFunc.GetCurrentBlock().AddInstruction(LInstr);
+        end;
         
         Result := LResultVar;
       end;
@@ -3854,6 +4242,10 @@ begin
   else
     Result := TTigerSSAVar.None();
   end;
+  
+  // Cache the result for reuse
+  if Result.IsValid() then
+    FExpressionCache.AddOrSetValue(AExprIndex, Result);
 end;
 
 procedure TTigerSSABuilder.ComputeDominators(const AFunc: TTigerSSAFunc);
@@ -4552,7 +4944,7 @@ begin
   for LI := 0 to FFunctions.Count - 1 do
   begin
     LFunc := FFunctions[LI];
-    LLive[LI] := LFunc.GetIsEntryPoint() or LFunc.GetIsDllEntry();
+    LLive[LI] := LFunc.GetIsEntryPoint() or LFunc.GetIsDllEntry() or LFunc.GetIsPublic();
   end;
 
   //----------------------------------------------------------------------------
@@ -4774,6 +5166,11 @@ begin
             sikSub: LLine := Format('%s = %s - %s', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
             sikMul: LLine := Format('%s = %s * %s', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
             sikDiv: LLine := Format('%s = %s / %s', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
+            sikFAdd: LLine := Format('%s = float(%s + %s)', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
+            sikFSub: LLine := Format('%s = float(%s - %s)', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
+            sikFMul: LLine := Format('%s = float(%s * %s)', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
+            sikFDiv: LLine := Format('%s = float(%s / %s)', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
+            sikFNeg: LLine := Format('%s = float(-%s)', [LInstr.Dest.ToString(), LInstr.Op1.ToString()]);
             sikCmpEq: LLine := Format('%s = %s == %s', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
             sikCmpNe: LLine := Format('%s = %s != %s', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
             sikCmpLt: LLine := Format('%s = %s < %s', [LInstr.Dest.ToString(), LInstr.Op1.ToString(), LInstr.Op2.ToString()]);
@@ -4899,6 +5296,7 @@ var
   LLocalHandles: TDictionary<string, TTigerLocalHandle>;
   LLabelHandles: TDictionary<Integer, TTigerLabelHandle>;
   LVarTemps: TDictionary<string, TTigerTempHandle>;
+  LVarOperands: TDictionary<string, TTigerOperand>;
   LLocalHandle: TTigerLocalHandle;
   LLabelHandle: TTigerLabelHandle;
   LOp1: TTigerOperand;
@@ -4928,6 +5326,7 @@ begin
     LLocalHandles := TDictionary<string, TTigerLocalHandle>.Create();
     LLabelHandles := TDictionary<Integer, TTigerLabelHandle>.Create();
     LVarTemps := TDictionary<string, TTigerTempHandle>.Create();
+    LVarOperands := TDictionary<string, TTigerOperand>.Create();
     try
       //------------------------------------------------------------------------
       // Begin function
@@ -5001,8 +5400,8 @@ begin
           LInstr := LBlock.GetInstruction(LK);
           
           // Resolve operands
-          LOp1 := ResolveOperand(LInstr.Op1, LLocalHandles, LVarTemps, ABackend);
-          LOp2 := ResolveOperand(LInstr.Op2, LLocalHandles, LVarTemps, ABackend);
+          LOp1 := ResolveOperand(LInstr.Op1, LLocalHandles, LVarTemps, LVarOperands, ABackend);
+          LOp2 := ResolveOperand(LInstr.Op2, LLocalHandles, LVarTemps, LVarOperands, ABackend);
           
           case LInstr.Kind of
             sikNop:
@@ -5017,7 +5416,7 @@ begin
                   Continue;
                   
                 // For SSA, we track the temp handle by variable name
-                LDestTemp := StoreSSAVar(LInstr.Dest, LOp1, LLocalHandles, LVarTemps, ABackend);
+                LDestTemp := StoreSSAVar(LInstr.Dest, LOp1, LLocalHandles, LVarTemps, LVarOperands, ABackend);
               end;
               
             sikAdd:
@@ -5054,6 +5453,36 @@ begin
               begin
                 // Negate: 0 - value
                 LDestTemp := ABackend.GetCode.OpSub(0, LOp1);
+                LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
+              end;
+
+            sikFAdd:
+              begin
+                LDestTemp := ABackend.GetCode.OpFAdd(LOp1, LOp2);
+                LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
+              end;
+
+            sikFSub:
+              begin
+                LDestTemp := ABackend.GetCode.OpFSub(LOp1, LOp2);
+                LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
+              end;
+
+            sikFMul:
+              begin
+                LDestTemp := ABackend.GetCode.OpFMul(LOp1, LOp2);
+                LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
+              end;
+
+            sikFDiv:
+              begin
+                LDestTemp := ABackend.GetCode.OpFDiv(LOp1, LOp2);
+                LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
+              end;
+
+            sikFNeg:
+              begin
+                LDestTemp := ABackend.GetCode.OpFNeg(LOp1);
                 LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
               end;
               
@@ -5160,9 +5589,7 @@ begin
               
             sikSetIn:
               begin
-                // Need to get LowBound from the set type - Op2 is the set
-                // For now assume LowBound 0, will need type info propagation
-                LDestTemp := ABackend.GetCode.OpSetIn(LOp1, LOp2, 0);
+                LDestTemp := ABackend.GetCode.OpSetIn(LOp1, LOp2, LInstr.SetLowBound);
                 LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
               end;
               
@@ -5192,13 +5619,26 @@ begin
               
             sikLoad:
               begin
-                LDestTemp := ABackend.GetCode.LoadPtr(LOp1);
-                LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
+                // Handle sokLocalIndex specially - load from local by index
+                if LInstr.Op1.Kind = sokLocalIndex then
+                begin
+                  LLocal := LFunc.GetLocal(LInstr.Op1.LocalIndex);
+                  if LLocalHandles.TryGetValue(LLocal.LocalName, LLocalHandle) then
+                  begin
+                    LDestTemp := ABackend.GetCode.Load(LLocalHandle);
+                    LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
+                  end;
+                end
+                else
+                begin
+                  LDestTemp := ABackend.GetCode.LoadPtr(LOp1, LInstr.MemSize, LInstr.MemIsFloat);
+                  LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
+                end;
               end;
               
             sikStore:
               begin
-                ABackend.GetCode.StorePtr(LOp1, LOp2);
+                ABackend.GetCode.StorePtr(LOp1, LOp2, LInstr.MemSize, LInstr.MemIsFloat);
               end;
               
             sikAddressOf:
@@ -5258,13 +5698,13 @@ begin
             sikCall:
               begin
                 // Call without return value
-                EmitCall(LInstr, LLocalHandles, LVarTemps, ABackend);
+                EmitCall(LInstr, LLocalHandles, LVarTemps, LVarOperands, ABackend);
               end;
               
             sikCallAssign:
               begin
                 // Call with return value
-                LDestTemp := EmitCallWithResult(LInstr, LLocalHandles, LVarTemps, ABackend);
+                LDestTemp := EmitCallWithResult(LInstr, LLocalHandles, LVarTemps, LVarOperands, ABackend);
                 LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
               end;
               
@@ -5278,13 +5718,13 @@ begin
             sikIndirectCall:
               begin
                 // Indirect call (no return value)
-                EmitIndirectCall(LInstr, LLocalHandles, LVarTemps, ABackend);
+                EmitIndirectCall(LInstr, LLocalHandles, LVarTemps, LVarOperands, ABackend);
               end;
               
             sikIndirectCallAssign:
               begin
                 // Indirect call with return value
-                LDestTemp := EmitIndirectCallWithResult(LInstr, LLocalHandles, LVarTemps, ABackend);
+                LDestTemp := EmitIndirectCallWithResult(LInstr, LLocalHandles, LVarTemps, LVarOperands, ABackend);
                 LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
               end;
               
@@ -5315,7 +5755,7 @@ begin
                 // Syscall as statement (discard result)
                 SetLength(LArgs, Length(LInstr.CallArgs));
                 for LM := 0 to High(LInstr.CallArgs) do
-                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, ABackend);
+                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, LVarOperands, ABackend);
                 ABackend.GetCode().EmitSyscall(LInstr.SyscallNr, LArgs);
               end;
 
@@ -5324,7 +5764,7 @@ begin
                 // Syscall as expression (capture result)
                 SetLength(LArgs, Length(LInstr.CallArgs));
                 for LM := 0 to High(LInstr.CallArgs) do
-                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, ABackend);
+                  LArgs[LM] := ResolveOperand(LInstr.CallArgs[LM], LLocalHandles, LVarTemps, LVarOperands, ABackend);
                 LDestTemp := ABackend.GetCode().EmitSyscallFunc(LInstr.SyscallNr, LArgs);
                 LVarTemps.AddOrSetValue(LInstr.Dest.ToString(), LDestTemp);
               end;
@@ -5379,6 +5819,7 @@ begin
       
     finally
       LVarTemps.Free();
+      LVarOperands.Free();
       LLabelHandles.Free();
       LLocalHandles.Free();
     end;
@@ -5391,12 +5832,14 @@ function TTigerSSABuilder.ResolveOperand(
   const AOp: TTigerSSAOperand;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 ): TTigerOperand;
 var
   LLocalHandle: TTigerLocalHandle;
   LTempHandle: TTigerTempHandle;
   LVarKey: string;
+  LOp: TTigerOperand;
 begin
   case AOp.Kind of
     sokNone:
@@ -5418,6 +5861,11 @@ begin
         if AVarTemps.TryGetValue(LVarKey, LTempHandle) then
         begin
           Result := TTigerOperand.FromTemp(LTempHandle);
+        end
+        // Next check if it's a tracked SSA operand (e.g. const string okData kept as-is)
+        else if Assigned(AVarOperands) and AVarOperands.TryGetValue(LVarKey, LOp) then
+        begin
+          Result := LOp;
         end
         // Otherwise check if it's a local/param
         else if ALocalHandles.TryGetValue(AOp.Var_.BaseName, LLocalHandle) then
@@ -5473,6 +5921,7 @@ function TTigerSSABuilder.StoreSSAVar(
   const AValue: TTigerOperand;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 ): TTigerTempHandle;
 var
@@ -5498,12 +5947,19 @@ begin
     end
     else if AValue.Kind = okImmediate then
     begin
-      // Create a temp for immediate value - use add with 0
-      Result := ABackend.GetCode.OpAdd(AValue, Int64(0));
+      // Create a temp for immediate value.
+      // NOTE: Float immediates must be materialized via float ops; using OpAdd would
+      // treat ImmFloat as ImmInt (0) and break constant-folded float expressions.
+      if AValue.ValueType in [vtFloat32, vtFloat64] then
+        Result := ABackend.GetCode.OpFAdd(AValue, TTigerOperand.FromImm(Double(0.0)))
+      else
+        Result := ABackend.GetCode.OpAdd(AValue, Int64(0));
       AVarTemps.AddOrSetValue(LVarKey, Result);
     end
     else if AValue.Kind = okData then
     begin
+      if Assigned(AVarOperands) then
+        AVarOperands.AddOrSetValue(LVarKey, AValue);
       // Create a temp for data address - use add with 0 to materialize address
       Result := ABackend.GetCode.OpAdd(AValue, Int64(0));
       AVarTemps.AddOrSetValue(LVarKey, Result);
@@ -5531,6 +5987,7 @@ procedure TTigerSSABuilder.EmitCall(
   const AInstr: TTigerSSAInstr;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 );
 var
@@ -5562,7 +6019,7 @@ begin
         Continue;
       end;
     end;
-    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, ABackend);
+    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, AVarOperands, ABackend);
   end;
   
   // Call based on target type
@@ -5588,6 +6045,7 @@ function TTigerSSABuilder.EmitCallWithResult(
   const AInstr: TTigerSSAInstr;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 ): TTigerTempHandle;
 var
@@ -5619,7 +6077,7 @@ begin
         Continue;
       end;
     end;
-    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, ABackend);
+    LArgs[LI] := ResolveOperand(LArg, ALocalHandles, AVarTemps, AVarOperands, ABackend);
   end;
   
   // Call based on target type
@@ -5649,6 +6107,7 @@ procedure TTigerSSABuilder.EmitIndirectCall(
   const AInstr: TTigerSSAInstr;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 );
 var
@@ -5657,12 +6116,12 @@ var
   LI: Integer;
 begin
   // Resolve the function pointer operand
-  LFuncPtr := ResolveOperand(AInstr.Op1, ALocalHandles, AVarTemps, ABackend);
+  LFuncPtr := ResolveOperand(AInstr.Op1, ALocalHandles, AVarTemps, AVarOperands, ABackend);
   
   // Resolve arguments
   SetLength(LArgs, Length(AInstr.CallArgs));
   for LI := 0 to High(AInstr.CallArgs) do
-    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, ABackend);
+    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, AVarOperands, ABackend);
   
   // Indirect call through function pointer
   if Length(LArgs) > 0 then
@@ -5675,6 +6134,7 @@ function TTigerSSABuilder.EmitIndirectCallWithResult(
   const AInstr: TTigerSSAInstr;
   const ALocalHandles: TDictionary<string, TTigerLocalHandle>;
   const AVarTemps: TDictionary<string, TTigerTempHandle>;
+  const AVarOperands: TDictionary<string, TTigerOperand>;
   const ABackend: TTigerBackend
 ): TTigerTempHandle;
 var
@@ -5683,12 +6143,12 @@ var
   LI: Integer;
 begin
   // Resolve the function pointer operand
-  LFuncPtr := ResolveOperand(AInstr.Op1, ALocalHandles, AVarTemps, ABackend);
+  LFuncPtr := ResolveOperand(AInstr.Op1, ALocalHandles, AVarTemps, AVarOperands, ABackend);
   
   // Resolve arguments
   SetLength(LArgs, Length(AInstr.CallArgs));
   for LI := 0 to High(AInstr.CallArgs) do
-    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, ABackend);
+    LArgs[LI] := ResolveOperand(AInstr.CallArgs[LI], ALocalHandles, AVarTemps, AVarOperands, ABackend);
   
   // Indirect call through function pointer with result
   if Length(LArgs) > 0 then
@@ -5729,6 +6189,7 @@ begin
   FStrReleaseFuncIdx := -1;
   FReportLeaksFuncIdx := -1;
   FReleaseOnDetachFuncIdx := -1;
+  FExpressionCache.Clear();
   SetLength(FStringHandles, 0);
   SetLength(FImportHandles, 0);
 end;

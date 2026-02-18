@@ -188,6 +188,7 @@ type
     IATOffset: Cardinal;
     ReturnType: TTigerValueType;
     IsStatic: Boolean;
+    IsVariadic: Boolean;   // True for printf etc.; on Darwin ARM64, varargs go on stack
   end;
 
   { TTigerExportEntry }
@@ -239,6 +240,11 @@ type
     ikMul,
     ikDiv,
     ikMod,
+    ikFAdd,    // Float: Dest = Op1 + Op2  (ADDSD)
+    ikFSub,    // Float: Dest = Op1 - Op2  (SUBSD)
+    ikFMul,    // Float: Dest = Op1 * Op2  (MULSD)
+    ikFDiv,    // Float: Dest = Op1 / Op2  (DIVSD)
+    ikFNeg,    // Float: Dest = -Op1       (0.0 - Op1)
     ikBitAnd,
     ikBitOr,
     ikBitXor,
@@ -271,6 +277,8 @@ type
     ImportTarget: TTigerImportHandle;
     Args: TArray<TTigerOperand>;
     SyscallNr: Integer;             // Linux syscall number (for ikSyscall)
+    MemSize: Integer;                // Memory access size (0=default 8, 1/2/4/8)
+    MemIsFloat: Boolean;             // True for float32/float64 field access
   end;
 
   { TTigerExceptionScope }

@@ -145,6 +145,12 @@ type
       opDiv,
       opMod,
       opNeg,
+      // Float arithmetic
+      opFAdd,
+      opFSub,
+      opFMul,
+      opFDiv,
+      opFNeg,
       // Bitwise
       opBitAnd,
       opBitOr,
@@ -207,6 +213,8 @@ type
       FuncAddrName: string;      // Name of function to take address of
       // For ekCallIndirect
       IndirectTarget: Integer;   // Expression index of function pointer
+      // For set operations
+      SetLowBound: Integer;      // LowBound for SetIn (element adjustment)
       // For ekSetLiteral
       SetTypeIndex: Integer;     // Index into type registry for set type
       SetElements: TArray<Integer>;  // Individual element values (adjusted by LowBound)
@@ -724,6 +732,11 @@ type
     function IDiv(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function IMod(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function Neg(const AValue: TTigerIRExpr): TTigerIRExpr;
+    function FAdd(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function FSub(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function FMul(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function FDiv(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+    function FNeg(const AValue: TTigerIRExpr): TTigerIRExpr;
 
     //--------------------------------------------------------------------------
     // Expressions - Bitwise
@@ -797,7 +810,8 @@ type
     function SetUnion(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function SetDiff(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function SetInter(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
-    function SetIn(const AElement: TTigerIRExpr; const ASet: TTigerIRExpr): TTigerIRExpr;
+    function SetIn(const AElement: TTigerIRExpr; const ASet: TTigerIRExpr): TTigerIRExpr; overload;
+    function SetIn(const AElement: TTigerIRExpr; const ASet: TTigerIRExpr; const ALowBound: Integer): TTigerIRExpr; overload;
     function SetEq(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function SetNe(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
     function SetSubset(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
@@ -2311,15 +2325,9 @@ begin
   LEntry.SetType.HighBound := AHigh;
   LEntry.SetType.BaseType := TTigerTypeRef.None();
 
-  // Compute storage size based on span
-  if LSpan <= 8 then
-    LEntry.SetType.StorageSize := 1
-  else if LSpan <= 16 then
-    LEntry.SetType.StorageSize := 2
-  else if LSpan <= 32 then
-    LEntry.SetType.StorageSize := 4
-  else
-    LEntry.SetType.StorageSize := 8;
+  // On x86-64, all register-sized values need 8-byte stack slots.
+  // The bit masking in OpSetLiteral handles the actual bit pattern correctly.
+  LEntry.SetType.StorageSize := 8;
 
   FTypes.Add(LEntry);
 end;
@@ -2386,15 +2394,8 @@ begin
   LEntry.SetType.HighBound := LMaxOrd;
   LEntry.SetType.BaseType := TTigerTypeRef.FromComposite(LEnumIndex);
 
-  // Compute storage size based on span
-  if LSpan <= 8 then
-    LEntry.SetType.StorageSize := 1
-  else if LSpan <= 16 then
-    LEntry.SetType.StorageSize := 2
-  else if LSpan <= 32 then
-    LEntry.SetType.StorageSize := 4
-  else
-    LEntry.SetType.StorageSize := 8;
+  // On x86-64, all register-sized values need 8-byte stack slots.
+  LEntry.SetType.StorageSize := 8;
 
   FTypes.Add(LEntry);
 end;
@@ -2973,7 +2974,21 @@ begin
 end;
 
 function TTigerIR.EndFunc(): TTigerIR;
+var
+  LFunc: TIRFunc;
+  LNeedsReturn: Boolean;
 begin
+  // Ensure function has a return statement at the end
+  LFunc := GetCurrentFunc();
+  LNeedsReturn := True;
+  if LFunc.Stmts.Count > 0 then
+  begin
+    if LFunc.Stmts[LFunc.Stmts.Count - 1].Kind in [skReturn, skReturnValue] then
+      LNeedsReturn := False;
+  end;
+  if LNeedsReturn then
+    Return();
+
   FCurrentFunc := -1;
   Result := Self;
 end;
@@ -3725,6 +3740,31 @@ begin
   Result := MakeUnaryExpr(AValue, opNeg);
 end;
 
+function TTigerIR.FAdd(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+begin
+  Result := MakeBinaryExpr(ALeft, ARight, opFAdd);
+end;
+
+function TTigerIR.FSub(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+begin
+  Result := MakeBinaryExpr(ALeft, ARight, opFSub);
+end;
+
+function TTigerIR.FMul(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+begin
+  Result := MakeBinaryExpr(ALeft, ARight, opFMul);
+end;
+
+function TTigerIR.FDiv(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
+begin
+  Result := MakeBinaryExpr(ALeft, ARight, opFDiv);
+end;
+
+function TTigerIR.FNeg(const AValue: TTigerIRExpr): TTigerIRExpr;
+begin
+  Result := MakeUnaryExpr(AValue, opFNeg);
+end;
+
 //==============================================================================
 // TTigerIR - Expressions: Bitwise
 //==============================================================================
@@ -4161,6 +4201,19 @@ begin
   Result := MakeBinaryExpr(AElement, ASet, opSetIn);
 end;
 
+function TTigerIR.SetIn(const AElement: TTigerIRExpr; const ASet: TTigerIRExpr; const ALowBound: Integer): TTigerIRExpr;
+var
+  LNode: TIRExprNode;
+begin
+  LNode := Default(TIRExprNode);
+  LNode.Kind := ekBinary;
+  LNode.Op := opSetIn;
+  LNode.Left := AElement.Index;
+  LNode.Right := ASet.Index;
+  LNode.SetLowBound := ALowBound;
+  Result := AddExpr(LNode);
+end;
+
 function TTigerIR.SetEq(const ALeft: TTigerIRExpr; const ARight: TTigerIRExpr): TTigerIRExpr;
 begin
   Result := MakeBinaryExpr(ALeft, ARight, opSetEq);
@@ -4477,6 +4530,14 @@ begin
             LTemp := ABackend.GetCode().OpDiv(LLeft, LRight);
           opMod:
             LTemp := ABackend.GetCode().OpMod(LLeft, LRight);
+          opFAdd:
+            LTemp := ABackend.GetCode().OpFAdd(LLeft, LRight);
+          opFSub:
+            LTemp := ABackend.GetCode().OpFSub(LLeft, LRight);
+          opFMul:
+            LTemp := ABackend.GetCode().OpFMul(LLeft, LRight);
+          opFDiv:
+            LTemp := ABackend.GetCode().OpFDiv(LLeft, LRight);
           opBitAnd:
             LTemp := ABackend.GetCode().OpAnd(LLeft, LRight);
           opBitOr:
@@ -4543,6 +4604,14 @@ begin
               LLeft := EmitExpr(ABackend, LNode.Left);
               // Negate: 0 - value
               LTemp := ABackend.GetCode().OpSub(0, LLeft);
+              Result := TTigerOperand.FromTemp(LTemp);
+            end;
+
+          opFNeg:
+            begin
+              LLeft := EmitExpr(ABackend, LNode.Left);
+              // Float negate: 0.0 - value
+              LTemp := ABackend.GetCode().OpFNeg(LLeft);
               Result := TTigerOperand.FromTemp(LTemp);
             end;
 
@@ -4647,7 +4716,7 @@ begin
     else
       LImportName := TTigerABIMangler.MangleFunctionWithLinkage(
         FImports[LI].FuncName, FImports[LI].ParamTypes, FImports[LI].Linkage);
-    FImportHandles[LI] := ABackend.GetImports().Add(FImports[LI].DllName, LImportName, FImports[LI].ReturnType, FImports[LI].IsStatic);
+    FImportHandles[LI] := ABackend.GetImports().Add(FImports[LI].DllName, LImportName, FImports[LI].ReturnType, FImports[LI].IsStatic, FImports[LI].IsVarArgs);
   end;
 
   //----------------------------------------------------------------------------

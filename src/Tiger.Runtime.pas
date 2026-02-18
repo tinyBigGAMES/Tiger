@@ -18,6 +18,13 @@ interface
 uses
   Tiger.IR;
 
+//------------------------------------------------------------------------------
+// Compile-time helpers for print/println
+// These are called from codegen to emit printf calls with correct arguments
+//------------------------------------------------------------------------------
+procedure tiger_write(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
+procedure tiger_writeln(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
+
 type
   //============================================================================
   // TTigerRuntime - Base runtime class with virtual methods for platform-
@@ -45,6 +52,9 @@ type
 
     // Exception handling (raise, get code, etc.)
     procedure AddExceptions(const AIR: TTigerIR); virtual;
+
+    // Command-line arguments (paramcount, paramstr)
+    procedure AddCommandLine(const AIR: TTigerIR); virtual;
 
     // Add all runtime support
     procedure AddAll(const AIR: TTigerIR; const AOptLevel: Integer); virtual;
@@ -79,13 +89,35 @@ procedure TTigerRuntime.AddExceptions(const AIR: TTigerIR);
 begin
 end;
 
+procedure TTigerRuntime.AddCommandLine(const AIR: TTigerIR);
+begin
+end;
+
 procedure TTigerRuntime.AddAll(const AIR: TTigerIR; const AOptLevel: Integer);
 begin
   AddIO(AIR);
   AddMemory(AIR, AOptLevel);
   AddStrings(AIR);
   AddExceptions(AIR);
+  AddCommandLine(AIR);
   AddSystem(AIR, AOptLevel);
+end;
+
+//------------------------------------------------------------------------------
+// Compile-time helpers for print/println
+//------------------------------------------------------------------------------
+
+procedure tiger_write(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
+begin
+  if Length(AArgs) > 0 then
+    AIR.Call('printf', AArgs);
+end;
+
+procedure tiger_writeln(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
+begin
+  if Length(AArgs) > 0 then
+    AIR.Call('printf', AArgs);
+  AIR.Call('printf', [AIR.Str(#10)]);
 end;
 
 end.

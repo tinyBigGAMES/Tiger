@@ -9,10 +9,17 @@
   See LICENSE for license information
 ===============================================================================}
 
-unit UTestbed;
+unit UTest.Backend;
 
 interface
 
+uses
+  Tiger;
+
+type
+  TTestType = set of Byte;
+
+procedure RunTest(const ANums: TTestType; const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 procedure RunTestbed();
 
 implementation
@@ -20,12 +27,22 @@ implementation
 uses
   System.SysUtils,
   System.IOUtils,
-  Tiger,
   Tiger.Utils,
   Tiger.Utils.Win64;
 
 const
-  COutputPath = 'output';
+  CBaseOutputPath = 'output';
+
+function OutputPath(const Plat : TTigerPlatform) : string;
+begin
+  var PlatPath : string;
+  case Plat of
+    tpWin64:   PlatPath := 'win';
+    tpLinux64: PlatPath := 'lin';
+    tpMacOS64: PlatPath := 'mac';
+  end;
+  Result := TPath.Combine(CBaseOutputPath, PlatPath);
+end;
 
 (*==============================================================================
   StatusCallback: Console output callback for TTiger build status messages.
@@ -125,7 +142,7 @@ begin
     // Wire up status callback so build progress prints to console
     LTiger.SetStatusCallback(StatusCallback);
 
-    // Platform-specific setup: Windows uses msvcrt.dll, Linux uses libc.so.6
+    // Platform-specific setup: Windows uses msvcrt.dll, Linux uses libc, macOS uses libSystem
     if LTiger.GetPlatform = tpWin64 then
     begin
       // Embed version info and icon into the Windows executable
@@ -133,6 +150,8 @@ begin
       // Import printf from Microsoft C Runtime (variadic = True)
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
+    else if LTiger.GetPlatform = tpMacOS64 then
+      // macOS: runtime injects libSystem.B.dylib with printf, exit; no ImportDll needed
     else
       // Linux: import printf from GNU C Library
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
@@ -146,7 +165,7 @@ begin
     .EndFunc();
 
     // Set output path and subsystem (console application)
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_HelloWorld'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_HelloWorld'), ssConsole);
 
     // Compile, link, and optionally run the executable
     ProcessBuild(LTiger, ADumpSSA);
@@ -225,7 +244,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_Factorial_WhileLoop'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_Factorial_WhileLoop'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -313,7 +332,7 @@ begin
     if LTiger.GetPlatform = tpWin64 then
       SetExeResources(LTiger, 'Test_SSA_O0.exe');
     LTiger.SetOptimizationLevel(0);
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SSA_O0'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_SSA_O0'), ssConsole);
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
 
@@ -326,7 +345,7 @@ begin
     LTiger.SetOptimizationLevel(1);
     if LTiger.GetPlatform = tpWin64 then
       SetExeResources(LTiger, 'Test_SSA_O1.exe');
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SSA_O1'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_SSA_O1'), ssConsole);
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
 
@@ -339,7 +358,7 @@ begin
     if LTiger.GetPlatform = tpWin64 then
       SetExeResources(LTiger, 'Test_SSA_O2.exe');
     LTiger.SetOptimizationLevel(2);
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SSA_O2'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_SSA_O2'), ssConsole);
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
   finally
@@ -414,7 +433,7 @@ procedure Test_SSA_FreshInstance(const APlatform: TTigerPlatform=tpWin64; const 
       if LTiger.GetPlatform = tpWin64 then
         SetExeResources(LTiger, AOutputName);
       LTiger.SetOptimizationLevel(AOptLevel);
-      LTiger.TargetExe(TPath.Combine(COutputPath, AOutputName), ssConsole);
+      LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), AOutputName), ssConsole);
 
       ProcessBuild(LTiger, ADumpSSA);
       ShowErrors(LTiger);
@@ -504,7 +523,7 @@ begin
     // Run at optimization level 2 to stress-test phi handling
     TWin64Utils.PrintLn('--- Loop Test: Optimization Level 2 ---');
     LTiger.SetOptimizationLevel(2);
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SSA_LoopPhiNodes'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_SSA_LoopPhiNodes'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -610,7 +629,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_CaseStatement'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_CaseStatement'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -694,7 +713,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_GlobalVariables'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_GlobalVariables'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -904,7 +923,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_TypeSystem'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_TypeSystem'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1294,7 +1313,7 @@ begin
        .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_CStructABI'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_CStructABI'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1473,7 +1492,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_TypedPointers'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_TypedPointers'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1602,7 +1621,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_FunctionPointers'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_FunctionPointers'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1712,7 +1731,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_PublicExports'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_PublicExports'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1823,7 +1842,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_FunctionOverloading'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_FunctionOverloading'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -1950,7 +1969,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_RuntimeMemory'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_RuntimeMemory'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2103,7 +2122,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_ManagedStrings.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_ManagedStrings.exe'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2171,7 +2190,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_Printf_Basic.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_Printf_Basic.exe'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2362,7 +2381,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SetTypes'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_SetTypes'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2566,7 +2585,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_Intrinsics'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_Intrinsics'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2720,7 +2739,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_VariadicFunctions'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_VariadicFunctions'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2838,7 +2857,7 @@ begin
       .Return(LTiger.Invoke('PrivateHelper', [LTiger.Get('a'), LTiger.Get('b')]))
     .EndFunc();
 
-    LTiger.TargetLib(TPath.Combine(COutputPath, 'Test_StaticLinking' + LLibExt));
+    LTiger.TargetLib(TPath.Combine(OutputPath(APlatform), 'Test_StaticLinking' + LLibExt));
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -2888,8 +2907,8 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_StaticLinking' + LExeExt), ssConsole);
-    LTiger.AddLibPath(COutputPath);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_StaticLinking' + LExeExt), ssConsole);
+    LTiger.AddLibPath(OutputPath(APlatform));
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -3062,7 +3081,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_StructParamPassing.exe'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_StructParamPassing.exe'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -3138,6 +3157,8 @@ begin
       SetExeResources(LTiger, 'Test_DLLGeneration.dll');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
+    else if LTiger.GetPlatform = tpMacOS64 then
+      LTiger.ImportDll('/usr/lib/libSystem.B.dylib', 'printf', [vtPointer], vtInt32, True)
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
@@ -3172,9 +3193,11 @@ begin
     .EndFunc();
 
     if LTiger.GetPlatform = tpWin64 then
-      LTiger.TargetDll(TPath.Combine(COutputPath, 'Test_DLLGeneration.dll'))
+      LTiger.TargetDll(TPath.Combine(OutputPath(APlatform), 'Test_DLLGeneration.dll'))
+    else if LTiger.GetPlatform = tpMacOS64 then
+      LTiger.TargetDll(TPath.Combine(OutputPath(APlatform), 'libTest_DLLGeneration.dylib'))
     else
-      LTiger.TargetDll(TPath.Combine(COutputPath, 'libTest_DLLGeneration.so'));
+      LTiger.TargetDll(TPath.Combine(OutputPath(APlatform), 'libTest_DLLGeneration.so'));
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -3198,6 +3221,13 @@ begin
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
       LTiger.ImportDll('Test_DLLGeneration.dll', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
       LTiger.ImportDll('Test_DLLGeneration.dll', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
+    end
+    else if LTiger.GetPlatform = tpMacOS64 then
+    begin
+      LTiger.ImportDll('/usr/lib/libSystem.B.dylib', 'printf', [vtPointer], vtInt32, True);
+      // Load from same folder as executable
+      LTiger.ImportDll('@loader_path/libTest_DLLGeneration.dylib', 'AddC', [vtInt32, vtInt32], vtInt32, False, plC);
+      LTiger.ImportDll('@loader_path/libTest_DLLGeneration.dylib', 'AddCpp', [vtInt32, vtInt32], vtInt32, False, plDefault);
     end
     else
     begin
@@ -3228,6 +3258,7 @@ begin
         .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
         .Call('printf', [LTiger.Str('  NOT exported: PrivateHelper, DllMain' + #10)])
     else
+      // Dylib/so have no DllMain; only Windows DLL has that entry point (and it is not exported).
       LTiger
         .Call('printf', [LTiger.Str(#10 + 'Use "readelf -s libTest_DLLGeneration.so" to verify:' + #10)])
         .Call('printf', [LTiger.Str('  Expected exports: AddC, _Z6AddCppii' + #10)])
@@ -3237,7 +3268,7 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_DLLGeneration'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_DLLGeneration'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -3357,9 +3388,9 @@ begin
     .EndFunc();
 
     if LTiger.GetPlatform() = tpWin64 then
-      LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_DynamicLoading.exe'), ssConsole)
+      LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_DynamicLoading.exe'), ssConsole)
     else
-      LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_DynamicLoading'), ssConsole);
+      LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_DynamicLoading'), ssConsole);
 
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
@@ -3438,6 +3469,8 @@ begin
       SetExeResources(LTiger, 'Test_SEH.exe');
       LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
     end
+    else if LTiger.GetPlatform = tpMacOS64 then
+      LTiger.ImportDll('libSystem.B.dylib', 'printf', [vtPointer], vtInt32, True)
     else
       LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
@@ -3528,8 +3561,269 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine(COutputPath, 'Test_SEH'), ssConsole);
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_SEH'), ssConsole);
 
+    ProcessBuild(LTiger, ADumpSSA);
+    ShowErrors(LTiger);
+  finally
+    LTiger.Free();
+  end;
+end;
+
+(*==============================================================================
+  Test_JIT: JIT Compilation and Execution
+
+  PURPOSE:
+    Demonstrates Tiger's JIT (Just-In-Time) compilation capability, allowing
+    code to be compiled directly to executable memory and invoked from Delphi
+    without writing to disk. This enables TCC-style runtime code generation
+    for scripting engines, rule engines, and dynamic code execution.
+
+  WHAT IT TESTS:
+    - BuildJIT() to compile Tiger IR to executable memory
+    - Invoke() for dynamic function invocation by name with parameters
+    - GetSymbol() to retrieve typed function pointers for direct calls
+    - Control flow (while loops, conditionals) in JIT-compiled code
+    - Import resolution (LoadLibrary/GetProcAddress) for DLL calls
+    - Data section handling (string literals via LTiger.Str())
+    - RIP-relative addressing for imports and data references
+    - Proper cleanup via TTigerJIT.Free()
+
+  MEMORY LAYOUT:
+    [Code Section] [Data Section] [Import Address Table]
+
+  PLATFORM NOTES:
+    Win64:   Uses VirtualAlloc with PAGE_EXECUTE_READWRITE
+    Linux64: Uses mmap with PROT_READ|PROT_WRITE|PROT_EXEC (stub)
+
+  EXPECTED OUTPUT:
+    Platform: Win64
+    SSA: Building from high-level IR (3 functions)
+    ...
+    JIT: Generated 456 bytes (code=409, data=26, imports=1)
+    Test 1: Invoke by name
+      MyAdd(10, 20) = 30
+    Test 2: GetSymbol + typed call
+      MyAdd(100, 200) = 300
+    Test 3: Control flow (while loop)
+      Factorial(5) = 120
+    Test 4: Import call + data section
+    JIT printf: value = 42
+    JIT Test: Success!
+==============================================================================*)
+procedure Test_JIT(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+var
+  LTiger: TTiger;
+  LJIT: TTigerJIT;
+  LResult: Int64;
+  LAddFunc: function(A, B: Int64): Int64;
+begin
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('Test_JIT: JIT Compilation and Execution');
+  TWin64Utils.PrintLn('========================================');
+  TWin64Utils.PrintLn('');
+
+
+  // JIT is only supported on Win64 host for now
+  if APlatform <> tpWin64 then
+  begin
+    TWin64Utils.PrintLn('JIT test skipped: only Win64 host is supported');
+    Exit;
+  end;
+
+  LTiger := TTiger.Create(APlatform);
+  try
+    LTiger.SetStatusCallback(StatusCallback);
+    LTiger.SetOptimizationLevel(1);
+
+    //--------------------------------------------------------------------------
+    // Import printf from msvcrt.dll
+    //--------------------------------------------------------------------------
+    LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+
+    //--------------------------------------------------------------------------
+    // Define a simple Add function
+    //--------------------------------------------------------------------------
+    LTiger.Func('MyAdd', vtInt64, False, plDefault, True)  // IsPublic=True
+      .Param('a', vtInt64)
+      .Param('b', vtInt64)
+      .Return(LTiger.Add(LTiger.Get('a'), LTiger.Get('b')))
+    .EndFunc();
+
+    //--------------------------------------------------------------------------
+    // Define a factorial function
+    //--------------------------------------------------------------------------
+    LTiger.Func('Factorial', vtInt64, False, plDefault, True)
+      .Param('n', vtInt64)
+      .Local('result', vtInt64)
+      .Assign('result', LTiger.Int64(1))
+      .&While(LTiger.Gt(LTiger.Get('n'), LTiger.Int64(1)))
+        .Assign('result', LTiger.Mul(LTiger.Get('result'), LTiger.Get('n')))
+        .Assign('n', LTiger.Sub(LTiger.Get('n'), LTiger.Int64(1)))
+      .EndWhile()
+      .Return(LTiger.Get('result'))
+    .EndFunc();
+
+    //--------------------------------------------------------------------------
+    // Define a function that calls printf (tests imports + data section)
+    //--------------------------------------------------------------------------
+    LTiger.Func('PrintValue', vtVoid, False, plDefault, True)
+      .Param('value', vtInt64)
+      .Call('printf', [LTiger.Str('JIT printf: value = %lld'#10), LTiger.Get('value')])
+    .EndFunc();
+
+    //--------------------------------------------------------------------------
+    // JIT compile
+    //--------------------------------------------------------------------------
+    LJIT := LTiger.BuildJIT();
+    try
+      // Test 1: Invoke by name
+      TWin64Utils.PrintLn('Test 1: Invoke by name');
+      LResult := LJIT.Invoke('MyAdd', [10, 20]);
+      TWin64Utils.PrintLn('  MyAdd(10, 20) = ' + IntToStr(LResult) + ' (expected: 30)');
+
+      // Test 2: Get function pointer and cast to procedural type
+      TWin64Utils.PrintLn('Test 2: GetSymbol + typed call');
+      LAddFunc := LJIT.GetSymbol('MyAdd');
+      if Assigned(LAddFunc) then
+      begin
+        LResult := LAddFunc(100, 200);
+        TWin64Utils.PrintLn('  MyAdd(100, 200) = ' + IntToStr(LResult) + ' (expected: 300)');
+      end;
+
+      // Test 3: Factorial (control flow)
+      TWin64Utils.PrintLn('Test 3: Control flow (while loop)');
+      LResult := LJIT.Invoke('Factorial', [5]);
+      TWin64Utils.PrintLn('  Factorial(5) = ' + IntToStr(LResult) + ' (expected: 120)');
+
+      // Test 4: Call printf via JIT (tests imports + data section)
+      TWin64Utils.PrintLn('Test 4: Import call + data section');
+      LJIT.Invoke('PrintValue', [42]);
+
+      TWin64Utils.PrintLn(COLOR_CYAN + 'JIT Test: Success!' + COLOR_RESET);
+    finally
+      LJIT.Free();
+    end;
+
+    ShowErrors(LTiger);
+  finally
+    LTiger.Free();
+  end;
+end;
+
+(*==============================================================================
+  Test_FloatArithmetic: Float64 Arithmetic Operations
+
+  PURPOSE:
+    Validates the complete float arithmetic pipeline: Float64 literals,
+    FAdd/FSub/FMul/FDiv/FNeg operations through IR, SSA optimizer, and
+    backend code generation to native SSE2 instructions (ADDSD, SUBSD,
+    MULSD, DIVSD).
+
+  WHAT IT TESTS:
+    - Float64() for double-precision literal emission
+    - FAdd() for float addition (ADDSD)
+    - FSub() for float subtraction (SUBSD)
+    - FMul() for float multiplication (MULSD)
+    - FDiv() for float division (DIVSD)
+    - FNeg() for float negation (SUBSD from 0.0)
+    - SSA constant folding for float operations
+    - Local variables of type vtFloat64
+    - Passing float results through printf via integer registers (Win64 ABI)
+
+  ALGORITHM:
+    a = 3.14 + 2.86       -> 6.0   (FAdd)
+    b = 10.5 - 3.5        -> 7.0   (FSub)
+    c = 2.5 * 4.0         -> 10.0  (FMul)
+    d = 22.0 / 7.0        -> ~3.14 (FDiv)
+    e = -(5.25)           -> -5.25 (FNeg)
+    print results with %f
+
+  EXPECTED OUTPUT:
+    === Float Arithmetic (constant folded) ===
+    add: 6.000000
+    sub: 7.000000
+    mul: 10.000000
+    div: 3.142857
+    neg: -5.250000
+    === Float Arithmetic (runtime SSE) ===
+    add: 6.000000
+    sub: 7.000000
+    mul: 10.000000
+    div: 3.142857
+    neg: -5.250000
+==============================================================================*)
+procedure Test_FloatArithmetic(const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+var
+  LTiger: TTiger;
+begin
+  LTiger := TTiger.Create(APlatform);
+  try
+    LTiger.SetStatusCallback(StatusCallback);
+    if LTiger.GetPlatform = tpWin64 then
+    begin
+      SetExeResources(LTiger, 'Test_FloatArithmetic.exe');
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True);
+    end
+    else
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+    LTiger.SetOptimizationLevel(1);
+
+    LTiger.Func('main', vtVoid, True)
+      .Local('a', vtFloat64)
+      .Local('b', vtFloat64)
+      .Local('c', vtFloat64)
+      .Local('d', vtFloat64)
+      .Local('e', vtFloat64)
+
+      // FAdd: 3.14 + 2.86 = 6.0
+      .Assign('a', LTiger.FAdd(LTiger.Float64(3.14), LTiger.Float64(2.86)))
+      // FSub: 10.5 - 3.5 = 7.0
+      .Assign('b', LTiger.FSub(LTiger.Float64(10.5), LTiger.Float64(3.5)))
+      // FMul: 2.5 * 4.0 = 10.0
+      .Assign('c', LTiger.FMul(LTiger.Float64(2.5), LTiger.Float64(4.0)))
+      // FDiv: 22.0 / 7.0 = ~3.142857
+      .Assign('d', LTiger.FDiv(LTiger.Float64(22.0), LTiger.Float64(7.0)))
+      // FNeg: -(5.25) = -5.25
+      .Assign('e', LTiger.FNeg(LTiger.Float64(5.25)))
+
+      .Call('printf', [LTiger.Str('=== Float Arithmetic (constant folded) ===' + #10)])
+      .Call('printf', [LTiger.Str('add: %f' + #10), LTiger.Get('a')])
+      .Call('printf', [LTiger.Str('sub: %f' + #10), LTiger.Get('b')])
+      .Call('printf', [LTiger.Str('mul: %f' + #10), LTiger.Get('c')])
+      .Call('printf', [LTiger.Str('div: %f' + #10), LTiger.Get('d')])
+      .Call('printf', [LTiger.Str('neg: %f' + #10), LTiger.Get('e')])
+
+      // --- Runtime SSE path: use locals to prevent constant folding ---
+      .Assign('a', LTiger.Float64(3.14))
+      .Assign('b', LTiger.Float64(2.86))
+      .Assign('c', LTiger.FAdd(LTiger.Get('a'), LTiger.Get('b')))
+      .Call('printf', [LTiger.Str('=== Float Arithmetic (runtime SSE) ===' + #10)])
+      .Call('printf', [LTiger.Str('add: %f' + #10), LTiger.Get('c')])
+
+      .Assign('a', LTiger.Float64(10.5))
+      .Assign('b', LTiger.Float64(3.5))
+      .Assign('c', LTiger.FSub(LTiger.Get('a'), LTiger.Get('b')))
+      .Call('printf', [LTiger.Str('sub: %f' + #10), LTiger.Get('c')])
+
+      .Assign('a', LTiger.Float64(2.5))
+      .Assign('b', LTiger.Float64(4.0))
+      .Assign('c', LTiger.FMul(LTiger.Get('a'), LTiger.Get('b')))
+      .Call('printf', [LTiger.Str('mul: %f' + #10), LTiger.Get('c')])
+
+      .Assign('a', LTiger.Float64(22.0))
+      .Assign('b', LTiger.Float64(7.0))
+      .Assign('c', LTiger.FDiv(LTiger.Get('a'), LTiger.Get('b')))
+      .Call('printf', [LTiger.Str('div: %f' + #10), LTiger.Get('c')])
+
+      .Assign('a', LTiger.Float64(5.25))
+      .Assign('c', LTiger.FNeg(LTiger.Get('a')))
+      .Call('printf', [LTiger.Str('neg: %f' + #10), LTiger.Get('c')])
+
+      .Call('Tiger_Halt', [LTiger.Int64(0)])
+    .EndFunc();
+
+    LTiger.TargetExe(TPath.Combine(OutputPath(APlatform), 'Test_FloatArithmetic'), ssConsole);
     ProcessBuild(LTiger, ADumpSSA);
     ShowErrors(LTiger);
   finally
@@ -3543,8 +3837,9 @@ end;
   Maps test numbers to their descriptive procedure names for easy invocation.
   If ADumpSSA is True, the SSA dump is printed after the build completes.
 ==============================================================================*)
-procedure RunTest(const ANum: Integer; const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
+procedure RunTest(const ANums: TTestType; const APlatform: TTigerPlatform=tpWin64; const ADumpSSA: Boolean=False);
 begin
+  for var ANum in ANums do
   case ANum of
     01: Test_HelloWorld(APlatform, ADumpSSA);
     02: Test_Factorial_WhileLoop(APlatform, ADumpSSA);
@@ -3570,6 +3865,8 @@ begin
     22: Test_DynamicLoading(APlatform, ADumpSSA);
     23: Test_DLLGeneration(APlatform, ADumpSSA);
     24: Test_SEH(APlatform, ADumpSSA);
+    25: Test_JIT(APlatform, ADumpSSA);
+    26: Test_FloatArithmetic(APlatform, ADumpSSA);
   end;
 end;
 
@@ -3581,9 +3878,25 @@ end;
 procedure RunTestbed();
 begin
   try
-    //RunTest(1, tpWin64, False);
-    RunTest(1, tpLinux64, False);
+    var TestNums := [1..26];
+    if ParamCount >= 2 then
+    begin
+      if ParamStr(2).ToUpper <> 'ALL' then
+        TestNums := [StrToIntDef(ParamStr(2),1)];
+    end;
 
+    var TestToRun := 'ALL';
+    if ParamCount >= 1 then
+      TestToRun := ParamStr(1).ToUpper;
+    if TestToRun = 'WINDOWSX64' then
+      RunTest(TestNums, tpWin64, False)
+    else if TestToRun = 'LINUXX64' then
+      RunTest(TestNums, tpLinux64, False)
+    else if TestToRun = 'MACOS64' then
+      RunTest(TestNums, tpMacOS64, False)
+    else
+      for var Plat := Low(TTigerPlatform) to High(TTigerPlatform) do
+        RunTest(TestNums, Plat, False);
   except
     on E: Exception do
     begin
