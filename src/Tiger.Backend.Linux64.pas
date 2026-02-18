@@ -34,7 +34,8 @@ uses
   Tiger.ABI,
   Tiger.ABI.Linux64,
   Tiger.Linker,
-  Tiger.Linker.ELF;
+  Tiger.Linker.ELF,
+  Tiger.JIT;
 
 type
   { TTigerLinux64Backend }
@@ -49,6 +50,7 @@ type
   public
     function TargetExe(const APath: string; const ASubsystem: TTigerSubsystem = ssConsole): TTigerBackend; override;
     function BuildToMemory(): TBytes; override;
+    function BuildJIT(): TTigerJIT; override;
     function Run(): Cardinal; override;
     procedure Clear(); override;
   end;
@@ -97,6 +99,14 @@ begin
     otDll:
       Result := GenerateELF();  // GenerateELF handles both exe and .so
   end;
+end;
+
+function TTigerLinux64Backend.BuildJIT(): TTigerJIT;
+begin
+  // Linux64 JIT requires running on a Linux host with mmap/dlopen support.
+  // This cross-compilation scenario (Windows host, Linux target) does not
+  // support JIT execution. Build to file and run on Linux instead.
+  raise Exception.Create('Linux64 JIT is only available when running on Linux');
 end;
 
 function TTigerLinux64Backend.Run(): Cardinal;
@@ -345,10 +355,16 @@ var
   LSigsetjmpIdx: Integer;
   LInitExceptionsIdx: Integer;
   LInitSignalsIdx: Integer;
+  LInitCommandLineIdx: Integer;
   LScopeIdx: Integer;
   LFrameOffset: Integer;
   LExceptLabelIdx: Integer;
-  LFinallyLabelIdx: Integer;
+  //LFinallyLabelIdx: Integer;
+
+  // Float arg classification for System V ABI
+  LFloatTemps: TDictionary<Integer, Boolean>;
+  LIntArgIdx: Integer;
+  LXmmArgIdx: Integer;
 
   //--------------------------------------------------------------------------
   // Emit helpers (write to LTextSection)
@@ -862,7 +878,9 @@ var
     case AOp.Kind of
       okImmediate:
         begin
-          if (AOp.ImmInt >= 0) and (AOp.ImmInt <= $FFFFFFFF) then
+          if AOp.ImmFloat <> 0.0 then
+            EmitMovRegImm64(AReg, UInt64(PInt64(@AOp.ImmFloat)^))
+          else if (AOp.ImmInt >= 0) and (AOp.ImmInt <= $FFFFFFFF) then
             EmitMovRegImm32(AReg, Cardinal(AOp.ImmInt))
           else
             EmitMovRegImm64(AReg, UInt64(AOp.ImmInt));
@@ -906,6 +924,142 @@ var
         end;
     else
       EmitXorRegReg(AReg);
+    end;
+  end;
+
+  //----------------------------------------------------------------------------
+  // SSE Helpers: Float register operations (XMM0/XMM1)
+  //----------------------------------------------------------------------------
+
+  procedure EmitMovsdXmmMem(const AXmm: Byte; const ABaseReg: Byte; const ADisp: Int32);
+  begin
+    // F2 REX.W 0F 10 ModRM disp32 — MOVSD xmm, [base+disp32]
+    EmitByte($F2);
+    EmitRex(True, AXmm >= 8, False, ABaseReg >= 8);
+    EmitByte($0F);
+    EmitByte($10);
+    EmitModRM(2, AXmm and 7, ABaseReg and 7);
+    EmitInt32(ADisp);
+  end;
+
+  procedure EmitMovsdMemXmm(const ABaseReg: Byte; const ADisp: Int32; const AXmm: Byte);
+  begin
+    // F2 REX.W 0F 11 ModRM disp32 — MOVSD [base+disp32], xmm
+    EmitByte($F2);
+    EmitRex(True, AXmm >= 8, False, ABaseReg >= 8);
+    EmitByte($0F);
+    EmitByte($11);
+    EmitModRM(2, AXmm and 7, ABaseReg and 7);
+    EmitInt32(ADisp);
+  end;
+
+  procedure EmitMovqXmmReg(const AXmm: Byte; const AReg: Byte);
+  begin
+    // 66 REX.W 0F 6E ModRM — MOVQ xmm, r64
+    EmitByte($66);
+    EmitRex(True, AXmm >= 8, False, AReg >= 8);
+    EmitByte($0F);
+    EmitByte($6E);
+    EmitModRM(3, AXmm and 7, AReg and 7);
+  end;
+
+  procedure EmitAddsdXmmXmm(const ADest, ASrc: Byte);
+  begin
+    // F2 0F 58 ModRM — ADDSD xmm, xmm
+    EmitByte($F2);
+    if (ADest >= 8) or (ASrc >= 8) then
+      EmitRex(False, ADest >= 8, False, ASrc >= 8);
+    EmitByte($0F);
+    EmitByte($58);
+    EmitModRM(3, ADest and 7, ASrc and 7);
+  end;
+
+  procedure EmitSubsdXmmXmm(const ADest, ASrc: Byte);
+  begin
+    // F2 0F 5C ModRM — SUBSD xmm, xmm
+    EmitByte($F2);
+    if (ADest >= 8) or (ASrc >= 8) then
+      EmitRex(False, ADest >= 8, False, ASrc >= 8);
+    EmitByte($0F);
+    EmitByte($5C);
+    EmitModRM(3, ADest and 7, ASrc and 7);
+  end;
+
+  procedure EmitMulsdXmmXmm(const ADest, ASrc: Byte);
+  begin
+    // F2 0F 59 ModRM — MULSD xmm, xmm
+    EmitByte($F2);
+    if (ADest >= 8) or (ASrc >= 8) then
+      EmitRex(False, ADest >= 8, False, ASrc >= 8);
+    EmitByte($0F);
+    EmitByte($59);
+    EmitModRM(3, ADest and 7, ASrc and 7);
+  end;
+
+  procedure EmitDivsdXmmXmm(const ADest, ASrc: Byte);
+  begin
+    // F2 0F 5E ModRM — DIVSD xmm, xmm
+    EmitByte($F2);
+    if (ADest >= 8) or (ASrc >= 8) then
+      EmitRex(False, ADest >= 8, False, ASrc >= 8);
+    EmitByte($0F);
+    EmitByte($5E);
+    EmitModRM(3, ADest and 7, ASrc and 7);
+  end;
+
+  procedure LoadOperandToXmm(const AOp: TTigerOperand; const AXmm: Byte);
+  begin
+    case AOp.Kind of
+      okImmediate:
+        begin
+          // Load float bits as int64 into RAX, then MOVQ to XMM
+          EmitMovRegImm64(REG_RAX, UInt64(PInt64(@AOp.ImmFloat)^));
+          EmitMovqXmmReg(AXmm, REG_RAX);
+        end;
+      okLocal:
+        begin
+          if AOp.LocalHandle.IsParam then
+            EmitMovsdXmmMem(AXmm, REG_RBP, GetParamOffset(AOp.LocalHandle.Index))
+          else
+            EmitMovsdXmmMem(AXmm, REG_RBP, GetLocalOffset(AOp.LocalHandle.Index));
+        end;
+      okTemp:
+        EmitMovsdXmmMem(AXmm, REG_RBP, GetTempOffset(AOp.TempHandle.Index));
+    else
+      begin
+        // Fallback: load to RAX via integer path, then move to XMM
+        LoadOperandToReg(AOp, REG_RAX);
+        EmitMovqXmmReg(AXmm, REG_RAX);
+      end;
+    end;
+  end;
+
+  procedure StoreTempFromXmm(const ATempIdx: Integer; const AXmm: Byte);
+  begin
+    EmitMovsdMemXmm(REG_RBP, GetTempOffset(ATempIdx), AXmm);
+  end;
+
+  //--------------------------------------------------------------------------
+  // Classify whether a call argument is a float (for System V ABI splitting)
+  // Float args go in XMM0-7, integer/pointer args go in RDI/RSI/RDX/RCX/R8/R9
+  //--------------------------------------------------------------------------
+  function IsFloatArg(const AOp: TTigerOperand): Boolean;
+  begin
+    case AOp.Kind of
+      okImmediate:
+        Result := AOp.ValueType in [vtFloat32, vtFloat64];
+      okTemp:
+        Result := LFloatTemps.ContainsKey(AOp.TempHandle.Index);
+      okLocal:
+        begin
+          if (AOp.LocalHandle.Index >= 0) and
+             (AOp.LocalHandle.Index < Length(LFunc.Locals)) then
+            Result := LFunc.Locals[AOp.LocalHandle.Index].LocalType in [vtFloat32, vtFloat64]
+          else
+            Result := False;
+        end;
+    else
+      Result := False;
     end;
   end;
 
@@ -1037,6 +1191,7 @@ begin
   LExceptLabels := TDictionary<Integer, Integer>.Create();
   LFinallyLabels := TDictionary<Integer, Integer>.Create();
   LEndLabels := TDictionary<Integer, Integer>.Create();
+  LFloatTemps := TDictionary<Integer, Boolean>.Create();
   LLinker := nil;
   LHasStaticImports := False;
   LHasSEH := False;
@@ -1046,10 +1201,11 @@ begin
   LSigsetjmpIdx := -1;
   LInitExceptionsIdx := -1;
   LInitSignalsIdx := -1;
+  LInitCommandLineIdx := -1;
 
   try
     LHasImports := FImports.GetCount() > 0;
-    LImportCount := FImports.GetCount();
+    //LImportCount := FImports.GetCount();
     LIsSharedObject := (FOutputType = otDll);
 
     // For shared objects, extract SONAME from output path
@@ -1079,7 +1235,9 @@ begin
       else if SameText(LFunc.FuncName, 'Tiger_InitExceptions') then
         LInitExceptionsIdx := LI
       else if SameText(LFunc.FuncName, 'Tiger_InitSignals') then
-        LInitSignalsIdx := LI;
+        LInitSignalsIdx := LI
+      else if SameText(LFunc.FuncName, 'Tiger_InitCommandLine') then
+        LInitCommandLineIdx := LI;
     end;
 
     // Find __sigsetjmp import index
@@ -1496,7 +1654,12 @@ begin
       EmitPushReg(REG_RBP);
       EmitMovRegReg(REG_RBP, REG_RSP);
       if LStackFrameSize > 0 then
-        EmitSubRspImm32(LStackFrameSize);
+      begin
+        if LStackFrameSize > 4096 then
+          EmitStackProbe_x64(LTextSection, LStackFrameSize)
+        else
+          EmitSubRspImm32(LStackFrameSize);
+      end;
 
       // Save incoming parameters (System V: RDI, RSI, RDX, RCX, R8, R9)
       // For variadic functions: RDI = hidden count, then declared params
@@ -1546,6 +1709,31 @@ begin
           EmitMovRbpDispReg(GetParamOffset(4), REG_R8);
         if Length(LFunc.Params) > 5 then
           EmitMovRbpDispReg(GetParamOffset(5), REG_R9);
+      end;
+
+      //----------------------------------------------------------------------
+      // Build float temp set: identify which temps hold float values
+      // This is needed for System V ABI call arg classification
+      //----------------------------------------------------------------------
+      LFloatTemps.Clear();
+      for LJ := 0 to High(LFunc.Instructions) do
+      begin
+        if LFunc.Instructions[LJ].Kind in [ikFAdd, ikFSub, ikFMul, ikFDiv, ikFNeg] then
+          LFloatTemps.AddOrSetValue(LFunc.Instructions[LJ].Dest.Index, True);
+        // ikStore of a float immediate to a local marks that local as float
+        // ikLoad from a float-typed local produces a float temp
+        if (LFunc.Instructions[LJ].Kind = ikLoad) and
+           (LFunc.Instructions[LJ].Op1.Kind = okLocal) then
+        begin
+          if (LFunc.Instructions[LJ].Op1.LocalHandle.Index >= 0) and
+             (LFunc.Instructions[LJ].Op1.LocalHandle.Index < Length(LFunc.Locals)) and
+             (LFunc.Locals[LFunc.Instructions[LJ].Op1.LocalHandle.Index].LocalType in [vtFloat32, vtFloat64]) then
+            LFloatTemps.AddOrSetValue(LFunc.Instructions[LJ].Dest.Index, True);
+        end;
+        // ikLoadPtr from a float-typed memory location produces a float temp
+        if (LFunc.Instructions[LJ].Kind = ikLoadPtr) and
+           LFunc.Instructions[LJ].MemIsFloat then
+          LFloatTemps.AddOrSetValue(LFunc.Instructions[LJ].Dest.Index, True);
       end;
 
       //----------------------------------------------------------------------
@@ -1670,18 +1858,74 @@ begin
 
           ikLoadPtr:
             begin
-              // Load value at pointer: dest = [Op1]
+              // Dest = value at pointer Op1 (sized by MemSize)
               LoadOperandToReg(LInstr.Op1, REG_RAX);
-              EmitMovRegMemReg(REG_RAX, REG_RAX);
+              if LInstr.MemIsFloat and (LInstr.MemSize = 4) then
+              begin
+                // Float32 field: movss xmm0,[rax]; cvtss2sd xmm0,xmm0; movq rax,xmm0
+                EmitByte($F3); EmitByte($0F); EmitByte($10); EmitByte($00);
+                EmitByte($F3); EmitByte($0F); EmitByte($5A); EmitByte($C0);
+                EmitByte($66); EmitByte($48); EmitByte($0F); EmitByte($7E); EmitByte($C0);
+              end
+              else
+              begin
+                case LInstr.MemSize of
+                  1: begin
+                       // movzx eax, byte [rax] — zero-extend 8-bit
+                       EmitByte($0F); EmitByte($B6);
+                       EmitModRM(0, REG_RAX and 7, REG_RAX and 7);
+                     end;
+                  2: begin
+                       // movzx eax, word [rax] — zero-extend 16-bit
+                       EmitByte($0F); EmitByte($B7);
+                       EmitModRM(0, REG_RAX and 7, REG_RAX and 7);
+                     end;
+                  4: begin
+                       // mov eax, [rax] — 32-bit, implicit zero-extend to 64
+                       EmitByte($8B);
+                       EmitModRM(0, REG_RAX and 7, REG_RAX and 7);
+                     end;
+                else
+                  EmitMovRegMemReg(REG_RAX, REG_RAX);  // mov rax, [rax] — full 64-bit
+                end;
+              end;
               StoreTempFromReg(LInstr.Dest.Index, REG_RAX);
             end;
 
           ikStorePtr:
             begin
-              // Store Op2 to address in Op1: [Op1] = Op2
+              // Store Op2 to address in Op1 (sized by MemSize)
               LoadOperandToReg(LInstr.Op1, REG_RAX);
               LoadOperandToReg(LInstr.Op2, REG_RCX);
-              EmitMovMemRegReg(REG_RAX, REG_RCX);
+              if LInstr.MemIsFloat and (LInstr.MemSize = 4) then
+              begin
+                // Float32 field: movq xmm0,rcx; cvtsd2ss xmm0,xmm0; movss [rax],xmm0
+                EmitByte($66); EmitByte($48); EmitByte($0F); EmitByte($6E); EmitByte($C1);
+                EmitByte($F2); EmitByte($0F); EmitByte($5A); EmitByte($C0);
+                EmitByte($F3); EmitByte($0F); EmitByte($11); EmitByte($00);
+              end
+              else
+              begin
+                case LInstr.MemSize of
+                  1: begin
+                       // mov [rax], cl — store 8-bit
+                       EmitByte($88);
+                       EmitModRM(0, REG_RCX and 7, REG_RAX and 7);
+                     end;
+                  2: begin
+                       // mov [rax], cx — store 16-bit
+                       EmitByte($66); EmitByte($89);
+                       EmitModRM(0, REG_RCX and 7, REG_RAX and 7);
+                     end;
+                  4: begin
+                       // mov [rax], ecx — store 32-bit
+                       EmitByte($89);
+                       EmitModRM(0, REG_RCX and 7, REG_RAX and 7);
+                     end;
+                else
+                  EmitMovMemRegReg(REG_RAX, REG_RCX);  // mov [rax], rcx — full 64-bit
+                end;
+              end;
             end;
 
           //------------------------------------------------------------------
@@ -1727,6 +1971,47 @@ begin
               EmitCqo();
               EmitIdivReg(REG_RCX);
               StoreTempFromReg(LInstr.Dest.Index, REG_RDX);
+            end;
+
+          ikFAdd:
+            begin
+              LoadOperandToXmm(LInstr.Op1, REG_XMM0);
+              LoadOperandToXmm(LInstr.Op2, REG_XMM1);
+              EmitAddsdXmmXmm(REG_XMM0, REG_XMM1);
+              StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
+            end;
+
+          ikFSub:
+            begin
+              LoadOperandToXmm(LInstr.Op1, REG_XMM0);
+              LoadOperandToXmm(LInstr.Op2, REG_XMM1);
+              EmitSubsdXmmXmm(REG_XMM0, REG_XMM1);
+              StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
+            end;
+
+          ikFMul:
+            begin
+              LoadOperandToXmm(LInstr.Op1, REG_XMM0);
+              LoadOperandToXmm(LInstr.Op2, REG_XMM1);
+              EmitMulsdXmmXmm(REG_XMM0, REG_XMM1);
+              StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
+            end;
+
+          ikFDiv:
+            begin
+              LoadOperandToXmm(LInstr.Op1, REG_XMM0);
+              LoadOperandToXmm(LInstr.Op2, REG_XMM1);
+              EmitDivsdXmmXmm(REG_XMM0, REG_XMM1);
+              StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
+            end;
+
+          ikFNeg:
+            begin
+              // Negate: 0.0 - value
+              LoadOperandToXmm(LInstr.Op1, REG_XMM0);  // Op1 = 0.0
+              LoadOperandToXmm(LInstr.Op2, REG_XMM1);  // Op2 = value
+              EmitSubsdXmmXmm(REG_XMM0, REG_XMM1);
+              StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
             end;
 
           ikBitAnd:
@@ -1932,27 +2217,45 @@ begin
 
           ikCallImport:
             begin
-              // System V ABI: first 6 integer args in RDI, RSI, RDX, RCX, R8, R9
-              // Store stack args first (>6)
-              for LK := LINUX64_MAX_REG_ARGS to High(LInstr.Args) do
-                StoreOperandToStackArg(LInstr.Args[LK], LK);
+              // System V ABI: integer/pointer args in RDI, RSI, RDX, RCX, R8, R9
+              //               float args in XMM0-XMM7 (independent counters)
+              //               AL = number of XMM registers used (for variadic)
+              LIntArgIdx := 0;
+              LXmmArgIdx := 0;
 
-              // Load register args
-              if Length(LInstr.Args) > 0 then
-                LoadOperandToReg(LInstr.Args[0], REG_RDI);
-              if Length(LInstr.Args) > 1 then
-                LoadOperandToReg(LInstr.Args[1], REG_RSI);
-              if Length(LInstr.Args) > 2 then
-                LoadOperandToReg(LInstr.Args[2], REG_RDX);
-              if Length(LInstr.Args) > 3 then
-                LoadOperandToReg(LInstr.Args[3], REG_RCX);
-              if Length(LInstr.Args) > 4 then
-                LoadOperandToReg(LInstr.Args[4], REG_R8);
-              if Length(LInstr.Args) > 5 then
-                LoadOperandToReg(LInstr.Args[5], REG_R9);
+              for LK := 0 to High(LInstr.Args) do
+              begin
+                if IsFloatArg(LInstr.Args[LK]) then
+                begin
+                  // Float arg -> XMM register
+                  if LXmmArgIdx <= 7 then
+                    LoadOperandToXmm(LInstr.Args[LK], Byte(LXmmArgIdx));
+                  Inc(LXmmArgIdx);
+                end
+                else
+                begin
+                  // Integer/pointer arg -> GPR or stack
+                  case LIntArgIdx of
+                    0: LoadOperandToReg(LInstr.Args[LK], REG_RDI);
+                    1: LoadOperandToReg(LInstr.Args[LK], REG_RSI);
+                    2: LoadOperandToReg(LInstr.Args[LK], REG_RDX);
+                    3: LoadOperandToReg(LInstr.Args[LK], REG_RCX);
+                    4: LoadOperandToReg(LInstr.Args[LK], REG_R8);
+                    5: LoadOperandToReg(LInstr.Args[LK], REG_R9);
+                  else
+                    StoreOperandToStackArg(LInstr.Args[LK], LIntArgIdx);
+                  end;
+                  Inc(LIntArgIdx);
+                end;
+              end;
 
-              // System V varargs: AL = number of SSE register args (0 for integer-only)
+              // System V varargs: AL = number of XMM registers used
               EmitXorRegReg(REG_RAX);
+              if LXmmArgIdx > 0 then
+              begin
+                EmitByte($B0);                  // MOV AL, imm8
+                EmitByte(Byte(LXmmArgIdx));
+              end;
 
               // CALL rel32 to PLT entry -- record fixup
               LPltFixups.Add(TPair<Cardinal, Integer>.Create(
@@ -2298,6 +2601,23 @@ begin
       if LMainIndex >= 0 then
       begin
         LMainOffset := LFuncOffsets[LMainIndex];
+
+        // Initialize command line: pass argc/argv from stack to Tiger_InitCommandLine
+        // At _start: [RSP] = argc, [RSP+8..] = argv pointers
+        if LInitCommandLineIdx >= 0 then
+        begin
+          // MOV RDI, [RSP]  ; argc -> first arg
+          // Encoding: REX.W(48) MOV(8B) ModRM(3C) SIB(24)
+          EmitByte($48); EmitByte($8B); EmitByte($3C); EmitByte($24);
+
+          // LEA RSI, [RSP+8]  ; argv -> second arg
+          // Encoding: REX.W(48) LEA(8D) ModRM(74) SIB(24) disp8(08)
+          EmitByte($48); EmitByte($8D); EmitByte($74); EmitByte($24); EmitByte($08);
+
+          // CALL Tiger_InitCommandLine
+          LDisp := Int32(LFuncOffsets[LInitCommandLineIdx]) - Int32(LTextSection.Size + 5);
+          EmitCallRel32(LDisp);
+        end;
 
         // Initialize exception handling if needed
         if LHasSEH and (LInitExceptionsIdx >= 0) then
@@ -2809,6 +3129,7 @@ begin
     LExceptLabels.Free();
     LFinallyLabels.Free();
     LEndLabels.Free();
+    LFloatTemps.Free();
     LStaticImportResolved.Free();
     LStaticLibPaths.Free();
     LStaticSymbolNames.Free();
@@ -2963,11 +3284,17 @@ var
   LSigsetjmpIdx: Integer;
   LInitExceptionsIdx: Integer;
   LInitSignalsIdx: Integer;
+  LInitCommandLineIdx: Integer;
   LScopeIdx: Integer;
   LFrameOffset: Integer;
   LExceptLabelIdx: Integer;
   LFuncSymIdx: Integer;
-  LImportSymIdx: Integer;
+  //LImportSymIdx: Integer;
+
+  // Float arg classification for System V ABI
+  LFloatTemps: TDictionary<Integer, Boolean>;
+  LIntArgIdx: Integer;
+  LXmmArgIdx: Integer;
 
   // ELF layout
   LTextOffset: Cardinal;
@@ -3182,7 +3509,12 @@ var
   begin
     case AOp.Kind of
       okImmediate:
-        EmitMovRegImm64(AReg, AOp.ImmInt);
+      begin
+        if AOp.ImmFloat <> 0.0 then
+          EmitMovRegImm64(AReg, UInt64(PInt64(@AOp.ImmFloat)^))
+        else
+          EmitMovRegImm64(AReg, AOp.ImmInt);
+      end;
       okTemp:
         EmitMovRegMem(AReg, REG_RBP, GetTempOffset(AOp.TempHandle.Index));
       okLocal:
@@ -3199,6 +3531,141 @@ var
   procedure StoreTempFromReg(const ATempIndex: Integer; const AReg: Byte);
   begin
     EmitMovMemReg(REG_RBP, GetTempOffset(ATempIndex), AReg);
+  end;
+
+  //----------------------------------------------------------------------------
+  // SSE Helpers: Float register operations (XMM0/XMM1)
+  //----------------------------------------------------------------------------
+
+  procedure EmitMovsdXmmMem(const AXmm: Byte; const ABaseReg: Byte; const ADisp: Int32);
+  begin
+    // F2 REX.W 0F 10 ModRM disp32 — MOVSD xmm, [base+disp32]
+    EmitByte($F2);
+    EmitRex(True, AXmm >= 8, False, ABaseReg >= 8);
+    EmitByte($0F);
+    EmitByte($10);
+    EmitModRM(2, AXmm and 7, ABaseReg and 7);
+    EmitInt32(ADisp);
+  end;
+
+  procedure EmitMovsdMemXmm(const ABaseReg: Byte; const ADisp: Int32; const AXmm: Byte);
+  begin
+    // F2 REX.W 0F 11 ModRM disp32 — MOVSD [base+disp32], xmm
+    EmitByte($F2);
+    EmitRex(True, AXmm >= 8, False, ABaseReg >= 8);
+    EmitByte($0F);
+    EmitByte($11);
+    EmitModRM(2, AXmm and 7, ABaseReg and 7);
+    EmitInt32(ADisp);
+  end;
+
+  procedure EmitMovqXmmReg(const AXmm: Byte; const AReg: Byte);
+  begin
+    // 66 REX.W 0F 6E ModRM — MOVQ xmm, r64
+    EmitByte($66);
+    EmitRex(True, AXmm >= 8, False, AReg >= 8);
+    EmitByte($0F);
+    EmitByte($6E);
+    EmitModRM(3, AXmm and 7, AReg and 7);
+  end;
+
+  procedure EmitAddsdXmmXmm(const ADest, ASrc: Byte);
+  begin
+    // F2 0F 58 ModRM — ADDSD xmm, xmm
+    EmitByte($F2);
+    if (ADest >= 8) or (ASrc >= 8) then
+      EmitRex(False, ADest >= 8, False, ASrc >= 8);
+    EmitByte($0F);
+    EmitByte($58);
+    EmitModRM(3, ADest and 7, ASrc and 7);
+  end;
+
+  procedure EmitSubsdXmmXmm(const ADest, ASrc: Byte);
+  begin
+    // F2 0F 5C ModRM — SUBSD xmm, xmm
+    EmitByte($F2);
+    if (ADest >= 8) or (ASrc >= 8) then
+      EmitRex(False, ADest >= 8, False, ASrc >= 8);
+    EmitByte($0F);
+    EmitByte($5C);
+    EmitModRM(3, ADest and 7, ASrc and 7);
+  end;
+
+  procedure EmitMulsdXmmXmm(const ADest, ASrc: Byte);
+  begin
+    // F2 0F 59 ModRM — MULSD xmm, xmm
+    EmitByte($F2);
+    if (ADest >= 8) or (ASrc >= 8) then
+      EmitRex(False, ADest >= 8, False, ASrc >= 8);
+    EmitByte($0F);
+    EmitByte($59);
+    EmitModRM(3, ADest and 7, ASrc and 7);
+  end;
+
+  procedure EmitDivsdXmmXmm(const ADest, ASrc: Byte);
+  begin
+    // F2 0F 5E ModRM — DIVSD xmm, xmm
+    EmitByte($F2);
+    if (ADest >= 8) or (ASrc >= 8) then
+      EmitRex(False, ADest >= 8, False, ASrc >= 8);
+    EmitByte($0F);
+    EmitByte($5E);
+    EmitModRM(3, ADest and 7, ASrc and 7);
+  end;
+
+  procedure LoadOperandToXmm(const AOp: TTigerOperand; const AXmm: Byte);
+  begin
+    case AOp.Kind of
+      okImmediate:
+        begin
+          // Load float bits as int64 into RAX, then MOVQ to XMM
+          EmitMovRegImm64(REG_RAX, UInt64(PInt64(@AOp.ImmFloat)^));
+          EmitMovqXmmReg(AXmm, REG_RAX);
+        end;
+      okLocal:
+        begin
+          if AOp.LocalHandle.IsParam then
+            EmitMovsdXmmMem(AXmm, REG_RBP, GetParamOffset(AOp.LocalHandle.Index))
+          else
+            EmitMovsdXmmMem(AXmm, REG_RBP, GetLocalOffset(AOp.LocalHandle.Index));
+        end;
+      okTemp:
+        EmitMovsdXmmMem(AXmm, REG_RBP, GetTempOffset(AOp.TempHandle.Index));
+    else
+      begin
+        // Fallback: load to RAX via integer path, then move to XMM
+        LoadOperandToReg(AOp, REG_RAX);
+        EmitMovqXmmReg(AXmm, REG_RAX);
+      end;
+    end;
+  end;
+
+  procedure StoreTempFromXmm(const ATempIdx: Integer; const AXmm: Byte);
+  begin
+    EmitMovsdMemXmm(REG_RBP, GetTempOffset(ATempIdx), AXmm);
+  end;
+
+  //--------------------------------------------------------------------------
+  // Classify whether a call argument is a float (for System V ABI splitting)
+  //--------------------------------------------------------------------------
+  function IsFloatArg(const AOp: TTigerOperand): Boolean;
+  begin
+    case AOp.Kind of
+      okImmediate:
+        Result := AOp.ValueType in [vtFloat32, vtFloat64];
+      okTemp:
+        Result := LFloatTemps.ContainsKey(AOp.TempHandle.Index);
+      okLocal:
+        begin
+          if (AOp.LocalHandle.Index >= 0) and
+             (AOp.LocalHandle.Index < Length(LFunc.Locals)) then
+            Result := LFunc.Locals[AOp.LocalHandle.Index].LocalType in [vtFloat32, vtFloat64]
+          else
+            Result := False;
+        end;
+    else
+      Result := False;
+    end;
   end;
 
   procedure AddStrtabString(const AStr: string; out AOffset: Cardinal);
@@ -3280,6 +3747,7 @@ begin
   LExceptLabels := TDictionary<Integer, Integer>.Create();
   LFinallyLabels := TDictionary<Integer, Integer>.Create();
   LEndLabels := TDictionary<Integer, Integer>.Create();
+  LFloatTemps := TDictionary<Integer, Boolean>.Create();
   LHasSEH := False;
   LPushExceptFrameIdx := -1;
   LPopExceptFrameIdx := -1;
@@ -3287,6 +3755,7 @@ begin
   LSigsetjmpIdx := -1;
   LInitExceptionsIdx := -1;
   LInitSignalsIdx := -1;
+  LInitCommandLineIdx := -1;
 
   try
     // Section indices
@@ -3350,7 +3819,9 @@ begin
       else if SameText(LFunc.FuncName, 'Tiger_InitExceptions') then
         LInitExceptionsIdx := LI
       else if SameText(LFunc.FuncName, 'Tiger_InitSignals') then
-        LInitSignalsIdx := LI;
+        LInitSignalsIdx := LI
+      else if SameText(LFunc.FuncName, 'Tiger_InitCommandLine') then
+        LInitCommandLineIdx := LI;
     end;
 
     // Find __sigsetjmp import index
@@ -3479,9 +3950,14 @@ begin
       EmitByte($89); EmitModRM(3, 4, 5);  // mov rbp, rsp
       if LStackFrameSize > 0 then
       begin
-        EmitRex(True, False, False, False);
-        EmitByte($81); EmitModRM(3, 5, 4);  // sub rsp, imm32
-        EmitDWord(LStackFrameSize);
+        if LStackFrameSize > 4096 then
+          EmitStackProbe_x64(LTextSection, LStackFrameSize)
+        else
+        begin
+          EmitRex(True, False, False, False);
+          EmitByte($81); EmitModRM(3, 5, 4);  // sub rsp, imm32
+          EmitDWord(LStackFrameSize);
+        end;
       end;
 
       // Save register params to stack (System V ABI: RDI, RSI, RDX, RCX, R8, R9)
@@ -3502,6 +3978,26 @@ begin
       SetLength(LLabelOffsets, Length(LFunc.Labels));
       for LJ := 0 to High(LLabelOffsets) do
         LLabelOffsets[LJ] := $FFFFFFFF;
+
+      // Build float temp set for this function
+      LFloatTemps.Clear();
+      for LJ := 0 to High(LFunc.Instructions) do
+      begin
+        if LFunc.Instructions[LJ].Kind in [ikFAdd, ikFSub, ikFMul, ikFDiv, ikFNeg] then
+          LFloatTemps.AddOrSetValue(LFunc.Instructions[LJ].Dest.Index, True);
+        if (LFunc.Instructions[LJ].Kind = ikLoad) and
+           (LFunc.Instructions[LJ].Op1.Kind = okLocal) then
+        begin
+          if (LFunc.Instructions[LJ].Op1.LocalHandle.Index >= 0) and
+             (LFunc.Instructions[LJ].Op1.LocalHandle.Index < Length(LFunc.Locals)) and
+             (LFunc.Locals[LFunc.Instructions[LJ].Op1.LocalHandle.Index].LocalType in [vtFloat32, vtFloat64]) then
+            LFloatTemps.AddOrSetValue(LFunc.Instructions[LJ].Dest.Index, True);
+        end;
+        // ikLoadPtr from a float-typed memory location produces a float temp
+        if (LFunc.Instructions[LJ].Kind = ikLoadPtr) and
+           LFunc.Instructions[LJ].MemIsFloat then
+          LFloatTemps.AddOrSetValue(LFunc.Instructions[LJ].Dest.Index, True);
+      end;
 
       // Generate instructions
       for LJ := 0 to High(LFunc.Instructions) do
@@ -3708,19 +4204,43 @@ begin
 
           ikCallImport:
           begin
-            // Load register args (System V ABI: RDI, RSI, RDX, RCX, R8, R9)
-            if Length(LInstr.Args) > 0 then
-              LoadOperandToReg(LInstr.Args[0], REG_RDI);
-            if Length(LInstr.Args) > 1 then
-              LoadOperandToReg(LInstr.Args[1], REG_RSI);
-            if Length(LInstr.Args) > 2 then
-              LoadOperandToReg(LInstr.Args[2], REG_RDX);
-            if Length(LInstr.Args) > 3 then
-              LoadOperandToReg(LInstr.Args[3], REG_RCX);
-            if Length(LInstr.Args) > 4 then
-              LoadOperandToReg(LInstr.Args[4], REG_R8);
-            if Length(LInstr.Args) > 5 then
-              LoadOperandToReg(LInstr.Args[5], REG_R9);
+            // System V ABI: integer/pointer args in RDI, RSI, RDX, RCX, R8, R9
+            //               float args in XMM0-XMM7 (independent counters)
+            //               AL = number of XMM registers used (for variadic)
+            LIntArgIdx := 0;
+            LXmmArgIdx := 0;
+
+            for LK := 0 to High(LInstr.Args) do
+            begin
+              if IsFloatArg(LInstr.Args[LK]) then
+              begin
+                if LXmmArgIdx <= 7 then
+                  LoadOperandToXmm(LInstr.Args[LK], Byte(LXmmArgIdx));
+                Inc(LXmmArgIdx);
+              end
+              else
+              begin
+                case LIntArgIdx of
+                  0: LoadOperandToReg(LInstr.Args[LK], REG_RDI);
+                  1: LoadOperandToReg(LInstr.Args[LK], REG_RSI);
+                  2: LoadOperandToReg(LInstr.Args[LK], REG_RDX);
+                  3: LoadOperandToReg(LInstr.Args[LK], REG_RCX);
+                  4: LoadOperandToReg(LInstr.Args[LK], REG_R8);
+                  5: LoadOperandToReg(LInstr.Args[LK], REG_R9);
+                end;
+                Inc(LIntArgIdx);
+              end;
+            end;
+
+            // System V varargs: AL = number of XMM registers used
+            // XOR EAX, EAX ($31 $C0)
+            EmitByte($31);
+            EmitByte($C0);
+            if LXmmArgIdx > 0 then
+            begin
+              EmitByte($B0);                  // MOV AL, imm8
+              EmitByte(Byte(LXmmArgIdx));
+            end;
 
             // Call to imported function - add relocation
             EmitByte($E8);
@@ -3815,6 +4335,47 @@ begin
             EmitRex(True, False, False, False);
             EmitByte($F7); EmitModRM(3, 7, 1);
             StoreTempFromReg(LInstr.Dest.Index, REG_RDX);  // remainder in RDX
+          end;
+
+          ikFAdd:
+          begin
+            LoadOperandToXmm(LInstr.Op1, REG_XMM0);
+            LoadOperandToXmm(LInstr.Op2, REG_XMM1);
+            EmitAddsdXmmXmm(REG_XMM0, REG_XMM1);
+            StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
+          end;
+
+          ikFSub:
+          begin
+            LoadOperandToXmm(LInstr.Op1, REG_XMM0);
+            LoadOperandToXmm(LInstr.Op2, REG_XMM1);
+            EmitSubsdXmmXmm(REG_XMM0, REG_XMM1);
+            StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
+          end;
+
+          ikFMul:
+          begin
+            LoadOperandToXmm(LInstr.Op1, REG_XMM0);
+            LoadOperandToXmm(LInstr.Op2, REG_XMM1);
+            EmitMulsdXmmXmm(REG_XMM0, REG_XMM1);
+            StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
+          end;
+
+          ikFDiv:
+          begin
+            LoadOperandToXmm(LInstr.Op1, REG_XMM0);
+            LoadOperandToXmm(LInstr.Op2, REG_XMM1);
+            EmitDivsdXmmXmm(REG_XMM0, REG_XMM1);
+            StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
+          end;
+
+          ikFNeg:
+          begin
+            // Negate: 0.0 - value
+            LoadOperandToXmm(LInstr.Op1, REG_XMM0);  // Op1 = 0.0
+            LoadOperandToXmm(LInstr.Op2, REG_XMM1);  // Op2 = value
+            EmitSubsdXmmXmm(REG_XMM0, REG_XMM1);
+            StoreTempFromXmm(LInstr.Dest.Index, REG_XMM0);
           end;
 
           ikBitAnd:
@@ -3985,22 +4546,78 @@ begin
 
           ikLoadPtr:
           begin
-            // Load value at pointer: dest = [Op1]
+            // Dest = value at pointer Op1 (sized by MemSize)
             LoadOperandToReg(LInstr.Op1, REG_RAX);
-            // mov rax, [rax]
-            EmitRex(True, False, False, False);
-            EmitByte($8B); EmitModRM(0, 0, 0);
+            if LInstr.MemIsFloat and (LInstr.MemSize = 4) then
+            begin
+              // Float32 field: movss xmm0,[rax]; cvtss2sd xmm0,xmm0; movq rax,xmm0
+              EmitByte($F3); EmitByte($0F); EmitByte($10); EmitByte($00);
+              EmitByte($F3); EmitByte($0F); EmitByte($5A); EmitByte($C0);
+              EmitByte($66); EmitByte($48); EmitByte($0F); EmitByte($7E); EmitByte($C0);
+            end
+            else
+            begin
+              case LInstr.MemSize of
+                1: begin
+                     // movzx eax, byte [rax] — zero-extend 8-bit
+                     EmitByte($0F); EmitByte($B6);
+                     EmitModRM(0, REG_RAX and 7, REG_RAX and 7);
+                   end;
+                2: begin
+                     // movzx eax, word [rax] — zero-extend 16-bit
+                     EmitByte($0F); EmitByte($B7);
+                     EmitModRM(0, REG_RAX and 7, REG_RAX and 7);
+                   end;
+                4: begin
+                     // mov eax, [rax] — 32-bit, implicit zero-extend to 64
+                     EmitByte($8B);
+                     EmitModRM(0, REG_RAX and 7, REG_RAX and 7);
+                   end;
+              else
+                // mov rax, [rax] — full 64-bit
+                EmitRex(True, False, False, False);
+                EmitByte($8B); EmitModRM(0, 0, 0);
+              end;
+            end;
             StoreTempFromReg(LInstr.Dest.Index, REG_RAX);
           end;
 
           ikStorePtr:
           begin
-            // Store Op2 to address in Op1: [Op1] = Op2
+            // Store Op2 to address in Op1 (sized by MemSize)
             LoadOperandToReg(LInstr.Op1, REG_RAX);
             LoadOperandToReg(LInstr.Op2, REG_RCX);
-            // mov [rax], rcx
-            EmitRex(True, False, False, False);
-            EmitByte($89); EmitModRM(0, 1, 0);
+            if LInstr.MemIsFloat and (LInstr.MemSize = 4) then
+            begin
+              // Float32 field: movq xmm0,rcx; cvtsd2ss xmm0,xmm0; movss [rax],xmm0
+              EmitByte($66); EmitByte($48); EmitByte($0F); EmitByte($6E); EmitByte($C1);
+              EmitByte($F2); EmitByte($0F); EmitByte($5A); EmitByte($C0);
+              EmitByte($F3); EmitByte($0F); EmitByte($11); EmitByte($00);
+            end
+            else
+            begin
+              case LInstr.MemSize of
+                1: begin
+                     // mov [rax], cl — store 8-bit
+                     EmitByte($88);
+                     EmitModRM(0, REG_RCX and 7, REG_RAX and 7);
+                   end;
+                2: begin
+                     // mov [rax], cx — store 16-bit
+                     EmitByte($66); EmitByte($89);
+                     EmitModRM(0, REG_RCX and 7, REG_RAX and 7);
+                   end;
+                4: begin
+                     // mov [rax], ecx — store 32-bit
+                     EmitByte($89);
+                     EmitModRM(0, REG_RCX and 7, REG_RAX and 7);
+                   end;
+              else
+                // mov [rax], rcx — full 64-bit
+                EmitRex(True, False, False, False);
+                EmitByte($89); EmitModRM(0, 1, 0);
+              end;
+            end;
           end;
 
           ikSyscall:
@@ -4217,6 +4834,7 @@ begin
     LExceptLabels.Free();
     LFinallyLabels.Free();
     LEndLabels.Free();
+    LFloatTemps.Free();
     LJumpFixups.Free();
     LRelaText.Free();
     LSymtab.Free();

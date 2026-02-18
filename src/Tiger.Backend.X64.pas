@@ -24,6 +24,10 @@ const
   REG_R8  = 8; REG_R9  = 9; REG_R10 = 10; REG_R11 = 11;
   REG_R12 = 12; REG_R13 = 13; REG_R14 = 14; REG_R15 = 15;
 
+  // XMM Register Encodings (SSE/AVX floating-point)
+  REG_XMM0 = 0; REG_XMM1 = 1; REG_XMM2 = 2; REG_XMM3 = 3;
+  REG_XMM4 = 4; REG_XMM5 = 5; REG_XMM6 = 6; REG_XMM7 = 7;
+
   //============================================================================
   // x86-64 Unwind Codes (used by Win64 SEH and potentially DWARF)
   //============================================================================

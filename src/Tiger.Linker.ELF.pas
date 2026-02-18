@@ -805,7 +805,7 @@ var
   LObj: TELFObject;
   LSym: TELFSymbol;
   LList: TList<Integer>;
-  LSymbol: string;
+  //LSymbol: string;
 begin
   // Clear existing index
   for LList in FSymbolIndex.Values do

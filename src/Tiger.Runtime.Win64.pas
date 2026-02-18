@@ -47,13 +47,10 @@ type
 
     // Exception handling (Tiger_Raise, Tiger_GetExceptionCode, etc.)
     procedure AddExceptions(const AIR: TTigerIR); override;
-  end;
 
-//------------------------------------------------------------------------------
-// Compile-time helpers for write/writeln (called from codegen)
-//------------------------------------------------------------------------------
-procedure tiger_write(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
-procedure tiger_writeln(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
+    // Command-line arguments (Tiger_ParamCount, Tiger_ParamStr)
+    procedure AddCommandLine(const AIR: TTigerIR); override;
+  end;
 
 implementation
 
@@ -77,6 +74,8 @@ begin
   //----------------------------------------------------------------------------
   AIR.Func('Tiger_Halt', vtVoid, False, plC, False)
      .Param('AExitCode', vtInt32);
+  // Free command line args before leak reporting
+  AIR.Call('Tiger_FreeCommandLine', []);
   if AOptLevel = 0 then
     AIR.Call('Tiger_ReportLeaks', []);
   AIR.Call('ExitProcess', [AIR.Get('AExitCode')])
@@ -111,24 +110,6 @@ begin
      .Call('SetConsoleCP', [AIR.Int64(65001)])
      .Return()
   .EndFunc();
-end;
-
-//------------------------------------------------------------------------------
-// Compile-time helpers for write/writeln
-// These are called from codegen to emit printf calls
-//------------------------------------------------------------------------------
-
-procedure tiger_write(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
-begin
-  if Length(AArgs) > 0 then
-    AIR.Call('printf', AArgs);
-end;
-
-procedure tiger_writeln(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
-begin
-  if Length(AArgs) > 0 then
-    AIR.Call('printf', AArgs);
-  AIR.Call('printf', [AIR.Str(#10)]);
 end;
 
 //==============================================================================
@@ -866,8 +847,190 @@ begin
 end;
 
 //==============================================================================
-// TTigerRuntime - Add All
+// TTigerWin64Runtime - Command Line
 //==============================================================================
 
+procedure TTigerWin64Runtime.AddCommandLine(const AIR: TTigerIR);
+begin
+  //----------------------------------------------------------------------------
+  // Import Windows command-line functions
+  //----------------------------------------------------------------------------
+  AIR.Import('kernel32.dll', 'GetCommandLineW', [], vtPointer, False);
+  AIR.Import('shell32.dll', 'CommandLineToArgvW', [vtPointer, vtPointer], vtPointer, False);
+  AIR.Import('kernel32.dll', 'LocalFree', [vtPointer], vtPointer, False);
+  AIR.Import('kernel32.dll', 'WideCharToMultiByte',
+    [vtUInt32, vtUInt32, vtPointer, vtInt32, vtPointer, vtInt32, vtPointer, vtPointer],
+    vtInt32, False);
+  AIR.Import('kernel32.dll', 'GetModuleFileNameW',
+    [vtPointer, vtPointer, vtUInt32], vtUInt32, False);
+
+  //----------------------------------------------------------------------------
+  // Globals for argc/argv storage
+  //----------------------------------------------------------------------------
+  AIR.Global('Tiger_Argc', vtInt64);
+  AIR.Global('Tiger_Argv', vtPointer);
+
+  //----------------------------------------------------------------------------
+  // Tiger_InitCommandLine()
+  // Parses command line, converts wide strings to UTF-8.
+  // Uses a simple indexed loop to convert each wide string argument.
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_InitCommandLine', vtVoid, False, plC, False)
+     .Local('LCmdLine', vtPointer)
+     .Local('LWargv', vtPointer)
+     .Local('LArgc', vtInt32)
+     .Local('i', vtInt64)
+     .Local('LWidePtr', vtPointer)
+     .Local('LLen', vtInt32)
+     .Local('LUtf8', vtPointer)
+     .Local('LWideBuf', vtPointer);
+
+  // Get wide command line and parse it
+  AIR.Assign('LArgc', AIR.Int64(0))  // Zero full 8-byte slot before 32-bit write by CommandLineToArgvW
+     .Assign('LCmdLine', AIR.Invoke('GetCommandLineW', []))
+     .Assign('LWargv', AIR.Invoke('CommandLineToArgvW',
+        [AIR.Get('LCmdLine'), AIR.AddrOf('LArgc')]))
+     .Assign('Tiger_Argc', AIR.Get('LArgc'))
+     .Assign('Tiger_Argv', AIR.Invoke('Tiger_GetMem',
+        [AIR.Mul(AIR.Get('Tiger_Argc'), AIR.Int64(8))]));
+
+  // Loop: i = 0
+  AIR.Assign('i', AIR.Int64(0));
+
+  // While i < Tiger_Argc
+  AIR.&While(AIR.Lt(AIR.Get('i'), AIR.Get('Tiger_Argc')));
+
+  // LWidePtr := LWargv[i] (load pointer at offset i*8)
+  AIR.Assign('LWidePtr', AIR.Deref(
+     AIR.Add(AIR.Get('LWargv'), AIR.Mul(AIR.Get('i'), AIR.Int64(8))),
+     vtPointer));
+
+  // LLen := WideCharToMultiByte(CP_UTF8, 0, LWidePtr, -1, nil, 0, nil, nil)
+  AIR.Assign('LLen', AIR.Invoke('WideCharToMultiByte',
+     [AIR.Int64(65001), AIR.Int64(0), AIR.Get('LWidePtr'), AIR.Int64(-1),
+      AIR.Null(), AIR.Int64(0), AIR.Null(), AIR.Null()]));
+
+  // LUtf8 := Tiger_GetMem(LLen)
+  AIR.Assign('LUtf8', AIR.Invoke('Tiger_GetMem', [AIR.Get('LLen')]));
+
+  // WideCharToMultiByte(CP_UTF8, 0, LWidePtr, -1, LUtf8, LLen, nil, nil)
+  AIR.Call('WideCharToMultiByte',
+     [AIR.Int64(65001), AIR.Int64(0), AIR.Get('LWidePtr'), AIR.Int64(-1),
+      AIR.Get('LUtf8'), AIR.Get('LLen'), AIR.Null(), AIR.Null()]);
+
+  // Tiger_Argv[i] := LUtf8
+  AIR.AssignTo(
+     AIR.Deref(AIR.Add(AIR.Get('Tiger_Argv'), AIR.Mul(AIR.Get('i'), AIR.Int64(8))), vtPointer),
+     AIR.Get('LUtf8'));
+
+  // i := i + 1
+  AIR.Assign('i', AIR.Add(AIR.Get('i'), AIR.Int64(1)));
+
+  AIR.EndWhile();
+
+  // Free the wide argv array (allocated by CommandLineToArgvW)
+  AIR.Call('LocalFree', [AIR.Get('LWargv')]);
+
+  //--------------------------------------------------------------------------
+  // Replace argv[0] with full absolute path via GetModuleFileNameW
+  //--------------------------------------------------------------------------
+  // Allocate wide buffer (MAX_PATH = 260 wchars = 520 bytes)
+  AIR.Assign('LWideBuf', AIR.Invoke('Tiger_GetMem', [AIR.Int64(520)]));
+
+  // GetModuleFileNameW(nil, LWideBuf, 260)
+  AIR.Call('GetModuleFileNameW',
+     [AIR.Null(), AIR.Get('LWideBuf'), AIR.Int64(260)]);
+
+  // Get UTF-8 length
+  AIR.Assign('LLen', AIR.Invoke('WideCharToMultiByte',
+     [AIR.Int64(65001), AIR.Int64(0), AIR.Get('LWideBuf'), AIR.Int64(-1),
+      AIR.Null(), AIR.Int64(0), AIR.Null(), AIR.Null()]));
+
+  // Allocate UTF-8 buffer
+  AIR.Assign('LUtf8', AIR.Invoke('Tiger_GetMem', [AIR.Get('LLen')]));
+
+  // Convert wide -> UTF-8
+  AIR.Call('WideCharToMultiByte',
+     [AIR.Int64(65001), AIR.Int64(0), AIR.Get('LWideBuf'), AIR.Int64(-1),
+      AIR.Get('LUtf8'), AIR.Get('LLen'), AIR.Null(), AIR.Null()]);
+
+  // Free old argv[0] (it was allocated by Tiger_GetMem in the loop above)
+  AIR.Call('Tiger_FreeMem', [AIR.Deref(
+     AIR.Get('Tiger_Argv'), vtPointer)]);
+
+  // Store new UTF-8 path as argv[0]
+  AIR.AssignTo(
+     AIR.Deref(AIR.Get('Tiger_Argv'), vtPointer),
+     AIR.Get('LUtf8'));
+
+  // Free wide buffer
+  AIR.Call('Tiger_FreeMem', [AIR.Get('LWideBuf')])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_FreeCommandLine()
+  // Frees all allocated UTF-8 strings and the argv array.
+  // Called by Tiger_Halt before leak reporting.
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_FreeCommandLine', vtVoid, False, plC, False)
+     .Local('i', vtInt64)
+     .Local('LPtr', vtPointer);
+
+  // Loop: free each UTF-8 string
+  AIR.Assign('i', AIR.Int64(0));
+
+  AIR.&While(AIR.Lt(AIR.Get('i'), AIR.Get('Tiger_Argc')));
+
+  // LPtr := Tiger_Argv[i]
+  AIR.Assign('LPtr', AIR.Deref(
+     AIR.Add(AIR.Get('Tiger_Argv'), AIR.Mul(AIR.Get('i'), AIR.Int64(8))),
+     vtPointer));
+
+  // Free the UTF-8 string
+  AIR.Call('Tiger_FreeMem', [AIR.Get('LPtr')]);
+
+  // i := i + 1
+  AIR.Assign('i', AIR.Add(AIR.Get('i'), AIR.Int64(1)));
+
+  AIR.EndWhile();
+
+  // Free the argv array itself
+  AIR.Call('Tiger_FreeMem', [AIR.Get('Tiger_Argv')])
+     .Return()
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_ParamCount(): Int64
+  // Returns argc - 1 (Pascal semantics: excludes program name).
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_ParamCount', vtInt64, False, plC, False)
+     .Return(AIR.Sub(AIR.Get('Tiger_Argc'), AIR.Int64(1)))
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_ParamStr(AIndex: Int64): Pointer
+  // Returns pointer to UTF-8 string at given index.
+  // Returns nil if index out of range.
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_ParamStr', vtPointer, False, plC, False)
+     .Param('AIndex', vtInt64);
+
+  // Check bounds: AIndex < 0
+  AIR.&If(AIR.Lt(AIR.Get('AIndex'), AIR.Int64(0)))
+     .Return(AIR.Null())
+  .EndIf();
+
+  // Check bounds: AIndex >= Tiger_Argc
+  AIR.&If(AIR.Ge(AIR.Get('AIndex'), AIR.Get('Tiger_Argc')))
+     .Return(AIR.Null())
+  .EndIf();
+
+  // Return Tiger_Argv[AIndex]
+  AIR.Return(AIR.Deref(
+     AIR.Add(AIR.Get('Tiger_Argv'), AIR.Mul(AIR.Get('AIndex'), AIR.Int64(8))),
+     vtPointer))
+  .EndFunc();
+end;
 
 end.

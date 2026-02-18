@@ -76,7 +76,7 @@ type
   public
     procedure Status(const AText: string); overload;
     procedure Status(const AText: string; const AArgs: array of const); overload;
-    procedure SetStatusCallback(const ACallback: TStatusCallback; const AUserData: Pointer = nil);
+    procedure SetStatusCallback(const ACallback: TStatusCallback; const AUserData: Pointer = nil); virtual;
     procedure CopyStatusCallbackTo(const ATarget: TTigerStatusObject);
   end;
 

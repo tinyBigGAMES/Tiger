@@ -45,13 +45,10 @@ type
 
     /// <summary>Exception runtime — stub for Phase 2.</summary>
     procedure AddExceptions(const AIR: TTigerIR); override;
-  end;
 
-  //----------------------------------------------------------------------------
-  // Compile-time helpers for write/writeln (Linux variant)
-  //----------------------------------------------------------------------------
-  procedure tiger_write_linux(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
-  procedure tiger_writeln_linux(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
+    /// <summary>Command-line arguments — stub for now.</summary>
+    procedure AddCommandLine(const AIR: TTigerIR); override;
+  end;
 
 implementation
 
@@ -69,6 +66,8 @@ begin
   //----------------------------------------------------------------------------
   AIR.Func('Tiger_Halt', vtVoid, False, plC, False)
      .Param('AExitCode', vtInt32);
+  // Free command line (no-op on Linux, but keeps API consistent with Win64)
+  AIR.Call('Tiger_FreeCommandLine', []);
   if AOptLevel = 0 then
     AIR.Call('Tiger_ReportLeaks', []);
   AIR.SyscallStmt(60, [AIR.Get('AExitCode')])
@@ -88,28 +87,6 @@ begin
   AIR.Func('Tiger_InitConsole', vtVoid, False, plC, False)
      .Return()
   .EndFunc();
-end;
-
-//------------------------------------------------------------------------------
-// Compile-time helpers for write/writeln (Linux variant)
-// Phase 1: raw syscall write(fd=1, buf, len) for string output.
-// Formatted printf support comes in Phase 2 with libc linking.
-//------------------------------------------------------------------------------
-
-procedure tiger_write_linux(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
-begin
-  // Phase 1 stub — formatted output requires libc printf (Phase 2)
-  // For now, only string literals can be written via syscall 1
-  if Length(AArgs) > 0 then
-    AIR.SyscallStmt(1, [AIR.Int64(1), AArgs[0], AArgs[1]]);
-end;
-
-procedure tiger_writeln_linux(const AIR: TTigerIR; const AArgs: array of TTigerIRExpr);
-begin
-  if Length(AArgs) > 0 then
-    AIR.SyscallStmt(1, [AIR.Int64(1), AArgs[0], AArgs[1]]);
-  // Write newline: write(1, "\n", 1)
-  AIR.SyscallStmt(1, [AIR.Int64(1), AIR.Str(#10), AIR.Int64(1)]);
 end;
 
 //==============================================================================
@@ -883,6 +860,84 @@ begin
   AIR.Func('Tiger_GetExceptionMessage', vtPointer, False, plC, False)
      .Return(AIR.Invoke('pthread_getspecific', [AIR.Get('Tiger_TlsExcMsg')]))
   .EndFunc();
+end;
+
+//==============================================================================
+// TTigerLinux64Runtime - Command Line
+//==============================================================================
+
+procedure TTigerLinux64Runtime.AddCommandLine(const AIR: TTigerIR);
+begin
+  //----------------------------------------------------------------------------
+  // Globals for argc/argv storage
+  // On Linux, argv from _start is already an array of UTF-8 C string pointers.
+  //----------------------------------------------------------------------------
+  AIR.Global('Tiger_Argc', vtInt64);
+  AIR.Global('Tiger_Argv', vtPointer);
+
+  //----------------------------------------------------------------------------
+  // Tiger_InitCommandLine(AArgc: Int64, AArgv: Pointer)
+  // Called from _start with argc/argv from the stack.
+  // Simply stores them to globals - no conversion needed on Linux.
+  //----------------------------------------------------------------------------
+  AIR.Import('libc.so.6', 'realpath', [vtPointer, vtPointer], vtPointer, False);
+
+  AIR.Func('Tiger_InitCommandLine', vtVoid, False, plC, False)
+     .Param('AArgc', vtInt64)
+     .Param('AArgv', vtPointer)
+     .Local('LBuf', vtPointer)
+     .Local('LResolved', vtPointer);
+  AIR.Assign('Tiger_Argc', AIR.Get('AArgc'));
+  AIR.Assign('Tiger_Argv', AIR.Get('AArgv'));
+  AIR.Assign('LBuf', AIR.Invoke('Tiger_GetMem', [AIR.Int64(256)]));
+  AIR.Assign('LResolved', AIR.Invoke('realpath',
+     [AIR.Str('/proc/self/exe'), AIR.Get('LBuf')]));
+  // Replace argv[0] with resolved absolute path
+  AIR.AssignTo(
+     AIR.Deref(AIR.Get('Tiger_Argv'), vtPointer),
+     AIR.Get('LResolved'));
+  AIR.Return();
+  AIR.EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_FreeCommandLine()
+  // Frees the heap-allocated absolute path stored in argv[0] by InitCommandLine.
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_FreeCommandLine', vtVoid, False, plC, False);
+  AIR.Call('Tiger_FreeMem', [AIR.Deref(AIR.Get('Tiger_Argv'), vtPointer)]);
+  AIR.Return();
+  AIR.EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_ParamCount(): Int64
+  // Returns argc - 1 (Pascal semantics: excludes program name).
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_ParamCount', vtInt64, False, plC, False)
+     .Return(AIR.Sub(AIR.Get('Tiger_Argc'), AIR.Int64(1)))
+  .EndFunc();
+
+  //----------------------------------------------------------------------------
+  // Tiger_ParamStr(AIndex: Int64): Pointer
+  // Returns argv[AIndex] with bounds checking.
+  //----------------------------------------------------------------------------
+  AIR.Func('Tiger_ParamStr', vtPointer, False, plC, False)
+     .Param('AIndex', vtInt64);
+
+  // Bounds check: index < 0
+  AIR.&If(AIR.Lt(AIR.Get('AIndex'), AIR.Int64(0)));
+  AIR.Return(AIR.Null());
+  AIR.EndIf();
+
+  // Bounds check: index >= argc
+  AIR.&If(AIR.Ge(AIR.Get('AIndex'), AIR.Get('Tiger_Argc')));
+  AIR.Return(AIR.Null());
+  AIR.EndIf();
+
+  // Return argv[AIndex] - dereference pointer at Tiger_Argv + AIndex * 8
+  AIR.Return(AIR.Deref(
+     AIR.Add(AIR.Get('Tiger_Argv'), AIR.Mul(AIR.Get('AIndex'), AIR.Int64(8))),
+     vtPointer));
+  AIR.EndFunc();
 end;
 
 end.
