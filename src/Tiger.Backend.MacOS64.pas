@@ -16,7 +16,6 @@ unit Tiger.Backend.MacOS64;
 interface
 
 uses
-  WinApi.Windows,
   System.SysUtils,
   System.Classes,
   System.IOUtils,
@@ -24,13 +23,15 @@ uses
   System.Math,
   System.Hash,
   Tiger.Utils,
-  Tiger.Utils.Win64,
+  Tiger.Utils.Host,
+  Tiger.ExitCodes,
   Tiger.Errors,
   Tiger.Common,
   Tiger.Types,
   Tiger.Builders,
   Tiger.Backend,
   Tiger.Backend.ARM64,
+  Tiger.JIT,
   Tiger.ABI.MacOS64;
 
 type
@@ -44,6 +45,7 @@ type
   public
     function TargetExe(const APath: string; const ASubsystem: TTigerSubsystem = ssConsole): TTigerBackend; override;
     function BuildToMemory(): TBytes; override;
+    function BuildJIT(): TTigerJIT; override;
     function Run(): Cardinal; override;
     procedure Clear(); override;
   end;
@@ -241,10 +243,29 @@ begin
   end;
 end;
 
+function TTigerMacOS64Backend.BuildJIT(): TTigerJIT;
+begin
+  raise Exception.Create('macOS ARM64 JIT is not implemented');
+end;
+
 function TTigerMacOS64Backend.Run(): Cardinal;
 begin
-  Result := ERROR_BAD_FORMAT;
+  {$IFDEF MSWINDOWS}
+  Result := Tiger_ErrorBadFormat;
   Status('Run not supported for macOS target from Windows. Copy binary to Mac and run there.');
+  {$ELSE}
+  if FOutputType <> otExe then
+    Exit(Tiger_ErrorBadFormat);
+  try
+    Result := THostUtils.RunExe(FOutputPath, '', ExtractFilePath(FOutputPath));
+  except
+    on E: Exception do
+    begin
+      Status('Run failed: %s', [E.Message]);
+      Result := Tiger_ErrorFileNotFound;
+    end;
+  end;
+  {$ENDIF}
 end;
 
 procedure TTigerMacOS64Backend.Clear();

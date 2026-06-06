@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -16,7 +16,6 @@ unit Tiger.Backend.Linux64;
 interface
 
 uses
-  WinApi.Windows,
   System.SysUtils,
   System.Classes,
   System.IOUtils,
@@ -24,7 +23,8 @@ uses
   System.DateUtils,
   System.Generics.Collections,
   Tiger.Utils,
-  Tiger.Utils.Win64,
+  Tiger.Utils.Host,
+  Tiger.ExitCodes,
   Tiger.Errors,
   Tiger.Common,
   Tiger.Types,
@@ -103,24 +103,25 @@ end;
 
 function TTigerLinux64Backend.BuildJIT(): TTigerJIT;
 begin
-  // Linux64 JIT requires running on a Linux host with mmap/dlopen support.
-  // This cross-compilation scenario (Windows host, Linux target) does not
-  // support JIT execution. Build to file and run on Linux instead.
-  raise Exception.Create('Linux64 JIT is only available when running on Linux');
+  {$IFDEF LINUX}
+  raise Exception.Create('Linux64 JIT is not yet implemented');
+  {$ELSE}
+  raise Exception.Create('Linux64 JIT requires a Linux host (mmap/dlopen). Build to file and run on Linux instead.');
+  {$ENDIF}
 end;
 
 function TTigerLinux64Backend.Run(): Cardinal;
 begin
   if FOutputType <> otExe then
-    Exit(ERROR_BAD_FORMAT);
+    Exit(Tiger_ErrorBadFormat);
 
   try
-    Result := TWin64Utils.RunElf(FOutputPath, ExtractFilePath(FOutputPath));
+    Result := THostUtils.RunElf(FOutputPath, ExtractFilePath(FOutputPath));
   except
     on E: Exception do
     begin
       Status('Run failed: %s', [E.Message]);
-      Result := ERROR_FILE_NOT_FOUND;
+      Result := Tiger_ErrorFileNotFound;
     end;
   end;
 end;

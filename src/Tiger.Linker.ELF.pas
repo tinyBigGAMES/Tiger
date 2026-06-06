@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -44,7 +44,8 @@ const
   ET_CORE = 4;          // Core file
 
   // Machine type
-  EM_X86_64 = $3E;      // AMD x86-64
+  EM_X86_64  = $3E;     // AMD x86-64
+  EM_AARCH64 = 183;     // ARM AArch64
 
   // ELF structure sizes
   ELF64_EHDR_SIZE = 64;
@@ -114,6 +115,16 @@ const
   R_X86_64_8         = 14;  // Direct 8-bit sign-extended
   R_X86_64_PC8       = 15;  // 8-bit sign-extended PC-relative
   R_X86_64_REX_GOTPCRELX = 42;  // Relaxable GOTPCREL
+
+  // aarch64 relocation types
+  R_AARCH64_ABS64             = 257;
+  R_AARCH64_ADR_PREL_PG_HI21  = 275;
+  R_AARCH64_ADD_ABS_LO12_NC   = 277;
+  R_AARCH64_CALL26            = 283;
+  R_AARCH64_JUMP26            = 282;
+  R_AARCH64_PREL32            = 261;
+  R_AARCH64_GLOB_DAT          = 1025;
+  R_AARCH64_JUMP_SLOT         = 1026;
 
   // AR archive constants (same format as COFF)
   AR_SIGNATURE = '!<arch>'#10;
@@ -207,6 +218,9 @@ type
 
     // Pending relocations that need final addresses
     FPendingRelocs: TList<TLinkerPendingReloc>;
+
+    // Target machine (EM_X86_64 or EM_AARCH64) from first parsed object
+    FEMachine: Word;
 
     //--------------------------------------------------------------------------
     // ELF parsing
@@ -337,6 +351,7 @@ begin
   FUnresolvedSymbols.Duplicates := dupIgnore;
 
   FPendingRelocs := TList<TLinkerPendingReloc>.Create();
+  FEMachine := 0;
 end;
 
 destructor TTigerELFLinker.Destroy();
@@ -488,10 +503,19 @@ begin
     Exit;
   end;
 
-  // Verify x86-64
-  if LEMachine <> EM_X86_64 then
+  // Verify supported machine (x86-64 or aarch64)
+  if not (LEMachine in [EM_X86_64, EM_AARCH64]) then
   begin
-    Status('ELF: Not x86-64 (e_machine=$%x): %s', [LEMachine, ASourcePath]);
+    Status('ELF: Unsupported e_machine=$%x: %s', [LEMachine, ASourcePath]);
+    Exit;
+  end;
+
+  if FEMachine = 0 then
+    FEMachine := LEMachine
+  else if FEMachine <> LEMachine then
+  begin
+    Status('ELF: Machine mismatch (expected $%x, got $%x): %s',
+      [FEMachine, LEMachine, ASourcePath]);
     Exit;
   end;
 
@@ -928,7 +952,13 @@ begin
       if (LSec.SectionType <> SHT_PROGBITS) and (LSec.SectionType <> SHT_NOBITS) then
         Continue;
 
-      if Length(LSec.RawData) = 0 then
+      // Skip empty sections; allow SHT_NOBITS (.bss) with non-zero size
+      if (LSec.SectionType = SHT_NOBITS) then
+      begin
+        if LSec.Size = 0 then
+          Continue;
+      end
+      else if Length(LSec.RawData) = 0 then
         Continue;
 
       LKind := ClassifySection(LSec.SectionName, LSec.Flags);
@@ -1291,6 +1321,62 @@ begin
 end;
 
 procedure TTigerELFLinker.ApplyInternalRelocations();
+  procedure PatchU32(AStream: TMemoryStream; AOffset: Cardinal; AValue: Cardinal);
+  begin
+    AStream.Position := AOffset;
+    AStream.WriteData(AValue);
+  end;
+
+  function ReadU32(AStream: TMemoryStream; AOffset: Cardinal): Cardinal;
+  begin
+    AStream.Position := AOffset;
+    AStream.ReadBuffer(Result, SizeOf(Result));
+  end;
+
+  procedure ApplyAArch64Call26(AStream: TMemoryStream; const APlace, ATarget: Cardinal; AAddend: Int64);
+  var
+    LInsn: Cardinal;
+    LDelta: Int64;
+    LImm26: Cardinal;
+  begin
+    LInsn := ReadU32(AStream, APlace);
+    LDelta := Int64(ATarget) + AAddend - Int64(APlace);
+    LImm26 := Cardinal(LDelta shr 2) and $3FFFFFF;
+    PatchU32(AStream, APlace, (LInsn and $FC000000) or LImm26);
+  end;
+
+  procedure ApplyAArch64AdrPrelPgHi21(AStream: TMemoryStream; const APlace, ATarget: Cardinal; AAddend: Int64);
+  var
+    LInsn: Cardinal;
+    LPageDelta: Int64;
+    LImmhi, LImmlo: Cardinal;
+  begin
+    LInsn := ReadU32(AStream, APlace);
+    LPageDelta := ((Int64(ATarget) + AAddend) shr 12) - (Int64(APlace) shr 12);
+    LImmlo := Cardinal(LPageDelta and $3) shl 29;
+    LImmhi := Cardinal((LPageDelta shr 2) and $7FFFF) shl 5;
+    PatchU32(AStream, APlace, (LInsn and $9F00001F) or LImmlo or LImmhi);
+  end;
+
+  procedure ApplyAArch64AddAbsLo12Nc(AStream: TMemoryStream; const APlace, ATarget: Cardinal; AAddend: Int64);
+  var
+    LInsn: Cardinal;
+    LImm12: Cardinal;
+  begin
+    LInsn := ReadU32(AStream, APlace);
+    LImm12 := Cardinal((Int64(ATarget) + AAddend) and $FFF) shl 10;
+    PatchU32(AStream, APlace, (LInsn and $FFC003FF) or LImm12);
+  end;
+
+  procedure ApplyAArch64Abs64(AStream: TMemoryStream; const APlace, ATarget: Cardinal; AAddend: Int64);
+  var
+    LVal: UInt64;
+  begin
+    LVal := UInt64(Int64(ATarget) + AAddend);
+    AStream.Position := APlace;
+    AStream.WriteBuffer(LVal, SizeOf(LVal));
+  end;
+
 var
   LReloc: TLinkerPendingReloc;
   LResolved: TLinkerResolvedSymbol;
@@ -1302,7 +1388,10 @@ var
   LContrib: TLinkerContribution;
   LKind: TLinkerSectionKind;
   LFound: Boolean;
+  LStream: TMemoryStream;
+  LTarget: Cardinal;
 begin
+  {$Q-}
   LApplied := 0;
 
   // First, add LOCAL symbols from selected objects to FResolvedSymbols
@@ -1348,34 +1437,92 @@ begin
 
   for LReloc in FPendingRelocs do
   begin
-    // Only handle .text relocations for now
-    if LReloc.SectionKind <> lskText then
-      Continue;
-
-    // Only handle PC-relative relocations
-    if not (LReloc.RelocationType in [R_X86_64_PC32, R_X86_64_PLT32]) then
-      Continue;
-
-    // Check if target is resolved within merged code
     if not FResolvedSymbols.TryGetValue(LReloc.TargetSymbol, LResolved) then
       Continue;
 
-    // Target must be in .text
-    if LResolved.SectionKind <> lskText then
-      Continue;
+    case FEMachine of
+      EM_AARCH64:
+        begin
+          case LReloc.SectionKind of
+            lskText: LStream := FMergedText;
+            lskRData: LStream := FMergedRoData;
+            lskData: LStream := FMergedData;
+          else
+            Continue;
+          end;
 
-    // Compute displacement: S + A - P (ELF standard formula)
-    LDisp := Int32(LResolved.OffsetInMerged) + LReloc.Addend - Int32(LReloc.OffsetInMerged);
+          if LResolved.SectionKind <> LReloc.SectionKind then
+            Continue;
 
-    // Patch the merged .text
-    FMergedText.Position := LReloc.OffsetInMerged;
-    FMergedText.WriteData(LDisp);
+          LTarget := LResolved.OffsetInMerged;
 
-    Inc(LApplied);
+          case LReloc.RelocationType of
+            R_AARCH64_CALL26, R_AARCH64_JUMP26:
+              begin
+                if LReloc.SectionKind <> lskText then
+                  Continue;
+                ApplyAArch64Call26(LStream, LReloc.OffsetInMerged, LTarget, LReloc.Addend);
+                Inc(LApplied);
+              end;
+            R_AARCH64_ADR_PREL_PG_HI21:
+              begin
+                ApplyAArch64AdrPrelPgHi21(LStream, LReloc.OffsetInMerged, LTarget, LReloc.Addend);
+                Inc(LApplied);
+              end;
+            R_AARCH64_ADD_ABS_LO12_NC:
+              begin
+                ApplyAArch64AddAbsLo12Nc(LStream, LReloc.OffsetInMerged, LTarget, LReloc.Addend);
+                Inc(LApplied);
+              end;
+            R_AARCH64_ABS64:
+              begin
+                if LReloc.SectionKind = lskText then
+                  Continue;
+                ApplyAArch64Abs64(LStream, LReloc.OffsetInMerged, LTarget, LReloc.Addend);
+                Inc(LApplied);
+              end;
+            R_AARCH64_PREL32:
+              begin
+                if LReloc.SectionKind <> lskText then
+                  Continue;
+                LDisp := Int32(LTarget) + LReloc.Addend - Int32(LReloc.OffsetInMerged);
+                PatchU32(LStream, LReloc.OffsetInMerged, Cardinal(LDisp));
+                Inc(LApplied);
+              end;
+          end;
+        end;
+
+      EM_X86_64:
+        begin
+          // Only handle .text relocations for x86-64
+          if LReloc.SectionKind <> lskText then
+            Continue;
+
+          // Only handle PC-relative relocations
+          if not (LReloc.RelocationType in [R_X86_64_PC32, R_X86_64_PLT32]) then
+            Continue;
+
+          // Target must be in .text
+          if LResolved.SectionKind <> lskText then
+            Continue;
+
+          // Compute displacement: S + A - P (ELF standard formula)
+          LDisp := Int32(LResolved.OffsetInMerged) + LReloc.Addend - Int32(LReloc.OffsetInMerged);
+
+          // Patch the merged .text
+          FMergedText.Position := LReloc.OffsetInMerged;
+          FMergedText.WriteData(LDisp);
+
+          Inc(LApplied);
+        end;
+    end;
   end;
 
   FMergedText.Position := FMergedText.Size;
+  FMergedRoData.Position := FMergedRoData.Size;
+  FMergedData.Position := FMergedData.Size;
   Status('ELF Linker: Applied %d internal relocations', [LApplied]);
+  {$Q+}
 end;
 
 function TTigerELFLinker.GetMergedText(): TBytes;

@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -16,12 +16,11 @@ unit Tiger.Backend;
 interface
 
 uses
-  WinApi.Windows,
   System.SysUtils,
   System.Classes,
   System.Generics.Collections,
   Tiger.Utils,
-  Tiger.Utils.Win64,
+  Tiger.ExitCodes,
   Tiger.Errors,
   Tiger.Common,
   Tiger.Types,
@@ -283,7 +282,7 @@ end;
 
 function TTigerBackend.Run(): Cardinal;
 begin
-  Result := ERROR_BAD_FORMAT;
+  Result := Tiger_ErrorBadFormat;
 end;
 
 function TTigerBackend.BuildToMemory(): TBytes;

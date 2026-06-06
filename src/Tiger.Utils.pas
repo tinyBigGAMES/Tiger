@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -16,7 +16,6 @@ unit Tiger.Utils;
 interface
 
 uses
-  WinApi.Windows,
   System.SysUtils,
   System.IOUtils,
   System.AnsiStrings,

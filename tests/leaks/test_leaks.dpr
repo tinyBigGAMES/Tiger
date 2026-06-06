@@ -7,17 +7,26 @@ uses
   System.IOUtils,
   Tiger;
 
+function PlatformLabel(const Plat: TTigerPlatform): string;
+begin
+  case Plat of
+    tpWin64:      Result := 'Windows x64';
+    tpLinux64:    Result := 'Linux x64';
+    tpMacOS64:    Result := 'MacOS ARM64';
+    tpLinuxARM64: Result := 'Linux ARM64';
+  else
+    Result := 'Unknown platform';
+  end;
+end;
+
 procedure BuildLeakSanityForPlatform(Plat : TTigerPlatform);
 var
   LTiger: TTiger;
   LExitCode: Cardinal;
   LPlatform : string;
+  sPlatform: string;
 begin
-  case Plat of
-    tpWin64:   LPlatform := 'Windows x64';
-    tpLinux64: LPlatform := 'Linux x64';
-    tpMacOS64: LPlatform := 'MacOS ARM64';
-  end;
+  LPlatform := PlatformLabel(Plat);
   WriteLn('Building leak sanity executable for '+LPlatform);
   WriteLn('');
 
@@ -32,20 +41,25 @@ begin
         WriteLn(AText);
       end, nil);
 
+    if Plat = tpWin64 then
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
+    else if Plat <> tpMacOS64 then
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
+
     // Build a program that does one alloc and one free.
     LTiger.Func('main', vtVoid, True)
       .Local('p', vtPointer)
-      .Call('printf', [LTiger.Str('Leak sanity test (macOS arm64)'#10)])
+      .Call('printf', [LTiger.Str('Leak sanity test (' + LPlatform + ')'#10)])
       .Assign('p', LTiger.Invoke('Tiger_GetMem', [LTiger.Int64(16)]))
       .Call('Tiger_FreeMem', [LTiger.Get('p')])
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    var sPlatform : string;
     case Plat of
-      tpWin64:   sPlatform := 'win';
-      tpLinux64: sPlatform := 'lin';
-      tpMacOS64: sPlatform := 'mac';
+      tpWin64:      sPlatform := 'win';
+      tpLinux64:    sPlatform := 'lin';
+      tpMacOS64:    sPlatform := 'mac';
+      tpLinuxARM64: sPlatform := 'linarm';
     end;
     LTiger.TargetExe(TPath.Combine('output', 'leak_test_'+sPlatform), ssConsole);
 
@@ -57,14 +71,22 @@ begin
       WriteLn('Output file: output\leak_test_'+sPlatform);
       WriteLn('');
       WriteLn('Next steps:');
-      if Plat in [tpLinux64, tpMacOS64] then
+      if Plat = tpWin64 then
+        WriteLn('1. Run: .\output\leak_test_'+sPlatform+' in a command line window')
+      else if Plat = tpMacOS64 then
       begin
-        WriteLn('1. Copy output\leak_sanity_macos to an Apple Silicon Mac');
-        WriteLn('2. In Terminal: chmod +x leak_test_'+sPlatform);
-        WriteLn('3. Run: ./leak_test_'+sPlatform);
-      end else
+        WriteLn('1. chmod +x output/leak_test_'+sPlatform);
+        WriteLn('2. Run: ./output/leak_test_'+sPlatform);
+      end
+      else if Plat = tpLinuxARM64 then
       begin
-        WriteLn('1. Run: .\leak_test_'+sPlatform+' in a command line window');
+        WriteLn('1. Run under linux/arm64 (Docker) or on a Linux ARM64 host');
+        WriteLn('2. chmod +x output/leak_test_'+sPlatform+' && ./output/leak_test_'+sPlatform);
+      end
+      else
+      begin
+        WriteLn('1. chmod +x output/leak_test_'+sPlatform);
+        WriteLn('2. Run: ./output/leak_test_'+sPlatform);
       end;
       WriteLn('Expected leak line: [Heap] Allocs: 1, Frees: 1, Leaked: 0');
       WriteLn('========================================');
@@ -83,7 +105,7 @@ end;
 
 begin
   try
-    for var plat := Low(TTigerPlatform) to High(TTigerPlatform) do
+    for var plat in [tpWin64, tpLinux64, tpMacOS64, tpLinuxARM64] do
       BuildLeakSanityForPlatform(plat);
     ReadLn;
   except

@@ -1807,6 +1807,7 @@ var
   LManagedGlobals: TList<Integer>; // Indices of managed globals
   LManagedTemps: TDictionary<string, TTigerSSAVar>;  // Temps from string-returning calls
   LTempLastUse: TDictionary<string, Integer>;  // Temp name -> instruction index of last use
+  LEscapedTemps: TDictionary<string, Boolean>; // Temps whose ownership transfers (do not auto-release)
   LReleaseInstr: TTigerSSAInstr;
   LLoadInstr: TTigerSSAInstr;
   LFuncIdx: Integer;
@@ -1841,6 +1842,7 @@ begin
       LBlock := AFunc.GetBlock(LBlockIdx);
       LManagedTemps := TDictionary<string, TTigerSSAVar>.Create();
       LTempLastUse := TDictionary<string, Integer>.Create();
+      LEscapedTemps := TDictionary<string, Boolean>.Create();
       try
         // First pass: find managed temps and their last use in this block
         for LInstrIdx := 0 to LBlock.GetInstructionCount() - 1 do
@@ -1871,13 +1873,27 @@ begin
           begin
             LUsedVar := LInstr.Op1.Var_.BaseName + '_' + IntToStr(LInstr.Op1.Var_.Version);
             if LManagedTemps.ContainsKey(LUsedVar) then
+            begin
               LTempLastUse.AddOrSetValue(LUsedVar, LInstrIdx);
+              // Ownership transfer: the temp's +1 is moved into the destination
+              // when it is copied into a variable (sikAssign) or returned
+              // (sikReturnValue). The destination (managed local -> Phase 2, or a
+              // raw pointer managed manually) becomes responsible for releasing it,
+              // so the temp must NOT be auto-released here (would free it early).
+              if LInstr.Kind in [sikAssign, sikReturnValue] then
+                LEscapedTemps.AddOrSetValue(LUsedVar, True);
+            end;
           end;
           if LInstr.Op2.Kind = sokVar then
           begin
             LUsedVar := LInstr.Op2.Var_.BaseName + '_' + IntToStr(LInstr.Op2.Var_.Version);
             if LManagedTemps.ContainsKey(LUsedVar) then
+            begin
               LTempLastUse.AddOrSetValue(LUsedVar, LInstrIdx);
+              // sikStore (mem[op1] := op2) moves ownership into the target memory.
+              if LInstr.Kind = sikStore then
+                LEscapedTemps.AddOrSetValue(LUsedVar, True);
+            end;
           end;
           for LJ := 0 to Length(LInstr.CallArgs) - 1 do
           begin
@@ -1895,6 +1911,9 @@ begin
         try
           for LTempName in LTempLastUse.Keys do
           begin
+            // Skip temps whose ownership was transferred to a variable/memory/return.
+            if LEscapedTemps.ContainsKey(LTempName) then
+              Continue;
             if LManagedTemps.TryGetValue(LTempName, LTempVar) then
               LInsertions.Add(TPair<Integer, TTigerSSAVar>.Create(LTempLastUse[LTempName], LTempVar));
           end;
@@ -1923,6 +1942,7 @@ begin
           LInsertions.Free();
         end;
       finally
+        LEscapedTemps.Free();
         LTempLastUse.Free();
         LManagedTemps.Free();
       end;
@@ -4975,6 +4995,21 @@ begin
       end;
       Break;  // Only need to check once
     end;
+  end;
+
+  //----------------------------------------------------------------------------
+  // Step 1c: Mark command-line runtime functions as live.
+  // Tiger_InitCommandLine is called only from the backend-generated _start
+  // (never from IR), so transitive marking would never reach it and it would
+  // be eliminated - leaving Tiger_Argv uninitialized and Tiger_FreeCommandLine
+  // (called from Tiger_Halt) dereferencing a NULL/garbage pointer at exit.
+  //----------------------------------------------------------------------------
+  for LI := 0 to FFunctions.Count - 1 do
+  begin
+    LFunc := FFunctions[LI];
+    if (LFunc.GetFuncName() = 'Tiger_InitCommandLine') or
+       (LFunc.GetFuncName() = 'Tiger_FreeCommandLine') then
+      LLive[LI] := True;
   end;
 
   //----------------------------------------------------------------------------

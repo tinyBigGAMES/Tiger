@@ -1,4 +1,4 @@
-﻿{===============================================================================
+{===============================================================================
   Tiger™ Compiler Infrastructure.
 
   Copyright © 2025-present tinyBigGAMES™ LLC
@@ -16,7 +16,6 @@ unit Tiger.Backend.Win64;
 interface
 
 uses
-  WinApi.Windows,
   System.SysUtils,
   System.Classes,
   System.DateUtils,
@@ -24,7 +23,8 @@ uses
   System.Math,
   System.Generics.Collections,
   Tiger.Utils,
-  Tiger.Utils.Win64,
+  Tiger.Utils.Host,
+  Tiger.ExitCodes,
   Tiger.Errors,
   Tiger.Common,
   Tiger.Types,
@@ -55,8 +55,11 @@ implementation
 uses
   Tiger.ABI,
   Tiger.Linker,
-  Tiger.Linker.COFF,
-  Tiger.JIT.Win64;
+  Tiger.Linker.COFF
+{$IFDEF MSWINDOWS}
+  , Tiger.JIT.Win64
+{$ENDIF}
+  ;
 
 const
   // Backend error codes
@@ -232,15 +235,15 @@ end;
 function TTigerWin64Backend.Run(): Cardinal;
 begin
   if FOutputType <> otExe then
-    Exit(ERROR_BAD_FORMAT);
+    Exit(Tiger_ErrorBadFormat);
 
   try
-    Result := TWin64Utils.RunExe(FOutputPath, '', ExtractFilePath(FOutputPath));
+    Result := THostUtils.RunExe(FOutputPath, '', ExtractFilePath(FOutputPath));
   except
     on E: Exception do
     begin
       Status('Run failed: %s', [E.Message]);
-      Result := ERROR_FILE_NOT_FOUND;
+      Result := Tiger_ErrorFileNotFound;
     end;
   end;
 end;
@@ -5925,6 +5928,7 @@ end;
 //==============================================================================
 
 function TTigerWin64Backend.BuildJIT(): TTigerJIT;
+{$IFDEF MSWINDOWS}
 var
   LJIT: TTigerJITWin64;
   LJITData: TJITCodeGenData;
@@ -6073,5 +6077,10 @@ begin
   LJITData.GlobalFixups.Free();
   LJITData.FuncAddrFixups.Free();
 end;
+{$ELSE}
+begin
+  raise Exception.Create('Win64 JIT is only available on a Windows host');
+end;
+{$ENDIF}
 
 end.

@@ -34,7 +34,7 @@ type
   ///     automatically released when the object is destroyed.
   ///   </para>
   ///   <para>
-  ///     Platform-specific subclasses (TTigerJITWin64, TTigerJITLinux64) handle
+  ///     Platform-specific subclasses (TTigerJITWin64, TTigerJITLinux64 on Unix hosts) handle
   ///     memory allocation and dynamic library loading.
   ///   </para>
   /// </remarks>
@@ -257,7 +257,9 @@ end;
 // User API - Dynamic Invocation
 //------------------------------------------------------------------------------
 
-// Dynamic call helper - sets up Win64 ABI call frame for any argument count
+// Dynamic call helper - sets up Win64 ABI call frame for any argument count.
+// Inline asm is x86-64 only; ARM64/macOS hosts have no supported asm here — use an x64 host to Invoke JIT code.
+{$IFDEF CPUX64}
 // Input: RCX = AFunc, RDX = AArgs, R8D = AArgCount
 // Output: RAX = return value
 function DynCall(AFunc: Pointer; AArgs: PInt64; AArgCount: Integer): Int64;
@@ -344,6 +346,15 @@ asm
   pop rsi
   pop rbx
 end;
+{$ELSE}
+function DynCall(AFunc: Pointer; AArgs: PInt64; AArgCount: Integer): Int64;
+begin
+  { JIT Invoke uses a Microsoft x64-style frame; only implemented for CPUX64. }
+  raise Exception.CreateFmt(
+    'TTigerJIT.Invoke is not supported on this CPU (requires x86-64). Args=%d ptr=%p argptr=%p.',
+    [AArgCount, Pointer(AFunc), Pointer(AArgs)]);
+end;
+{$ENDIF}
 
 function TTigerJIT.Invoke(const APtr: Pointer; const AArgs: array of Int64): Int64;
 begin

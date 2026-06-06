@@ -7,17 +7,39 @@ uses
   System.IOUtils,
   Tiger;
 
+function PlatformLabel(const Plat: TTigerPlatform): string;
+begin
+  case Plat of
+    tpWin64:      Result := 'Windows on x64';
+    tpLinux64:    Result := 'Linux on x64';
+    tpMacOS64:    Result := 'MacOS on ARM64';
+    tpLinuxARM64: Result := 'Linux on ARM64';
+  else
+    Result := 'Unknown platform';
+  end;
+end;
+
+function OutputName(const Plat: TTigerPlatform): string;
+begin
+  case Plat of
+    tpWin64:      Result := 'test_win';
+    tpLinux64:    Result := 'test_lin';
+    tpMacOS64:    Result := 'test_mac';
+    tpLinuxARM64: Result := 'test_linarm';
+  else
+    Result := 'test_unknown';
+  end;
+end;
+
 procedure TestPlatform(Plat : TTigerPlatform);
 var
   LTiger: TTiger;
   LExitCode: Cardinal;
   LPlatform : string;
+  LOutputName: string;
 begin
-  case Plat of
-    tpWin64:   LPlatform := 'Windows on x64';
-    tpLinux64: LPlatform := 'Linux on x64';
-    tpMacOS64: LPlatform := 'MacOS on ARM64';
-  end;
+  LPlatform := PlatformLabel(Plat);
+  LOutputName := OutputName(Plat);
 
   WriteLn('Building '+LPlatform+' executable...');
   WriteLn('');
@@ -32,8 +54,10 @@ begin
         WriteLn(AText);
       end, nil);
 
-    // macOS runtime automatically provides printf and exit from libSystem.B.dylib
-    // No need to call ImportDll for basic functions
+    if Plat = tpWin64 then
+      LTiger.ImportDll('msvcrt.dll', 'printf', [vtPointer], vtInt32, True)
+    else if Plat <> tpMacOS64 then
+      LTiger.ImportDll('libc.so.6', 'printf', [vtPointer], vtInt32, True);
 
     LTiger.Func('main', vtVoid, True)
       .Call('printf', [LTiger.Str('Hello from Tiger codegen!'#10)])
@@ -41,19 +65,33 @@ begin
       .Call('Tiger_Halt', [LTiger.Int64(0)])
     .EndFunc();
 
-    LTiger.TargetExe(TPath.Combine('output', 'test_'+LPlatform.Substring(0,3)), ssConsole);
+    LTiger.TargetExe(TPath.Combine('output', LOutputName), ssConsole);
     
     if LTiger.Build(False, @LExitCode) then
     begin
       WriteLn('');
       WriteLn('========================================');
       WriteLn('Build successful!');
-      WriteLn('Output file: output\test_macos');
+      WriteLn('Output file: output\' + LOutputName);
       WriteLn('');
       WriteLn('Next steps:');
-      WriteLn('1. Copy output\test_macos to an Apple Silicon Mac');
-      WriteLn('2. In Terminal: chmod +x test_macos');
-      WriteLn('3. Run: ./test_macos');
+      if Plat = tpWin64 then
+        WriteLn('1. Run: .\output\' + LOutputName + ' in a command line window')
+      else if Plat = tpMacOS64 then
+      begin
+        WriteLn('1. chmod +x output/' + LOutputName);
+        WriteLn('2. Run: ./output/' + LOutputName);
+      end
+      else if Plat = tpLinuxARM64 then
+      begin
+        WriteLn('1. Run under linux/arm64 (e.g. ./tests/run_linux_arm64.sh after copying to tests/bin/output/linarm)');
+        WriteLn('2. Or on a Linux ARM64 host: chmod +x output/' + LOutputName + ' && ./output/' + LOutputName);
+      end
+      else
+      begin
+        WriteLn('1. On a Linux x64 host: chmod +x output/' + LOutputName);
+        WriteLn('2. Run: ./output/' + LOutputName);
+      end;
       WriteLn('========================================');
     end
     else
@@ -70,7 +108,7 @@ end;
 
 begin
   try
-    for var plat := Low(TTigerPlatform) to High(TTigerPlatform) do
+    for var plat in [tpWin64, tpLinux64, tpMacOS64, tpLinuxARM64] do
       TestPlatform(plat);
     ReadLn;
   except
